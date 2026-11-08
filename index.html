@@ -290,7 +290,7 @@
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
   import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-  import { getFirestore, doc, setDoc, getDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+ import { getFirestore, doc, setDoc, getDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
   window.cloudSync = {
     enabled: false,
@@ -317,7 +317,7 @@
         this.enabled = true;
 
         const remoteRef = doc(this.db, 'artifacts', this.appId, 'public', 'data', 'erp_state', 'master_v1');
-        const snap = await getDoc(remoteRef);
+        onSnapshot(remoteRef, (snap) => {
         if (snap.exists() && snap.data()?.payload) {
           const parsed = JSON.parse(snap.data().payload);
           Object.assign(window.ERP_STATE, parsed);
@@ -1136,6 +1136,12 @@ function renderKYCModule() {
               <th class="p-3">कित्ता नं.</th>
               <th class="p-3">दर्ता मिति</th>
               <th class="p-3 text-right">अन्तिम रिडिङ</th>
+		<th class="p-3 text-center">कार्य (Action)</th>
+		<td class="p-3 text-center">
+  		<button onclick="deleteCustomerKYC('${c.id}')" class="px-2 py-1 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-lg text-[10px] font-semibold cursor-pointer">
+    डिलिट
+ 	 </button>
+		</td>
             </tr>
           </thead>
           <tbody class="divide-y divide-slate-100">
@@ -1180,6 +1186,13 @@ function saveNewCustomerKYC(e) {
   window.cloudSync?.save();
   renderCurrentModule();
   showToast(`ग्राहक ${newCust.name} (${id}) सफलतापूर्वक दर्ता भयो!`);
+}
+function deleteCustomerKYC(custId) {
+  if (confirm(`के तपाईं यो ग्राहक (${custId}) लाई डिलिट गर्न चाहनुहुन्छ?`)) {
+    window.ERP_STATE.customers = window.ERP_STATE.customers.filter(c => c.id !== custId);
+    window.cloudSync?.save();
+    renderCurrentModule();
+  }
 }
 
 function downloadSampleKYCCSV() {
