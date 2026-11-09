@@ -3629,48 +3629,31 @@ function generateReportHTML(tab) {
 
   if (tab === "customer-annual") {
     // 🌟 निश्चित सदस्य (Member ID) छान्दा विस्तृत स्टेटमेन्ट
-    if (repCustFilter !== "ALL") {
+if (repCustFilter !== "ALL") {
       const cust = st.customers.find(c => c.id === repCustFilter);
       if (!cust) return `<div class="p-6 text-center text-slate-500">ग्राहक फेला परेन।</div>`;
 
+      const openingDue = Number(cust.openingDue || 0);
       const rds = st.readings.filter(r => r.customerId === cust.id && isDateBetweenBS(r.entryDate, repFromBS, repToBS));
       const payments = st.payments.filter(p => p.customerId === cust.id && isDateBetweenBS(p.date, repFromBS, repToBS));
 
-      // रसिदहरूबाट जम्मा ओपनिङ असुली रकम पत्ता लगाउने
-      const totalOpeningPaidInPeriod = payments.reduce((sum, p) => sum + Number(p.openingPaid || 0), 0);
-      const initialOpeningDue = Number(cust.openingDue || 0) + totalOpeningPaidInPeriod; // साविकको कुल ओपनिङ
-
-      let tUnits = 0, tBill = 0, tMaint = 0, tPen = 0, tTotalAmt = initialOpeningDue, tPaid = 0;
-      let runningDue = initialOpeningDue;
+      let tUnits = 0, tBill = 0, tMaint = 0, tPen = 0, tTotalAmt = openingDue, tPaid = 0;
+      let runningDue = openingDue;
 
       let rows = "";
-
-   // १. यदि ओपनिङ बक्यौता छ भने पहिलो पङ्क्तिमा ओपनिङ र रसिदको विवरण देखाउने
-      if (initialOpeningDue > 0) {
-        rows += `
-          <tr class="bg-amber-50">
-            <td class="border border-slate-300 p-2 text-center font-bold text-amber-800">-</td>
-            <td class="border border-slate-300 p-2 font-bold text-amber-900" colspan="7">गत वर्षको उठ्न बाँकी ओपनिङ बक्यौता</td>
-            <td class="border border-slate-300 p-2 text-right tabular-nums font-bold text-amber-900">${fmtMoney(initialOpeningDue)}</td>
-            <td class="border border-slate-300 p-2 text-right tabular-nums text-emerald-700">${fmtMoney(totalOpeningPaidInPeriod)}</td>
-            <td class="border border-slate-300 p-2 text-right tabular-nums font-bold text-rose-700">${fmtMoney(initialOpeningDue - totalOpeningPaidInPeriod)}</td>
-            <td class="border border-slate-300 p-2 text-center font-bold text-indigo-900">
-              ${payments.length > 0 ? payments[0].receiptNo : '-'}
-              <div class="text-[10px] text-teal-900 font-normal">मिति: ${payments.length > 0 ? payments[0].date : '-'}</div>
-            </td>
-          </tr>
-        `;
-        runningDue = initialOpeningDue - totalOpeningPaidInPeriod;
-      }
+      let isFirstRow = true;
 
       rds.forEach((r, idx) => {
         const maint = Number(r.maintenanceAmount || 0);
         const bill = Number(r.billAmount || 0);
         const pen = Number(r.penaltyAmount || 0);
-        const totalRowAmt = bill + pen; 
         
-        const matchingPay = payments.find(p => p.month === r.month || (p.date >= r.entryDate));
-        const paidM = matchingPay ? Number(matchingPay.totalPaid || 0) - Number(matchingPay.openingPaid || 0) : (Number(r.paidAmount || 0) + Number(r.paidMaintAmount || 0));
+        // यदि पहिलो पङ्क्ति हो र ओपनिङ बक्यौता छ भने, बिलमा ओपनिङ पनि जोड्ने
+        const rowOpening = (isFirstRow && openingDue > 0) ? openingDue : 0;
+        const totalRowAmt = bill + pen + rowOpening; 
+        
+        const matchingPay = payments.find(p => p.month === r.month || (p.date >= r.entryDate) || rowOpening > 0);
+        const paidM = matchingPay ? Number(matchingPay.totalPaid || 0) : (Number(r.paidAmount || 0) + Number(r.paidMaintAmount || 0) + rowOpening);
         
         runningDue = (runningDue + totalRowAmt) - paidM;
 
@@ -3681,18 +3664,21 @@ function generateReportHTML(tab) {
         tTotalAmt += totalRowAmt;
         tPaid += paidM;
 
-        const receiptNoStr = matchingPay ? matchingPay.receiptNo : '-';
-        const payDateStr = matchingPay ? matchingPay.date : 'भुक्तानी बाँकी';
+        const receiptNoStr = matchingPay ? matchingPay.receiptNo : (rowOpening > 0 && payments.length > 0 ? payments[0].receiptNo : '-');
+        const payDateStr = matchingPay ? matchingPay.date : (rowOpening > 0 && payments.length > 0 ? payments[0].date : 'भुक्तानी बाँकी');
 
         rows += `
-          <!-- माथिल्लो पङ्क्ति: रिडिङ तथा बिल डाटा -->
+          <!-- माथिल्लो पङ्क्ति: रिडिङ तथा बिल डाटा (ओपनिङ सहित) -->
           <tr class="bg-white">
             <td rowspan="2" class="border border-slate-300 p-2 text-center align-middle font-bold">${idx + 1}</td>
-            <td class="border border-slate-300 p-2 font-bold text-teal-800">${r.month}</td>
+            <td class="border border-slate-300 p-2 font-bold text-teal-800">
+              ${r.month}
+              ${rowOpening > 0 ? `<div class="text-[10px] text-amber-800 font-semibold">(ओपनिङ रू. ${rowOpening} सहित)</div>` : ''}
+            </td>
             <td class="border border-slate-300 p-2 text-right font-mono">${r.prevReading}</td>
             <td class="border border-slate-300 p-2 text-right font-mono font-bold">${r.currReading}</td>
             <td class="border border-slate-300 p-2 text-right tabular-nums font-bold">${r.units}</td>
-            <td class="border border-slate-300 p-2 text-right tabular-nums">${fmtMoney(bill)}</td>
+            <td class="border border-slate-300 p-2 text-right tabular-nums">${fmtMoney(bill + rowOpening)}</td>
             <td class="border border-slate-300 p-2 text-right tabular-nums text-amber-800">${fmtMoney(maint)}</td>
             <td class="border border-slate-300 p-2 text-right tabular-nums text-red-700">${fmtMoney(pen)}</td>
             <td class="border border-slate-300 p-2 text-right tabular-nums font-bold text-slate-900">${fmtMoney(totalRowAmt)}</td>
@@ -3700,7 +3686,7 @@ function generateReportHTML(tab) {
             <td class="border border-slate-300 p-2 text-right tabular-nums text-rose-700 font-bold">${fmtMoney(runningDue)}</td>
             <td rowspan="2" class="border border-slate-300 p-2 text-center align-middle font-bold text-indigo-900">${receiptNoStr}</td>
           </tr>
-          <!-- तल्लो पङ्क्ति: भुक्तानी मिति विवरण -->
+          <!-- तल्लो पङ्क्ति: भुक्तानी मिति विवरण (एउटै row मा सफा देखिने) -->
           <tr class="bg-slate-50/80">
             <td colspan="8" class="border border-slate-300 px-3 py-1.5 text-[11px] text-slate-700">
               <span class="font-semibold text-teal-900">भुक्तानी मिति:</span> <u class="font-bold text-teal-950">${payDateStr}</u>
@@ -3709,6 +3695,7 @@ function generateReportHTML(tab) {
             <td class="border border-slate-300 p-1.5 text-right text-[10px] text-slate-400">चुक्ता</td>
           </tr>
         `;
+        isFirstRow = false;
       });
 
       return `
@@ -3717,7 +3704,7 @@ function generateReportHTML(tab) {
           <div><strong>ग्राहक आइडी:</strong> ${cust.id}</div>
           <div><strong>फोन नं.:</strong> ${cust.phone || '-'}</div>
           <div><strong>ग्राहकको नाम:</strong> ${cust.name}</div>
-          <div><strong>ठेगाना:</strong> ${cust.address || '-'} | <strong class="text-amber-800">हालको बाँकी ओपनिङ:</strong> ${fmtMoney(cust.openingDue || 0)}</div>
+          <div><strong>ठेगाना:</strong> ${cust.address || '-'} | <strong class="text-amber-800">ओपनिङ बक्यौता:</strong> ${fmtMoney(openingDue)}</div>
         </div>
         <table class="w-full text-xs border-collapse border border-slate-300">
           <thead class="bg-slate-100">
@@ -3727,7 +3714,7 @@ function generateReportHTML(tab) {
               <th class="border border-slate-300 p-2 text-right">साविक</th>
               <th class="border border-slate-300 p-2 text-right">हालको</th>
               <th class="border border-slate-300 p-2 text-right">युनिट</th>
-              <th class="border border-slate-300 p-2 text-right">बिल रकम</th>
+              <th class="border border-slate-300 p-2 text-right">बिल रकम (ओपनिङ सहित)</th>
               <th class="border border-slate-300 p-2 text-right">मर्मत शुल्क</th>
               <th class="border border-slate-300 p-2 text-right">जरिवाना</th>
               <th class="border border-slate-300 p-2 text-right">जम्मा रकम</th>
@@ -3743,11 +3730,11 @@ function generateReportHTML(tab) {
             <tr>
               <td colspan="4" class="border border-slate-300 p-2 text-right">कुल जम्मा:</td>
               <td class="border border-slate-300 p-2 text-right tabular-nums">${tUnits}</td>
-              <td class="border border-slate-300 p-2 text-right tabular-nums">${fmtMoney(tBill)}</td>
+              <td class="border border-slate-300 p-2 text-right tabular-nums">${fmtMoney(tBill + openingDue)}</td>
               <td class="border border-slate-300 p-2 text-right tabular-nums text-amber-800">${fmtMoney(tMaint)}</td>
               <td class="border border-slate-300 p-2 text-right tabular-nums text-red-700">${fmtMoney(tPen)}</td>
               <td class="border border-slate-300 p-2 text-right tabular-nums">${fmtMoney(tTotalAmt)}</td>
-              <td class="border border-slate-300 p-2 text-right tabular-nums text-emerald-700">${fmtMoney(tPaid + totalOpeningPaidInPeriod)}</td>
+              <td class="border border-slate-300 p-2 text-right tabular-nums text-emerald-700">${fmtMoney(tPaid)}</td>
               <td class="border border-slate-300 p-2 text-right tabular-nums text-rose-700">${fmtMoney(runningDue)}</td>
               <td class="border border-slate-300 p-2 text-center">-</td>
             </tr>
