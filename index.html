@@ -3586,31 +3586,9 @@ function renderSupportModule() {
           </button>
 
           <label class="w-full bg-indigo-50 hover:bg-indigo-100 text-indigo-900 border border-indigo-200 text-xs font-semibold py-3 rounded-xl flex items-center justify-center gap-2 cursor-pointer">
-
             <i data-lucide="upload" class="w-4 h-4"></i> २. ब्याकअप फाइल अपलोड गरी रिस्टोर गर्नुहोस् (Upload Backup)
             <input type="file" accept=".json" onchange="restoreBackupJSON(event)" class="hidden">
-          </label><!-- मिति अनुसार रेकर्डहरू डिलिट गर्ने सेक्सन -->
-      <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs space-y-4 my-3">
-        <h3 class="text-base font-bold text-slate-800 flex items-center gap-2 text-rose-700">
-          <i data-lucide="trash-2" class="w-5 h-5"></i> मिति अनुसार रेकर्डहरू डिलिट गर्नुहोस् (Delete by Date Range)
-        </h3>
-        <p class="text-xs text-slate-600">सुरु र अन्तिम मिति छानी त्यसबीचका सम्पूर्ण बिलिङ, महसुल, ऋण, आम्दानी, खर्च तथा बैंक रेकर्डहरू स्थायी रूपमा हटाउनुहोस्।</p>
-        
-        <div class="grid grid-cols-2 gap-3 text-xs pt-1">
-          <div>
-            <label class="font-semibold text-slate-600 block mb-1">सुरु मिति (From BS)</label>
-            <input type="text" id="del-range-from" value="2083-01-01" class="w-full border border-slate-300 rounded-xl px-3 py-2 text-center font-semibold">
-          </div>
-          <div>
-            <label class="font-semibold text-slate-600 block mb-1">अन्तिम मिति (To BS)</label>
-            <input type="text" id="del-range-to" value="2083-12-30" class="w-full border border-slate-300 rounded-xl px-3 py-2 text-center font-semibold">
-          </div>
-        </div>
-
-        <button onclick="executeDateRangeRecordDeletion()" class="w-full bg-rose-700 hover:bg-rose-800 text-white text-xs font-semibold py-3 rounded-xl flex items-center justify-center gap-2 shadow-xs cursor-pointer">
-          <i data-lucide="trash-2" class="w-4 h-4"></i> छनोट गरिएको मिति अवधिका रेकर्डहरू डिलिट गर्नुहोस्
-        </button>
-      </div>
+          </label>
 
           <button onclick="showResetConfirmBox = !showResetConfirmBox; renderCurrentModule();" class="w-full bg-rose-50 hover:bg-rose-100 text-rose-800 border border-rose-200 text-xs font-semibold py-3 rounded-xl flex items-center justify-center gap-2">
             <i data-lucide="rotate-ccw" class="w-4 h-4"></i> ३. प्रणाली रिसेट गर्नुहोस् (Factory Reset)
@@ -3628,6 +3606,69 @@ function renderSupportModule() {
         </div>
       </div>
 
+      <!-- मिति र मोड्युल छानी रेकर्ड डिलिट गर्ने सेक्सन -->
+      <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs space-y-4">
+        <h3 class="text-base font-bold text-slate-800 flex items-center gap-2 text-rose-700">
+          <i data-lucide="trash-2" class="w-5 h-5"></i> मिति र मोड्युल छानी रेकर्ड डिलिट गर्नुहोस्
+        </h3>
+        <p class="text-xs text-slate-600">सुरु र अन्तिम मिति छान्नुहोस् र तल कुन-कुन मोड्युलको रेकर्ड हटाउने हो टिक (✓) लगाउनुहोस्:</p>
+        
+        <div class="grid grid-cols-2 gap-3 text-xs">
+          <div>
+            <label class="font-semibold text-slate-600 block mb-1">सुरु मिति (From BS)</label>
+            <input type="text" id="del-range-from" value="2083-01-01" class="w-full border border-slate-300 rounded-xl px-3 py-2 text-center font-semibold">
+          </div>
+          <div>
+            <label class="font-semibold text-slate-600 block mb-1">अन्तिम मिति (To BS)</label>
+            <input type="text" id="del-range-to" value="2083-12-30" class="w-full border border-slate-300 rounded-xl px-3 py-2 text-center font-semibold">
+          </div>
+        </div>
+
+        <div class="bg-slate-50 p-3 rounded-xl border border-slate-200 space-y-2 text-xs">
+          <div class="flex items-center justify-between border-b border-slate-200 pb-1.5 mb-1">
+            <span class="font-bold text-slate-700">डिलिट गर्ने मोड्युल छान्नुहोस्:</span>
+            <label class="flex items-center gap-1.5 text-teal-700 font-semibold cursor-pointer">
+              <input type="checkbox" id="del-select-all" checked onchange="toggleAllDeleteModules(this.checked)" class="rounded text-teal-600">
+              सबै छान्नुहोस् (Select All)
+            </label>
+          </div>
+
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <label class="flex items-center gap-2 cursor-pointer"><input type="checkbox" class="del-mod-cb" value="customers" checked> <span>ग्राहक विवरण (Customer KYC)</span></label>
+            <label class="flex items-center gap-2 cursor-pointer"><input type="checkbox" class="del-mod-cb" value="bankAccounts" checked> <span>बैंक खाता सूची (Bank Accounts)</span></label>
+            <label class="flex items-center gap-2 cursor-pointer"><input type="checkbox" class="del-mod-cb" value="readings" checked> <span>मिटर रिडिङ (Readings)</span></label>
+            <label class="flex items-center gap-2 cursor-pointer"><input type="checkbox" class="del-mod-cb" value="payments" checked> <span>महसुल असुली रसिद (Payments)</span></label>
+            <label class="flex items-center gap-2 cursor-pointer"><input type="checkbox" class="del-mod-cb" value="loans" checked> <span>ऋण लगानी तथा किस्ता (Loans)</span></label>
+            <label class="flex items-center gap-2 cursor-pointer"><input type="checkbox" class="del-mod-cb" value="bankTransactions" checked> <span>बैंक कारोबार (Bank Txns)</span></label>
+            <label class="flex items-center gap-2 cursor-pointer"><input type="checkbox" class="del-mod-cb" value="incomes" checked> <span>विविध आम्दानी (Incomes)</span></label>
+            <label class="flex items-center gap-2 cursor-pointer"><input type="checkbox" class="del-mod-cb" value="expenses" checked> <span>खर्च विवरण (Expenses)</span></label>
+            <label class="flex items-center gap-2 cursor-pointer"><input type="checkbox" class="del-mod-cb" value="staffPayroll" checked> <span>कर्मचारी तलब/ज्याला (Payroll)</span></label>
+            <label class="flex items-center gap-2 cursor-pointer"><input type="checkbox" class="del-mod-cb" value="tankerSales" checked> <span>ट्याङ्कर पानी बिक्री (Tanker)</span></label>
+          </div>
+        </div>
+
+        <button onclick="executeDateRangeRecordDeletion()" class="w-full bg-rose-700 hover:bg-rose-800 text-white text-xs font-semibold py-3 rounded-xl flex items-center justify-center gap-2 shadow-xs cursor-pointer">
+          <i data-lucide="trash-2" class="w-4 h-4"></i> छानिएका मोड्युलका रेकर्डहरू डिलिट गर्नुहोस्
+        </button>
+      </div>
+
+      <!-- Live Code / JSON State Patcher -->
+      <div class="md:col-span-2 bg-white p-5 rounded-2xl border border-slate-200 shadow-xs space-y-3">
+        <h3 class="text-base font-bold text-slate-800 flex items-center gap-2 mb-2">
+          <i data-lucide="code-2" class="w-5 h-5 text-slate-700"></i> आवश्यकता अनुसार कोड / डाटा प्याच अपडेट (Live Editor)
+        </h3>
+        <textarea id="support-live-json" rows="6" class="w-full font-mono text-[11px] bg-slate-900 text-emerald-300 p-3 rounded-xl border border-slate-700">${JSON.stringify({
+          auth: window.ERP_STATE.auth,
+          activeBSDate: window.ERP_STATE.activeBSDate,
+          receiptCounter: window.ERP_STATE.settings.receiptCounter
+        }, null, 2)}</textarea>
+        <button onclick="applyLiveCodePatch()" class="w-full bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold py-2.5 rounded-xl">
+          कोड / कन्फिगरेसन अपडेट लागू गर्नुहोस्
+        </button>
+      </div>
+    </div>
+  `;
+}
       <!-- Date Range Record Deletion Card (NEW FEATURE) -->
       <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs space-y-4">
         <h3 class="text-base font-bold text-slate-800 flex items-center gap-2 text-rose-700">
