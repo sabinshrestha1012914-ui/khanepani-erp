@@ -1479,7 +1479,7 @@ function sendNextWhatsappNow(continueLoop = false) {
 }
 
 // ============================================================================
-// 8. AMOUNT ENTRY & PRINTABLE RECEIPT WITH NEPALI WORDS (अमाउन्ट इन्ट्री)
+// 8. AMOUNT ENTRY & PRINTABLE RECEIPT WITH OPENING DUES (अमाउन्ट इन्ट्री)
 // ============================================================================
 let amountEntryMode = "single"; // 'single' | 'bulk'
 let selectedSingleCustId = "KH-001";
@@ -1488,21 +1488,27 @@ function renderAmountEntryModule() {
   const st = window.ERP_STATE;
   const nextRec = `REC-${parseBS(st.activeBSDate).y}-${st.settings.receiptCounter}`;
 
+  // छानिंदै गरेको ग्राहकको विवरण निकाल्ने
+  const selectedCust = st.customers.find(c => c.id === selectedSingleCustId) || st.customers[0] || {};
+  const custOpeningDue = Number(selectedCust.openingDue || 0);
+
   const unpaidReadings = st.readings.filter(r => (r.billAmount - (r.paidAmount || 0)) > 0);
   const custBills = st.readings.filter(r => r.customerId === selectedSingleCustId && (r.billAmount - (r.paidAmount || 0)) > 0);
   const dueBase = custBills.reduce((s, r) => s + (r.billAmount - (r.paidAmount || 0)), 0);
   const duePen = custBills.reduce((s, r) => s + (r.penaltyAmount || 0), 0);
-  const totalDue = dueBase + duePen;
+  
+  // कुल बाँकी = ओपनिङ बक्यौता + बाँकी महसुल + जरिवाना
+  const totalDue = custOpeningDue + dueBase + duePen;
 
   return `
     <div class="space-y-6">
       <!-- Mode Toggle -->
       <div class="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs flex flex-wrap items-center justify-between gap-3">
         <div class="flex gap-2">
-          <button onclick="amountEntryMode='single'; renderCurrentModule();" class="px-4 py-2 rounded-xl text-xs font-semibold transition ${amountEntryMode === 'single' ? 'bg-teal-700 text-white' : 'bg-slate-100 text-slate-700'}">
+          <button onclick="amountEntryMode='single'; renderCurrentModule();" class="px-4 py-2 rounded-xl text-xs font-semibold transition cursor-pointer ${amountEntryMode === 'single' ? 'bg-teal-700 text-white' : 'bg-slate-100 text-slate-700'}">
             सिङ्गल अमाउन्ट इन्ट्री & रसिद प्रिन्ट
           </button>
-          <button onclick="amountEntryMode='bulk'; renderCurrentModule();" class="px-4 py-2 rounded-xl text-xs font-semibold transition ${amountEntryMode === 'bulk' ? 'bg-teal-700 text-white' : 'bg-slate-100 text-slate-700'}">
+          <button onclick="amountEntryMode='bulk'; renderCurrentModule();" class="px-4 py-2 rounded-xl text-xs font-semibold transition cursor-pointer ${amountEntryMode === 'bulk' ? 'bg-teal-700 text-white' : 'bg-slate-100 text-slate-700'}">
             बल्क अमाउन्ट इन्ट्री (Bulk Collection)
           </button>
         </div>
@@ -1513,7 +1519,7 @@ function renderAmountEntryModule() {
 
       ${amountEntryMode === 'single' ? `
         <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs">
-          <h3 class="text-base font-bold text-slate-800 mb-4">सिङ्गल महसुल असुली तथा रसिद प्रिन्ट</h3>
+          <h3 class="text-base font-bold text-slate-800 mb-4">सिङ्गल महसुल असुली तथा रसिद प्रिन्ट (ओपनिङ बक्यौता सहित)</h3>
           <form onsubmit="submitSingleAmountEntry(event)" class="grid grid-cols-1 sm:grid-cols-3 gap-4 text-xs">
             <div>
               <label class="font-semibold text-slate-600 block mb-1">रसिद नं. (Auto)</label>
@@ -1525,22 +1531,27 @@ function renderAmountEntryModule() {
             </div>
             <div>
               <label class="font-semibold text-slate-600 block mb-1">ग्राहक छान्नुहोस् *</label>
-              <select id="amt-cust-select" onchange="selectedSingleCustId=this.value; renderCurrentModule();" class="w-full border border-slate-300 rounded-xl px-3 py-2 font-semibold">
-                ${st.customers.map(c => `<option value="${c.id}" ${c.id === selectedSingleCustId ? 'selected' : ''}>${c.id} - ${c.name}</option>`).join("")}
+              <select id="amt-cust-select" onchange="selectedSingleCustId=this.value; renderCurrentModule();" class="w-full border border-slate-300 rounded-xl px-3 py-2 font-semibold cursor-pointer">
+                ${st.customers.map(c => `<option value="${c.id}" ${c.id === selectedSingleCustId ? 'selected' : ''}>${c.id} - ${c.name} ${c.openingDue ? '(बक्यौता रु.'+c.openingDue+')' : ''}</option>`).join("")}
               </select>
             </div>
 
+            <!-- 🌟 गत वर्षको ओपनिङ बक्यौता कार्ड -->
+            <div class="bg-amber-50 p-3 rounded-xl border border-amber-200">
+              <span class="text-amber-800 block">गत वर्षको ओपनिङ बक्यौता:</span>
+              <strong class="text-sm text-amber-900 tabular-nums">${fmtMoney(custOpeningDue)}</strong>
+            </div>
             <div class="bg-slate-50 p-3 rounded-xl border border-slate-200">
-              <span class="text-slate-500 block">बाँकी महसुल रकम:</span>
+              <span class="text-slate-500 block">हाल बाँकी महसुल रकम:</span>
               <strong class="text-sm text-slate-900 tabular-nums">${fmtMoney(dueBase)}</strong>
             </div>
             <div class="bg-red-50 p-3 rounded-xl border border-red-200">
-              <span class="text-red-600 block">लाग्ने जरिवाना (मिति ${st.activeBSDate} अनुसार):</span>
+              <span class="text-red-600 block">लाग्ने जरिवाना:</span>
               <strong class="text-sm text-red-700 tabular-nums">${fmtMoney(duePen)}</strong>
             </div>
-            <div class="bg-teal-50 p-3 rounded-xl border border-teal-200">
-              <span class="text-teal-700 block">कुल तिर्नुपर्ने रकम:</span>
-              <strong class="text-sm text-teal-900 tabular-nums">${fmtMoney(totalDue)}</strong>
+            <div class="sm:col-span-3 bg-teal-50 p-3.5 rounded-xl border border-teal-200 flex justify-between items-center">
+              <span class="text-teal-800 font-bold text-sm">कुल तिर्नुपर्ने जम्मा रकम (ओपनिङ सहित):</span>
+              <strong class="text-lg text-teal-900 tabular-nums">${fmtMoney(totalDue)}</strong>
             </div>
 
             <div>
@@ -1555,7 +1566,7 @@ function renderAmountEntryModule() {
             </div>
 
             <div class="sm:col-span-3 flex justify-end gap-2 pt-2">
-              <button type="submit" class="bg-teal-700 hover:bg-teal-800 text-white font-semibold px-5 py-2.5 rounded-xl shadow-xs flex items-center gap-2">
+              <button type="submit" class="bg-teal-700 hover:bg-teal-800 text-white font-semibold px-5 py-2.5 rounded-xl shadow-xs flex items-center gap-2 cursor-pointer">
                 <i data-lucide="printer" class="w-4 h-4"></i> रकम सेभ गरी रसिद प्रिन्ट गर्नुहोस्
               </button>
             </div>
@@ -1574,6 +1585,7 @@ function renderAmountEntryModule() {
                   <th class="p-3">आइडी</th>
                   <th class="p-3">ग्राहकको नाम</th>
                   <th class="p-3">महिना</th>
+                  <th class="p-3 text-right">ओपनिङ बक्यौता</th>
                   <th class="p-3 text-right">बाँकी महसुल</th>
                   <th class="p-3 text-right">जरिवाना</th>
                   <th class="p-3 text-right">जम्मा बाँकी</th>
@@ -1582,14 +1594,16 @@ function renderAmountEntryModule() {
               </thead>
               <tbody class="divide-y divide-slate-100">
                 ${unpaidReadings.map(r => {
-                  const c = st.customers.find(x => x.id === r.customerId) || { name: r.customerId };
+                  const c = st.customers.find(x => x.id === r.customerId) || { name: r.customerId, openingDue: 0 };
+                  const opDue = Number(c.openingDue || 0);
                   const base = r.billAmount - (r.paidAmount || 0);
-                  const tot = base + (r.penaltyAmount || 0);
+                  const tot = opDue + base + (r.penaltyAmount || 0);
                   return `
                     <tr>
                       <td class="p-3 font-bold text-teal-800">${r.customerId}</td>
                       <td class="p-3 font-semibold">${c.name}</td>
                       <td class="p-3">${r.month}</td>
+                      <td class="p-3 text-right tabular-nums text-amber-700">${fmtMoney(opDue)}</td>
                       <td class="p-3 text-right tabular-nums">${fmtMoney(base)}</td>
                       <td class="p-3 text-right tabular-nums text-red-600">${fmtMoney(r.penaltyAmount || 0)}</td>
                       <td class="p-3 text-right font-bold tabular-nums">${fmtMoney(tot)}</td>
@@ -1598,12 +1612,12 @@ function renderAmountEntryModule() {
                       </td>
                     </tr>
                   `;
-                }).join("") || `<tr><td colspan="7" class="p-6 text-center text-slate-400">कुनै बाँकी बिल छैन।</td></tr>`}
+                }).join("") || `<tr><td colspan="8" class="p-6 text-center text-slate-400">कुनै बाँकी बिल छैन।</td></tr>`}
               </tbody>
             </table>
           </div>
           <div class="flex justify-end">
-            <button onclick="submitBulkAmountEntry()" class="bg-teal-700 hover:bg-teal-800 text-white text-xs font-semibold px-5 py-2.5 rounded-xl">
+            <button onclick="submitBulkAmountEntry()" class="bg-teal-700 hover:bg-teal-800 text-white text-xs font-semibold px-5 py-2.5 rounded-xl cursor-pointer">
               सबै बल्क अमाउन्ट सेभ गर्नुहोस्
             </button>
           </div>
@@ -1622,6 +1636,7 @@ function renderAmountEntryModule() {
                 <th class="p-3">रसिद नं.</th>
                 <th class="p-3">मिति (BS)</th>
                 <th class="p-3">ग्राहक</th>
+                <th class="p-3 text-right">ओपनिङ भुक्तानी</th>
                 <th class="p-3 text-right">महसुल</th>
                 <th class="p-3 text-right">जरिवाना</th>
                 <th class="p-3 text-right">कुल रकम</th>
@@ -1637,15 +1652,16 @@ function renderAmountEntryModule() {
                     <td class="p-3 font-bold text-teal-800">${p.receiptNo}</td>
                     <td class="p-3 tabular-nums">${p.date}</td>
                     <td class="p-3 font-semibold">${c.name} (${p.customerId})</td>
+                    <td class="p-3 text-right tabular-nums text-amber-700">${fmtMoney(p.openingPaid || 0)}</td>
                     <td class="p-3 text-right tabular-nums">${fmtMoney(p.billPaid)}</td>
                     <td class="p-3 text-right tabular-nums text-red-600">${fmtMoney(p.penaltyPaid)}</td>
                     <td class="p-3 text-right font-bold tabular-nums text-emerald-700">${fmtMoney(p.totalPaid)}</td>
                     <td class="p-3 text-[11px] text-slate-600">${numberToNepaliWords(p.totalPaid)}</td>
                     <td class="p-3 text-center flex items-center justify-center gap-1.5">
-                      <button onclick="printWaterReceipt('${p.id}')" class="px-2.5 py-1 bg-teal-50 hover:bg-teal-100 text-teal-800 border border-teal-200 rounded-lg font-semibold flex items-center gap-1">
+                      <button onclick="printWaterReceipt('${p.id}')" class="px-2.5 py-1 bg-teal-50 hover:bg-teal-100 text-teal-800 border border-teal-200 rounded-lg font-semibold flex items-center gap-1 cursor-pointer">
                         <i data-lucide="printer" class="w-3.5 h-3.5"></i> प्रिन्ट
                       </button>
-                      <button onclick="modifyPaymentRecord('${p.id}')" class="px-2.5 py-1 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 rounded-lg font-semibold">
+                      <button onclick="modifyPaymentRecord('${p.id}')" class="px-2.5 py-1 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 rounded-lg font-semibold cursor-pointer">
                         Modify
                       </button>
                     </td>
@@ -1664,15 +1680,26 @@ function submitSingleAmountEntry(e) {
   e.preventDefault();
   const st = window.ERP_STATE;
   const cid = selectedSingleCustId;
+  const cust = st.customers.find(c => c.id === cid);
   const date = document.getElementById("amt-date").value.trim() || st.activeBSDate;
   const paid = Number(document.getElementById("amt-paid-input").value) || 0;
   if (paid <= 0) return showToast("कृपया मान्य रकम राख्नुहोस्।", "error");
 
   const recNo = `REC-${parseBS(date).y}-${st.settings.receiptCounter++}`;
   let remaining = paid;
+  let openingPaid = 0;
   let billPaid = 0;
   let penaltyPaid = 0;
 
+  // १. पहिले ग्राहकको ओपनिङ बक्यौता मिलाउने
+  if (cust && Number(cust.openingDue || 0) > 0) {
+    const opApply = Math.min(remaining, Number(cust.openingDue));
+    openingPaid = opApply;
+    cust.openingDue = Number(cust.openingDue) - opApply;
+    remaining -= opApply;
+  }
+
+  // २. त्यसपछि रिडिङ बिल र जरिवाना मिलाउने
   st.readings.filter(r => r.customerId === cid && (r.billAmount - (r.paidAmount || 0)) > 0).forEach(r => {
     if (remaining <= 0) return;
     const pen = r.penaltyAmount || 0;
@@ -1695,6 +1722,7 @@ function submitSingleAmountEntry(e) {
     customerId: cid,
     date,
     month: st.activeBSDate,
+    openingPaid,
     billPaid,
     penaltyPaid,
     totalPaid: paid,
@@ -1702,9 +1730,10 @@ function submitSingleAmountEntry(e) {
   };
   st.payments.push(payObj);
   window.recalculateAllDynamicValues(false);
+  window.cloudSync?.save();
   renderCurrentModule();
   printWaterReceipt(payObj.id);
-  showToast(`रसिद नं. ${recNo} सुरक्षित भयो!`);
+  showToast(`रसिद नं. ${recNo} सुरक्षित भयो!`, "success");
 }
 
 function submitBulkAmountEntry() {
@@ -1718,17 +1747,35 @@ function submitBulkAmountEntry() {
     const rd = st.readings.find(r => r.id === inp.dataset.rdId);
     if (!rd) return;
 
-    const recNo = `REC-${parseBS(date).y}-${st.settings.receiptCounter++}`;
-    const penPaid = Math.min(val, rd.penaltyAmount || 0);
-    const basePaid = Math.max(0, val - penPaid);
-    rd.paidAmount = (rd.paidAmount || 0) + basePaid;
+    const cust = st.customers.find(c => c.id === rd.customerId);
+    let remaining = val;
+    let openingPaid = 0;
+    let penPaid = 0;
+    let basePaid = 0;
 
+    if (cust && Number(cust.openingDue || 0) > 0) {
+      openingPaid = Math.min(remaining, Number(cust.openingDue));
+      cust.openingDue = Number(cust.openingDue) - openingPaid;
+      remaining -= openingPaid;
+    }
+
+    penPaid = Math.min(remaining, rd.penaltyAmount || 0);
+    remaining -= penPaid;
+
+    basePaid = Math.min(remaining, (rd.billAmount - (rd.paidAmount || 0)));
+    rd.paidAmount = (rd.paidAmount || 0) + basePaid;
+    remaining -= basePaid;
+
+    if (remaining > 0) basePaid += remaining;
+
+    const recNo = `REC-${parseBS(date).y}-${st.settings.receiptCounter++}`;
     st.payments.push({
       id: "PAY-" + Date.now() + "-" + count,
       receiptNo: recNo,
       customerId: rd.customerId,
       date,
       month: rd.month,
+      openingPaid,
       billPaid: basePaid,
       penaltyPaid: penPaid,
       totalPaid: val,
@@ -1738,8 +1785,9 @@ function submitBulkAmountEntry() {
   });
 
   window.recalculateAllDynamicValues(false);
+  window.cloudSync?.save();
   renderCurrentModule();
-  showToast(`${count} जना ग्राहकको बल्क अमाउन्ट इन्ट्री सुरक्षित भयो!`);
+  showToast(`${count} जना ग्राहकको बल्क अमाउन्ट इन्ट्री सुरक्षित भयो!`, "success");
 }
 
 function modifyPaymentRecord(payId) {
@@ -1747,7 +1795,14 @@ function modifyPaymentRecord(payId) {
   const idx = st.payments.findIndex(p => p.id === payId);
   if (idx < 0) return;
   const p = st.payments[idx];
-  // Reverse payment back into customer's unpaid bill so user can re-enter cleanly
+
+  // ओपनिङ बक्यौता फिर्ता गर्ने
+  if (p.openingPaid > 0) {
+    const cust = st.customers.find(c => c.id === p.customerId);
+    if (cust) cust.openingDue = Number(cust.openingDue || 0) + p.openingPaid;
+  }
+
+  // बिलको रकम फिर्ता गर्ने
   let refund = p.billPaid;
   st.readings.filter(r => r.customerId === p.customerId && (r.paidAmount || 0) > 0).reverse().forEach(r => {
     if (refund <= 0) return;
@@ -1755,12 +1810,14 @@ function modifyPaymentRecord(payId) {
     r.paidAmount -= rev;
     refund -= rev;
   });
+
   st.payments.splice(idx, 1);
   selectedSingleCustId = p.customerId;
   amountEntryMode = "single";
   window.recalculateAllDynamicValues(false);
+  window.cloudSync?.save();
   renderCurrentModule();
-  showToast(`रसिद ${p.receiptNo} संशोधन (Modify) को लागि उल्टाइयो। अब सही रकम इन्ट्री गर्नुहोस्।`, "info");
+  showToast(`रसिद ${p.receiptNo} संशोधनका लागि उल्टाइयो। अब सही रकम इन्ट्री गर्नुहोस्।`, "info");
 }
 
 function printWaterReceipt(payId) {
@@ -1803,13 +1860,20 @@ function printWaterReceipt(payId) {
           </tr>
         </thead>
         <tbody>
+          ${Number(p.openingPaid || 0) > 0 ? `
+            <tr>
+              <td class="border border-slate-400 p-2">१</td>
+              <td class="border border-slate-400 p-2">गत वर्षको ओपनिङ बक्यौता भुक्तानी</td>
+              <td class="border border-slate-400 p-2 text-right font-semibold">${fmtMoney(p.openingPaid)}</td>
+            </tr>
+          ` : ''}
           <tr>
-            <td class="border border-slate-400 p-2">१</td>
+            <td class="border border-slate-400 p-2">${Number(p.openingPaid || 0) > 0 ? '२' : '१'}</td>
             <td class="border border-slate-400 p-2">खानेपानी महसुल भुक्तानी</td>
             <td class="border border-slate-400 p-2 text-right font-semibold">${fmtMoney(p.billPaid)}</td>
           </tr>
           <tr>
-            <td class="border border-slate-400 p-2">२</td>
+            <td class="border border-slate-400 p-2">${Number(p.openingPaid || 0) > 0 ? '३' : '२'}</td>
             <td class="border border-slate-400 p-2">विलम्ब जरिवाना रकम</td>
             <td class="border border-slate-400 p-2 text-right font-semibold">${fmtMoney(p.penaltyPaid)}</td>
           </tr>
