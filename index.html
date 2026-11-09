@@ -1243,19 +1243,37 @@ function renderUnitEntryModule() {
           <p class="text-xs text-slate-500">लागू दर: न्यूनतम ${activeRule.minUnits} युनिट सम्म ${fmtMoney(activeRule.minAmount)}, अतिरिक्त रु. ${activeRule.extraRate}/युनिट</p>
         </div>
         <div class="flex flex-wrap items-center gap-2">
+          <!-- महिना छान्ने -->
           <div>
             <label class="block text-[10px] font-semibold text-slate-500">महिना छान्नुहोस्</label>
             <select id="unit-month-select" onchange="selectedUnitMonth = this.value; renderCurrentModule();" class="text-xs font-bold border border-slate-300 rounded-xl px-3 py-2 bg-slate-50">
               ${NEPALI_MONTHS.map(m => `<option value="${m}" ${m === selectedUnitMonth ? 'selected' : ''}>${m}</option>`).join("")}
             </select>
           </div>
+
+          <!-- इन्ट्री मिति -->
           <div>
             <label class="block text-[10px] font-semibold text-slate-500">इन्ट्री मिति (Auto BS)</label>
             <input type="text" id="unit-entry-date" value="${st.activeBSDate}" class="w-28 text-xs font-bold border border-teal-300 bg-teal-50 text-teal-950 rounded-xl px-3 py-2">
           </div>
+
+          <!-- माथि नै ग्राहक छिनेर स्टेटमेन्ट हेर्ने अप्सन -->
+          <div>
+            <label class="block text-[10px] font-semibold text-slate-500">ग्राहक स्टेटमेन्ट</label>
+            <select id="header-customer-select" class="text-xs font-bold border border-indigo-300 rounded-xl px-3 py-2 bg-indigo-50/50 text-indigo-950">
+              ${st.customers.map(c => `<option value="${c.id}">${c.id} - ${c.name}</option>`).join("")}
+            </select>
+          </div>
+          <div class="pt-4">
+            <button onclick="openCustomerHistoryModal(document.getElementById('header-customer-select').value)" class="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold px-3 py-2 rounded-xl shadow-xs flex items-center gap-1">
+              📊 स्टेटमेन्ट
+            </button>
+          </div>
+
+          <!-- Bulk WhatsApp बटन -->
           <div class="pt-4">
             <button onclick="openBulkWhatsappModal('${selectedUnitMonth}')" class="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold px-4 py-2 rounded-xl shadow-xs flex items-center gap-1.5">
-              <i data-lucide="message-circle" class="w-4 h-4"></i> Bulk WhatsApp पठाउनुहोस् (${monthReadings.length})
+              <i data-lucide="message-circle" class="w-4 h-4"></i> Bulk WhatsApp (${monthReadings.length})
             </button>
           </div>
         </div>
@@ -1296,7 +1314,7 @@ function renderUnitEntryModule() {
                   <td class="p-3 text-right font-bold tabular-nums text-teal-800" id="bill-${c.id}">${fmtMoney(bill)}</td>
                   <td class="p-3 text-center">
                     ${existing
-                      ? `<span class="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-teal-100 text-teal-800">सुरक्षित (Modify योग्य)</span>`
+                      ? `<span class="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-teal-100 text-teal-800">सुरक्षित</span>`
                       : `<span class="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-slate-100 text-slate-500">बाँकी</span>`
                     }
                   </td>
@@ -1349,7 +1367,6 @@ function saveBulkReadings() {
     const existingIdx = window.ERP_STATE.readings.findIndex(r => r.customerId === cid && r.month === selectedUnitMonth);
 
     if (existingIdx >= 0) {
-      // Modify existing entry
       const old = window.ERP_STATE.readings[existingIdx];
       old.entryDate = entryDate;
       old.currReading = curr;
@@ -1384,6 +1401,90 @@ function saveBulkReadings() {
   window.recalculateAllDynamicValues(false);
   renderCurrentModule();
   showToast(`${selectedUnitMonth} महिनाको ${savedCount} जना ग्राहकको युनिट इन्ट्री सुरक्षित/अपडेट भयो!`);
+}
+
+// Customer Reading History Statement Modal Controller
+function openCustomerHistoryModal(customerId) {
+  const st = window.ERP_STATE;
+  const customer = st.customers.find(c => c.id === customerId);
+  if (!customer) return showToast("कृपया वैध ग्राहक छान्नुहोस्।", "error");
+
+  const custReadings = st.readings.filter(r => r.customerId === customerId);
+  
+  let historyHtml = `
+    <div class="fixed inset-0 bg-slate-900/50 z-50 flex items-center justify-center p-4">
+      <div class="bg-white rounded-2xl max-w-2xl w-full p-6 shadow-xl space-y-4 max-h-[90vh] overflow-y-auto">
+        <div class="flex items-center justify-between border-b border-slate-200 pb-3">
+          <div>
+            <h3 class="text-base font-bold text-slate-800">ग्राहक रिडिङ हिस्ट्री स्टेटमेन्ट</h3>
+            <p class="text-xs text-slate-500">नाम: <b>${customer.name}</b> | आईडी: <b>${customer.id}</b> | फोन: ${customer.phone || 'उपलब्ध छैन'}</p>
+          </div>
+          <button onclick="closeCustomerHistoryModal()" class="text-slate-400 hover:text-slate-600 font-bold text-lg px-2">✕</button>
+        </div>
+
+        <div class="overflow-x-auto">
+          <table class="w-full text-xs text-left border-collapse">
+            <thead class="bg-slate-50 text-slate-700 font-semibold border-b border-slate-200">
+              <tr>
+                <th class="p-2.5">महिना</th>
+                <th class="p-2.5">इन्ट्री मिति (BS)</th>
+                <th class="p-2.5 text-right">साविक</th>
+                <th class="p-2.5 text-right">हालको</th>
+                <th class="p-2.5 text-right">खपत (युनिट)</th>
+                <th class="p-2.5 text-right">बिल रकम</th>
+                <th class="p-2.5 text-center">स्थिति</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-100">
+              ${custReadings.length > 0 ? custReadings.map(r => `
+                <tr class="hover:bg-slate-50">
+                  <td class="p-2.5 font-bold text-teal-800">${r.month}</td>
+                  <td class="p-2.5 text-slate-600">${r.entryDate || '-'}</td>
+                  <td class="p-2.5 text-right font-mono">${r.prevReading}</td>
+                  <td class="p-2.5 text-right font-mono font-bold">${r.currReading}</td>
+                  <td class="p-2.5 text-right font-bold text-slate-700">${r.units}</td>
+                  <td class="p-2.5 text-right font-bold text-teal-700">${fmtMoney(r.billAmount)}</td>
+                  <td class="p-2.5 text-center">
+                    <span class="px-2 py-0.5 rounded-full text-[10px] font-semibold ${r.status === 'Paid' ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'}">
+                      ${r.status === 'Paid' ? 'चुक्ता' : 'बाँकी'}
+                    </span>
+                  </td>
+                </tr>
+              `).join("") : `
+                <tr>
+                  <td colspan="7" class="p-6 text-center text-slate-400">यो ग्राहकको कुनै पनि रिडिङ रेकर्ड फेला परेन।</td>
+                </tr>
+              `}
+            </tbody>
+          </table>
+        </div>
+
+        <div class="flex justify-end gap-2 pt-3 border-t border-slate-100">
+          <button onclick="window.print()" class="bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold px-4 py-2 rounded-xl flex items-center gap-1.5">
+            🖨️ प्रिन्ट गर्नुहोस्
+          </button>
+          <button onclick="closeCustomerHistoryModal()" class="bg-teal-700 hover:bg-teal-800 text-white text-xs font-semibold px-4 py-2 rounded-xl">
+            बन्द गर्नुहोस्
+          </button>
+        </div>
+      </div>
+    </div>
+  `;
+
+  let modalContainer = document.getElementById("customer-history-modal-container");
+  if (!modalContainer) {
+    modalContainer = document.createElement("div");
+    modalContainer.id = "customer-history-modal-container";
+    document.body.appendChild(modalContainer);
+  }
+  modalContainer.innerHTML = historyHtml;
+}
+
+function closeCustomerHistoryModal() {
+  const modalContainer = document.getElementById("customer-history-modal-container");
+  if (modalContainer) {
+    modalContainer.innerHTML = "";
+  }
 }
 
 // Anti-Block Bulk WhatsApp Queue Controller
@@ -1431,7 +1532,6 @@ function startBulkWhatsappQueue() {
   document.getElementById("wa-start-btn").classList.add("hidden");
   document.getElementById("wa-pause-btn").classList.remove("hidden");
 
-  // Randomized 6-10 second delay to prevent WhatsApp spam block
   waCountdown = Math.floor(Math.random() * 5) + 6;
   document.getElementById("wa-timer-text").textContent = `${waCountdown} सेकेन्डमा पठाउँदै...`;
 
@@ -1483,6 +1583,8 @@ function sendNextWhatsappNow(continueLoop = false) {
 // ============================================================================
 let amountEntryMode = "single"; // 'single' | 'bulk'
 let selectedSingleCustId = "KH-001";
+let statementStartDate = "";
+let statementEndDate = "";
 
 function renderAmountEntryModule() {
   const st = window.ERP_STATE;
@@ -1518,8 +1620,9 @@ function renderAmountEntryModule() {
       </div>
 
       ${amountEntryMode === 'single' ? `
-        <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs">
-          <h3 class="text-base font-bold text-slate-800 mb-4">सिङ्गल महसुल असुली तथा रसिद प्रिन्ट (ओपनिङ बक्यौता सहित)</h3>
+        <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs space-y-5">
+          <h3 class="text-base font-bold text-slate-800 mb-2">सिङ्गल महसुल असुली तथा रसिद प्रिन्ट (ओपनिङ बक्यौता सहित)</h3>
+          
           <form onsubmit="submitSingleAmountEntry(event)" class="grid grid-cols-1 sm:grid-cols-3 gap-4 text-xs">
             <div>
               <label class="font-semibold text-slate-600 block mb-1">रसिद नं. (Auto)</label>
@@ -1571,6 +1674,31 @@ function renderAmountEntryModule() {
               </button>
             </div>
           </form>
+
+          <!-- 🌟 ग्राहकको मिति अनुसारको फुल ट्रान्जेक्सन हिस्ट्री स्टेटमेन्ट सेक्सन -->
+          <div class="border-t border-slate-200 pt-5 mt-5 space-y-3">
+            <div class="flex flex-wrap items-center justify-between gap-3 bg-indigo-50/60 p-4 rounded-xl border border-indigo-100">
+              <div>
+                <h4 class="text-sm font-bold text-indigo-950">📊 ग्राहकको मिति अनुसारको फुल ट्रान्जेक्सन हिस्ट्री स्टेटमेन्ट</h4>
+                <p class="text-[11px] text-indigo-700">छानिएको ग्राहक (${selectedCust.name} - ${selectedCust.id}) को तोकिएको मिति दायराभित्रका सबै भुक्तानी रेकर्डहरू</p>
+              </div>
+              <div class="flex flex-wrap items-center gap-2">
+                <div>
+                  <label class="block text-[10px] font-semibold text-slate-600">सुरु मिति (BS)</label>
+                  <input type="text" id="statement-start-date" value="${statementStartDate}" placeholder="YYYY-MM-DD" class="text-xs border border-indigo-300 rounded-lg px-2.5 py-1.5 bg-white">
+                </div>
+                <div>
+                  <label class="block text-[10px] font-semibold text-slate-600">अन्त्य मिति (BS)</label>
+                  <input type="text" id="statement-end-date" value="${statementEndDate}" placeholder="YYYY-MM-DD" class="text-xs border border-indigo-300 rounded-lg px-2.5 py-1.5 bg-white">
+                </div>
+                <div class="pt-4">
+                  <button type="button" onclick="generateCustomerDateRangeStatement()" class="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold px-4 py-1.5 rounded-lg shadow-xs flex items-center gap-1 cursor-pointer">
+                    स्टेटमेन्ट हेर्नुहोस्
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       ` : `
         <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs space-y-4">
@@ -1676,6 +1804,107 @@ function renderAmountEntryModule() {
   `;
 }
 
+// 🌟 मिति दायरा अनुसारको ग्राहक स्टेटमेन्ट जेनेरेट गर्ने फंक्सन
+function generateCustomerDateRangeStatement() {
+  const st = window.ERP_STATE;
+  statementStartDate = document.getElementById("statement-start-date").value.trim();
+  statementEndDate = document.getElementById("statement-end-date").value.trim();
+  const customerId = selectedSingleCustId;
+  const cust = st.customers.find(c => c.id === customerId);
+
+  if (!cust) return showToast("कृपया वैध ग्राहक छान्नुहोस्।", "error");
+
+  // उक्त ग्राहकको भुक्तानी रेकर्डहरू फिल्टर गर्ने (यदि मिति दिएको छ भने मिति अनुसार, छैन भने सबै)
+  let filteredPayments = st.payments.filter(p => p.customerId === customerId);
+  if (statementStartDate) {
+    filteredPayments = filteredPayments.filter(p => p.date >= statementStartDate);
+  }
+  if (statementEndDate) {
+    filteredPayments = filteredPayments.filter(p => p.date <= statementEndDate);
+  }
+
+  const totalOpeningPaid = filteredPayments.reduce((sum, p) => sum + Number(p.openingPaid || 0), 0);
+  const totalBillPaid = filteredPayments.reduce((sum, p) => sum + Number(p.billPaid || 0), 0);
+  const totalPenaltyPaid = filteredPayments.reduce((sum, p) => sum + Number(p.penaltyPaid || 0), 0);
+  const grandTotalPaid = filteredPayments.reduce((sum, p) => sum + Number(p.totalPaid || 0), 0);
+
+  const html = `
+    <div class="border-2 border-slate-800 p-6 rounded-xl space-y-4 bg-white">
+      <div class="flex items-center justify-between border-b-2 border-slate-800 pb-3">
+        <div class="flex items-center gap-3">
+          ${st.settings.logoDataUrl ? `<img src="${st.settings.logoDataUrl}" class="w-14 h-14 object-contain">` : `<div class="w-12 h-12 rounded-full bg-teal-700 text-white flex items-center justify-center font-bold text-lg">खा.पा.</div>`}
+          <div>
+            <h2 class="text-lg font-bold text-slate-900">${st.settings.committeeName}</h2>
+            <p class="text-xs text-slate-600">${st.settings.address} | फोन: ${st.settings.phone}</p>
+          </div>
+        </div>
+        <div class="text-right">
+          <span class="px-3 py-1 bg-indigo-900 text-white text-xs font-bold rounded">ग्राहक ट्रान्जेक्सन स्टेटमेन्ट</span>
+          <div class="text-xs font-semibold mt-1">अवधि: ${statementStartDate || 'सुरु देखि'} देखि ${statementEndDate || 'हालसम्म'}</div>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-2 gap-2 text-xs bg-slate-50 p-3 rounded border border-slate-300">
+        <div><strong>ग्राहक आइडी:</strong> ${cust.id}</div>
+        <div><strong>फोन नं.:</strong> ${cust.phone || '-'}</div>
+        <div><strong>ग्राहकको नाम:</strong> ${cust.name}</div>
+        <div><strong>हालको ओपनिङ बक्यौता:</strong> ${fmtMoney(cust.openingDue || 0)}</div>
+      </div>
+
+      <table class="w-full text-xs border-collapse border border-slate-400">
+        <thead>
+          <tr class="bg-slate-100">
+            <th class="border border-slate-400 p-2 text-left">रसिद नं.</th>
+            <th class="border border-slate-400 p-2 text-left">मिति (BS)</th>
+            <th class="border border-slate-400 p-2 text-right">ओपनिङ भुक्तानी</th>
+            <th class="border border-slate-400 p-2 text-right">महसुल भुक्तानी</th>
+            <th class="border border-slate-400 p-2 text-right">जरिवाना</th>
+            <th class="border border-slate-400 p-2 text-right">कुल जम्मा रकम</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${filteredPayments.length > 0 ? filteredPayments.map(p => `
+            <tr>
+              <td class="border border-slate-400 p-2 font-bold text-teal-800">${p.receiptNo}</td>
+              <td class="border border-slate-400 p-2">${p.date}</td>
+              <td class="border border-slate-400 p-2 text-right">${fmtMoney(p.openingPaid || 0)}</td>
+              <td class="border border-slate-400 p-2 text-right">${fmtMoney(p.billPaid || 0)}</td>
+              <td class="border border-slate-400 p-2 text-right">${fmtMoney(p.penaltyPaid || 0)}</td>
+              <td class="border border-slate-400 p-2 text-right font-bold">${fmtMoney(p.totalPaid || 0)}</td>
+            </tr>
+          `).join("") : `
+            <tr>
+              <td colspan="6" class="border border-slate-400 p-4 text-center text-slate-500">तोकिएको मिति दायराभित्र कुनै पनि ट्रान्जेक्सन फेला परेन।</td>
+            </tr>
+          `}
+          <tr class="bg-slate-100 font-bold">
+            <td colspan="2" class="border border-slate-400 p-2 text-right">कुल योग:</td>
+            <td class="border border-slate-400 p-2 text-right">${fmtMoney(totalOpeningPaid)}</td>
+            <td class="border border-slate-400 p-2 text-right">${fmtMoney(totalBillPaid)}</td>
+            <td class="border border-slate-400 p-2 text-right">${fmtMoney(totalPenaltyPaid)}</td>
+            <td class="border border-slate-400 p-2 text-right text-teal-900">${fmtMoney(grandTotalPaid)}</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div class="text-xs p-2.5 bg-slate-50 border border-slate-300 rounded">
+        <strong>अक्षरमा कुल रकम:</strong> <u>${numberToNepaliWords(grandTotalPaid)}</u>
+      </div>
+
+      <div class="flex justify-between items-end pt-8 text-xs">
+        <div>तयाਰ गर्नेको सही: ______________________</div>
+        <div class="text-right">
+          <div>______________________</div>
+          <div class="font-semibold">${st.settings.authorizedPerson}</div>
+          <div class="text-[10px] text-slate-500">आधिकारिक सही / छाप</div>
+        </div>
+      </div>
+    </div>
+  `;
+
+  openPrintModal(`ग्राहक स्टेटमेन्ट - ${cust.name}`, html);
+}
+
 function submitSingleAmountEntry(e) {
   e.preventDefault();
   const st = window.ERP_STATE;
@@ -1691,7 +1920,6 @@ function submitSingleAmountEntry(e) {
   let billPaid = 0;
   let penaltyPaid = 0;
 
-  // १. पहिले ग्राहकको ओपनिङ बक्यौता मिलाउने
   if (cust && Number(cust.openingDue || 0) > 0) {
     const opApply = Math.min(remaining, Number(cust.openingDue));
     openingPaid = opApply;
@@ -1699,7 +1927,6 @@ function submitSingleAmountEntry(e) {
     remaining -= opApply;
   }
 
-  // २. त्यसपछि रिडिङ बिल र जरिवाना मिलाउने
   st.readings.filter(r => r.customerId === cid && (r.billAmount - (r.paidAmount || 0)) > 0).forEach(r => {
     if (remaining <= 0) return;
     const pen = r.penaltyAmount || 0;
@@ -1796,13 +2023,11 @@ function modifyPaymentRecord(payId) {
   if (idx < 0) return;
   const p = st.payments[idx];
 
-  // ओपनिङ बक्यौता फिर्ता गर्ने
   if (p.openingPaid > 0) {
     const cust = st.customers.find(c => c.id === p.customerId);
     if (cust) cust.openingDue = Number(cust.openingDue || 0) + p.openingPaid;
   }
 
-  // बिलको रकम फिर्ता गर्ने
   let refund = p.billPaid;
   st.readings.filter(r => r.customerId === p.customerId && (r.paidAmount || 0) > 0).reverse().forEach(r => {
     if (refund <= 0) return;
