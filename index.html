@@ -2742,7 +2742,7 @@ function addExpenseEntry(e) {
 }
 
 // ============================================================================
-// 13. STAFF & PAYROLL MODULE (WITH AUTO TANKER WAGE INTEGRATION)
+// 13. STAFF & PAYROLL MODULE (ADD / MODIFY / DELETE STAFF + PAYROLL)
 // ============================================================================
 let staffWageMonth = "कार्तिक";
 
@@ -2751,14 +2751,69 @@ function renderStaffModule() {
 
   return `
     <div class="space-y-6">
-      <!-- Monthly Tanker Wage Auto-Calculation Summary -->
+      <!-- 🌟 १. नयाँ कर्मचारी थप्ने, सच्याउने (Modify) र हटाउने (Delete) सेक्सन -->
+      <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs space-y-4">
+        <h3 class="text-sm font-bold text-slate-800 flex items-center gap-2">
+          <i data-lucide="user-cog" class="w-4 h-4 text-teal-700"></i> 
+          <span id="stf-form-title">कर्मचारी दर्ता तथा व्यवस्थापन (Add / Modify / Delete Staff)</span>
+        </h3>
+        
+        <form onsubmit="saveStaffMemberData(event)" class="grid grid-cols-1 sm:grid-cols-4 gap-3 text-xs">
+          <input type="hidden" id="edit-stf-index" value="-1">
+          <div>
+            <label class="font-semibold text-slate-600 block mb-1">कर्मचारीको पूरा नाम *</label>
+            <input type="text" id="new-stf-name" required placeholder="उदा: हरिबहादुर तामाङ" class="w-full border border-slate-300 rounded-xl px-3 py-2 font-semibold">
+          </div>
+          <div>
+            <label class="font-semibold text-slate-600 block mb-1">पद / जिम्मेवारी *</label>
+            <input type="text" id="new-stf-role" required placeholder="उदा: मिटर रिडर / चालक / कार्यालय सहयोगी" class="w-full border border-slate-300 rounded-xl px-3 py-2">
+          </div>
+          <div>
+            <label class="font-semibold text-slate-600 block mb-1">मोबाइल नम्बर</label>
+            <input type="text" id="new-stf-phone" placeholder="98XXXXXXXX" class="w-full border border-slate-300 rounded-xl px-3 py-2">
+          </div>
+          <div class="flex items-end gap-2">
+            <button type="submit" class="flex-1 bg-teal-700 hover:bg-teal-800 text-white font-semibold py-2 px-3 rounded-xl cursor-pointer flex items-center justify-center gap-1.5">
+              <i data-lucide="save" class="w-4 h-4"></i> <span id="stf-submit-text">कर्मचारी थप्नुहोस्</span>
+            </button>
+            <button type="button" id="stf-cancel-btn" onclick="resetStaffForm()" class="hidden bg-slate-200 hover:bg-slate-300 text-slate-700 font-semibold py-2 px-3 rounded-xl cursor-pointer">
+              रद्द
+            </button>
+          </div>
+        </form>
+
+        <!-- दर्ता भएका कर्मचारीहरूको सूची (Edit र Delete विकल्प सहित) -->
+        <div class="pt-3 border-t border-slate-100">
+          <div class="text-[11px] font-semibold text-slate-500 mb-2">हाल कार्यरत कर्मचारीहरू (${st.staffList.length} जना):</div>
+          <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2.5">
+            ${st.staffList.map((sf, idx) => `
+              <div class="flex items-center justify-between bg-slate-50 border border-slate-200 px-3 py-2 rounded-xl text-xs">
+                <div>
+                  <div class="font-bold text-slate-900">${sf.name}</div>
+                  <div class="text-[11px] text-slate-500">${sf.role} ${sf.phone ? `• ${sf.phone}` : ''}</div>
+                </div>
+                <div class="flex items-center gap-1">
+                  <button type="button" onclick="editStaffMember(${idx})" title="विवरण सच्याउनुहोस् (Modify)" class="px-2 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-lg text-[10px] font-semibold cursor-pointer">
+                    Modify
+                  </button>
+                  <button type="button" onclick="deleteStaffMember('${sf.id}')" title="कर्मचारी हटाउनुहोस् (Delete)" class="px-2 py-1 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-lg text-[10px] font-semibold cursor-pointer">
+                    Delete
+                  </button>
+                </div>
+              </div>
+            `).join("") || `<span class="text-xs text-slate-400">कुनै कर्मचारी दर्ता छैन।</span>`}
+          </div>
+        </div>
+      </div>
+
+      <!-- २. Monthly Tanker Wage Auto-Calculation Summary -->
       <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs space-y-3">
         <div class="flex flex-wrap items-center justify-between gap-2">
           <div>
             <h3 class="text-sm font-bold text-slate-800">गाडीमा पानी बिक्री ज्याला विवरण (महिना अनुसार अटोमेटिक)</h3>
             <p class="text-xs text-slate-500">महिना छान्नासाथ ट्याङ्कर पानी बिक्रीबाट बनेको प्रत्येक कर्मचारी/चालकको कुल ज्याला अटोमेटिक देखिन्छ।</p>
           </div>
-          <select onchange="staffWageMonth=this.value; renderCurrentModule();" class="text-xs font-bold border border-slate-300 rounded-xl px-3 py-2 bg-teal-50">
+          <select onchange="staffWageMonth=this.value; renderCurrentModule();" class="text-xs font-bold border border-slate-300 rounded-xl px-3 py-2 bg-teal-50 cursor-pointer">
             ${NEPALI_MONTHS.map(m => `<option value="${m}" ${m === staffWageMonth ? 'selected' : ''}>${m} महिना</option>`).join("")}
           </select>
         </div>
@@ -2785,19 +2840,19 @@ function renderStaffModule() {
         </div>
       </div>
 
-      <!-- Staff Salary & Allowance Entry -->
+      <!-- ३. Staff Salary & Allowance Entry -->
       <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs">
         <h3 class="text-sm font-bold text-slate-800 mb-3">कर्मचारी तलब, भत्ता, पोशाक तथा चाडपर्व खर्च इन्ट्री</h3>
         <form onsubmit="addStaffPayrollEntry(event)" class="grid grid-cols-1 sm:grid-cols-5 gap-3 text-xs">
           <div>
             <label class="font-semibold text-slate-600 block mb-1">कर्मचारी छान्नुहोस् *</label>
-            <select id="stf-id" class="w-full border border-slate-300 rounded-xl px-3 py-2 font-semibold">
+            <select id="stf-id" required class="w-full border border-slate-300 rounded-xl px-3 py-2 font-semibold cursor-pointer">
               ${st.staffList.map(s => `<option value="${s.id}">${s.name}</option>`).join("")}
             </select>
           </div>
           <div>
             <label class="font-semibold text-slate-600 block mb-1">खर्च प्रकार *</label>
-            <select id="stf-type" class="w-full border border-slate-300 rounded-xl px-3 py-2 font-semibold">
+            <select id="stf-type" class="w-full border border-slate-300 rounded-xl px-3 py-2 font-semibold cursor-pointer">
               <option value="तलब">तलब (Salary)</option>
               <option value="सेवा सुविधा भत्ता">सेवा सुविधा भत्ता</option>
               <option value="पोशाक खर्च">पोशाक खर्च</option>
@@ -2807,7 +2862,7 @@ function renderStaffModule() {
           </div>
           <div>
             <label class="font-semibold text-slate-600 block mb-1">महिना</label>
-            <select id="stf-month" class="w-full border border-slate-300 rounded-xl px-3 py-2">
+            <select id="stf-month" class="w-full border border-slate-300 rounded-xl px-3 py-2 cursor-pointer">
               ${NEPALI_MONTHS.map(m => `<option value="${m}" ${m === staffWageMonth ? 'selected' : ''}>${m}</option>`).join("")}
             </select>
           </div>
@@ -2823,14 +2878,14 @@ function renderStaffModule() {
             <input type="text" id="stf-remarks" placeholder="कैफियत / विवरण" class="w-full border border-slate-300 rounded-xl px-3 py-2">
           </div>
           <div>
-            <button type="submit" class="w-full bg-teal-700 hover:bg-teal-800 text-white font-semibold py-2 rounded-xl">
+            <button type="submit" class="w-full bg-teal-700 hover:bg-teal-800 text-white font-semibold py-2 rounded-xl cursor-pointer">
               भुक्तानी सेभ
             </button>
           </div>
         </form>
       </div>
 
-      <!-- Payroll Ledger -->
+      <!-- ४. Payroll Ledger -->
       <div class="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
         <div class="p-4 border-b border-slate-200 font-bold text-sm text-slate-800">कर्मचारी भुक्तानी अभिलेख</div>
         <div class="overflow-x-auto">
@@ -2843,19 +2898,25 @@ function renderStaffModule() {
                 <th class="p-3">शीर्षक</th>
                 <th class="p-3">विवरण</th>
                 <th class="p-3 text-right">रकम (रू.)</th>
+                <th class="p-3 text-center">कार्य (Action)</th>
               </tr>
             </thead>
             <tbody class="divide-y divide-slate-100">
               ${st.staffPayroll.slice().reverse().map(p => {
                 const sf = st.staffList.find(x => x.id === p.staffId) || { name: p.staffId };
                 return `
-                  <tr>
+                  <tr class="hover:bg-slate-50">
                     <td class="p-3 tabular-nums">${p.date}</td>
                     <td class="p-3 font-semibold">${sf.name}</td>
                     <td class="p-3">${p.month}</td>
                     <td class="p-3 font-medium text-teal-800">${p.type}</td>
                     <td class="p-3">${p.remarks || '-'}</td>
                     <td class="p-3 text-right font-bold tabular-nums">${fmtMoney(p.amount)}</td>
+                    <td class="p-3 text-center">
+                      <button onclick="deleteStaffPayrollEntry('${p.id}')" class="px-2 py-1 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-lg text-[10px] font-semibold cursor-pointer">
+                        डिलिट
+                      </button>
+                    </td>
                   </tr>
                 `;
               }).join("")}
@@ -2865,6 +2926,77 @@ function renderStaffModule() {
       </div>
     </div>
   `;
+}
+
+// 🌟 नयाँ कर्मचारी थप्ने वा पुरानो सच्याउने (Add / Modify) साझा फंक्सन
+function saveStaffMemberData(e) {
+  e.preventDefault();
+  const st = window.ERP_STATE;
+  const editIdx = parseInt(document.getElementById("edit-stf-index").value, 10);
+  const name = document.getElementById("new-stf-name").value.trim();
+  const role = document.getElementById("new-stf-role").value.trim();
+  const phone = document.getElementById("new-stf-phone").value.trim();
+
+  if (!name || !role) return;
+
+  if (editIdx >= 0 && st.staffList[editIdx]) {
+    // पुरानै ID कायम राखेर नाम, पद र फोन अपडेट गर्ने (जसले गर्दा पुरानो तलब/ट्याङ्कर हिसाब बिग्रँदैन)
+    st.staffList[editIdx].name = name;
+    st.staffList[editIdx].role = role;
+    st.staffList[editIdx].phone = phone;
+    showToast(`कर्मचारी "${name}" को विवरण सफलतापूर्वक सच्याइयो!`, "success");
+  } else {
+    st.staffList.push({
+      id: "STF-" + Date.now(),
+      name,
+      role,
+      phone
+    });
+    showToast(`नयाँ कर्मचारी "${name}" सफलतापूर्वक थपियो!`, "success");
+  }
+
+  window.cloudSync?.save();
+  renderCurrentModule();
+}
+
+// 🌟 कर्मचारीको विवरण सच्याउन फर्ममा लोड गर्ने फंक्सन
+function editStaffMember(idx) {
+  const sf = window.ERP_STATE.staffList[idx];
+  if (!sf) return;
+
+  document.getElementById("edit-stf-index").value = idx;
+  document.getElementById("new-stf-name").value = sf.name || "";
+  document.getElementById("new-stf-role").value = sf.role || "";
+  document.getElementById("new-stf-phone").value = sf.phone || "";
+
+  document.getElementById("stf-form-title").innerText = `कर्मचारी विवरण सच्याउँदै (${sf.name})`;
+  document.getElementById("stf-submit-text").innerText = "अपडेट सेभ";
+  document.getElementById("stf-cancel-btn").classList.remove("hidden");
+
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
+// 🌟 सच्याउने फारम रद्द गर्ने
+function resetStaffForm() {
+  renderCurrentModule();
+}
+
+// 🌟 कर्मचारी हटाउने फंक्सन (पासवर्ड सुरक्षा सहित)
+function deleteStaffMember(staffId) {
+  const st = window.ERP_STATE;
+  const sf = st.staffList.find(s => s.id === staffId);
+  if (!sf) return;
+
+  if (typeof verifyAdminPasswordBeforeDelete === "function") {
+    if (!verifyAdminPasswordBeforeDelete()) return;
+  }
+
+  if (confirm(`चेतावनी: के तपाईं कर्मचारी "${sf.name}" लाई सूचीबाट हटाउन चाहनुहुन्छ?`)) {
+    st.staffList = st.staffList.filter(s => s.id !== staffId);
+    window.cloudSync?.save();
+    renderCurrentModule();
+    showToast(`कर्मचारी "${sf.name}" हटाइयो!`, "info");
+  }
 }
 
 function addStaffPayrollEntry(e) {
@@ -2878,9 +3010,26 @@ function addStaffPayrollEntry(e) {
     amount: Number(document.getElementById("stf-amount").value),
     remarks: document.getElementById("stf-remarks").value.trim()
   });
+  window.recalculateAllDynamicValues(true);
   window.cloudSync?.save();
   renderCurrentModule();
-  showToast("कर्मचारी तलब/सुविधा विवरण सेभ भयो!");
+  showToast("कर्मचारी तलब/सुविधा विवरण सेभ भयो!", "success");
+}
+
+// 🌟 कर्मचारी भुक्तानी रेकर्ड डिलिट गर्ने फंक्सन (पासवर्ड सुरक्षा सहित)
+function deleteStaffPayrollEntry(payId) {
+  if (typeof verifyAdminPasswordBeforeDelete === "function") {
+    if (!verifyAdminPasswordBeforeDelete()) return;
+  }
+
+  if (confirm("के तपाईं यो कर्मचारी भुक्तानी रेकर्ड डिलिट गर्न चाहनुहुन्छ?")) {
+    const st = window.ERP_STATE;
+    st.staffPayroll = st.staffPayroll.filter(p => p.id !== payId);
+    window.recalculateAllDynamicValues(true);
+    window.cloudSync?.save();
+    renderCurrentModule();
+    showToast("भुक्तानी रेकर्ड सफलतापूर्वक हटाइयो!", "info");
+  }
 }
 
 // ============================================================================
