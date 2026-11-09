@@ -54,25 +54,26 @@
       <p class="text-teal-100 text-xs mt-1">Cloud ERP, Billing & Double-Entry Accounting System</p>
     </div>
 
-    <form id="login-form" class="p-6 space-y-4">
+    <form id="login-form" class="p-6 space-y-4" autocomplete="off">
       <div id="login-error" class="hidden bg-red-50 border border-red-200 text-red-700 px-3 py-2 rounded-lg text-xs font-medium"></div>
       <div>
         <label class="block text-xs font-semibold text-slate-700 mb-1">प्रयोगकर्ता नाम (Username)</label>
         <div class="relative">
           <i data-lucide="user" class="w-4 h-4 text-slate-400 absolute left-3 top-3"></i>
-          <input type="text" id="login-user" value="admin" required class="w-full pl-9 pr-3 py-2.5 text-sm border border-slate-300 rounded-xl focus:ring-2 focus:ring-teal-600 focus:border-teal-600 outline-none" placeholder="admin">
+          <input type="text" id="login-user" value="" autocomplete="off" required class="w-full pl-9 pr-3 py-2.5 text-sm border border-slate-300 rounded-xl focus:ring-2 focus:ring-teal-600 focus:border-teal-600 outline-none" placeholder="युजरनेम राख्नुहोस्">
         </div>
       </div>
       <div>
         <label class="block text-xs font-semibold text-slate-700 mb-1">पासवर्ड (Password)</label>
         <div class="relative">
           <i data-lucide="lock" class="w-4 h-4 text-slate-400 absolute left-3 top-3"></i>
-          <input type="password" id="login-pass" value="admin123" required class="w-full pl-9 pr-3 py-2.5 text-sm border border-slate-300 rounded-xl focus:ring-2 focus:ring-teal-600 focus:border-teal-600 outline-none" placeholder="••••••••">
+          <input type="password" id="login-pass" value="" autocomplete="new-password" required class="w-full pl-9 pr-3 py-2.5 text-sm border border-slate-300 rounded-xl focus:ring-2 focus:ring-teal-600 focus:border-teal-600 outline-none" placeholder="••••••••">
         </div>
       </div>
 
       <div class="flex items-center justify-between text-xs text-slate-600 pt-1">
         <span class="flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span> Cloud Sync Ready</span>
+        <!-- यदि डेमो अटोफिल बटन पूर्ण रूपमा हटाउने भए यो लाइन पनि हटाउन सक्नुहुन्छ -->
         <button type="button" onclick="autoFillDemoLogin()" class="text-teal-700 font-semibold hover:underline">Demo Auto-Fill</button>
       </div>
 
@@ -82,7 +83,6 @@
     </form>
   </div>
 </div>
-
 <!-- ==================== MAIN APPLICATION SHELL ==================== -->
 <div id="app-shell" class="hidden min-h-screen flex flex-col lg:flex-row">
 
@@ -3336,11 +3336,12 @@ function renderDatabaseModule() {
 }
 
 // ============================================================================
-// 17. SETTINGS MODULE (COMMITTEE PROFILE + DATE-RANGE RATES & RULES)
+// 17. SETTINGS MODULE (COMMITTEE PROFILE + OPENING BALANCES + RATES & RULES + SECURITY)
 // ============================================================================
 function renderSettingsModule() {
   const st = window.ERP_STATE;
   const s = st.settings;
+  const auth = st.auth || { username: "admin", password: "123" };
 
   return `
     <div class="space-y-6">
@@ -3374,7 +3375,67 @@ function renderSettingsModule() {
           </div>
           <div class="sm:col-span-3 flex justify-end pt-2">
             <button type="submit" class="bg-teal-700 hover:bg-teal-800 text-white font-semibold px-5 py-2 rounded-xl">
-              समिति विवरण सेभ गर्नुहोस्
+              समितिको विवरण सेभ गर्नुहोस्
+            </button>
+          </div>
+        </form>
+      </div>
+
+      <!-- 🌟 ओपनिङ ब्यालेन्स तथा गत वर्षको बाँकी बक्यौता सेटिङ (Opening Balances & Dues) -->
+      <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs space-y-4">
+        <h3 class="text-base font-bold text-slate-800 flex items-center gap-2 text-teal-700">
+          <i data-lucide="wallet" class="w-5 h-5"></i> ओपनिङ ब्यालेन्स र गत वर्षको बाँकी बक्यौता (Opening Balances & Dues)
+        </h3>
+        <p class="text-xs text-slate-600">नयाँ प्रणाली सुरु गर्दा वा नयाँ आर्थिक वर्षमा अघिल्लो वर्षको ब्याकअपबाट सार्दा बैंक, नगद, उठ्न बाँकी महसुल र ऋणको सुरुवाती रकम यहाँ सेट गर्नुहोस्।</p>
+        
+        <form onsubmit="saveOpeningBalances(event)" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+          <div>
+            <label class="font-semibold text-slate-600 block mb-1">सुरुवाती नगद मौज्दात (Opening Cash)</label>
+            <input type="number" id="set-open-cash" value="${s.openingCash || 0}" class="w-full border border-slate-300 rounded-xl px-3 py-2 font-bold text-teal-800">
+          </div>
+          <div>
+            <label class="font-semibold text-slate-600 block mb-1">गत वर्षको उठ्न बाँकी महसुल (Opening Dues)</label>
+            <input type="number" id="set-open-dues" value="${s.openingDues || 0}" class="w-full border border-slate-300 rounded-xl px-3 py-2 font-bold text-amber-700" placeholder="पुराना ग्राहकले तिर्न बाँकी बिल">
+          </div>
+          <div>
+            <label class="font-semibold text-slate-600 block mb-1">गत वर्षको लगानीमा रहेको ऋण (Opening Loan)</label>
+            <input type="number" id="set-open-loan" value="${s.openingLoan || 0}" class="w-full border border-slate-300 rounded-xl px-3 py-2 font-bold text-indigo-700" placeholder="असार मसान्तसम्मको बाँकी ऋण">
+          </div>
+          <div>
+            <label class="font-semibold text-slate-600 block mb-1">बैंक ओपनिङ ब्यालेन्स (कुल बैंक)</label>
+            <input type="number" id="set-open-bank" value="${s.openingBank || 0}" class="w-full border border-slate-300 rounded-xl px-3 py-2 font-bold text-cyan-800" placeholder="बैंक खाताहरूको जम्मा ओपनिङ">
+          </div>
+          <div class="sm:col-span-2 md:col-span-4 flex justify-end pt-2">
+            <button type="submit" class="bg-teal-700 hover:bg-teal-800 text-white font-semibold px-5 py-2.5 rounded-xl flex items-center gap-2 cursor-pointer">
+              <i data-lucide="save" class="w-4 h-4"></i> ओपनिङ ब्यालेन्स सुरक्षित गर्नुहोस्
+            </button>
+          </div>
+        </form>
+      </div>
+
+      <!-- सुरक्षा सेटिङ: एडमिन युजरनेम र पासवर्ड परिवर्तन -->
+      <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs space-y-4">
+        <h3 class="text-base font-bold text-slate-800 flex items-center gap-2 text-indigo-700">
+          <i data-lucide="shield-check" class="w-5 h-5"></i> एडमिन लगइन तथा सुरक्षा पासवर्ड परिवर्तन
+        </h3>
+        <p class="text-xs text-slate-600">सफ्टवेयर लगइन गर्न र संवेदनशील डाटा डिलिट गर्दा प्रमाणीकरण गर्न प्रयोग हुने युजरनेम र पासवर्ड यहाँबाट परिवर्तन गर्नुहोस्।</p>
+        
+        <form onsubmit="updateAdminCredentials(event)" class="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs" autocomplete="off">
+          <div>
+            <label class="font-semibold text-slate-600 block mb-1">हालको पासवर्ड (Current Password) *</label>
+            <input type="password" id="set-curr-pass" required autocomplete="new-password" placeholder="हालको पासवर्ड" class="w-full border border-slate-300 rounded-xl px-3 py-2">
+          </div>
+          <div>
+            <label class="font-semibold text-slate-600 block mb-1">नयाँ युजरनेम (New Username) *</label>
+            <input type="text" id="set-new-user" value="${auth.username}" required autocomplete="off" class="w-full border border-slate-300 rounded-xl px-3 py-2 font-semibold">
+          </div>
+          <div>
+            <label class="font-semibold text-slate-600 block mb-1">नयाँ पासवर्ड (New Password) *</label>
+            <input type="password" id="set-new-pass" required autocomplete="new-password" placeholder="नयाँ पासवर्ड राख्नुहोस्" class="w-full border border-slate-300 rounded-xl px-3 py-2">
+          </div>
+          <div class="md:col-span-3 flex justify-end">
+            <button type="submit" class="bg-indigo-700 hover:bg-indigo-800 text-white font-semibold px-5 py-2.5 rounded-xl flex items-center gap-2 cursor-pointer">
+              <i data-lucide="key-round" class="w-4 h-4"></i> युजरनेम र पासवर्ड अपडेट गर्नुहोस्
             </button>
           </div>
         </form>
@@ -3446,7 +3507,7 @@ function renderSettingsModule() {
         </div>
       </div>
 
-      <!-- 3. Date-Range Loan Interest Rates (Mid-year committee change support) -->
+      <!-- 3. Date-Range Loan Interest Rates -->
       <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs space-y-3">
         <div class="flex items-center justify-between">
           <h3 class="text-sm font-bold text-slate-800">३. ऋण लगानी ब्याजदर तालिका (समितिको निर्णय अनुसार वर्षभित्रै परिवर्तन योग्य)</h3>
@@ -3526,6 +3587,21 @@ function saveCommitteeProfile(e) {
   showToast("समितिको विवरण सुरक्षित भयो!");
 }
 
+// 🌟 ओपनिङ ब्यालेन्स सेभ गर्ने फंक्सन
+function saveOpeningBalances(e) {
+  e.preventDefault();
+  const s = window.ERP_STATE.settings;
+  
+  s.openingCash = Number(document.getElementById("set-open-cash").value) || 0;
+  s.openingDues = Number(document.getElementById("set-open-dues").value) || 0;
+  s.openingLoan = Number(document.getElementById("set-open-loan").value) || 0;
+  s.openingBank = Number(document.getElementById("set-open-bank").value) || 0;
+
+  window.recalculateAllDynamicValues(true);
+  window.cloudSync?.save();
+  showToast("ओपनिङ ब्यालेन्स तथा बाँकी बक्यौता सफलतापूर्वक सुरक्षित गरियो!", "success");
+}
+
 function handleLogoUpload(e) {
   const file = e.target.files[0];
   if (!file) return;
@@ -3564,7 +3640,6 @@ function deleteSettingRule(arrName, idx) {
   window.recalculateAllDynamicValues(false);
   renderCurrentModule();
 }
-
 // ============================================================================
 // 18. SUPPORT & BACKUP MODULE (JSON BACKUP, RESTORE, RESET & DATE RANGE DELETE)
 // ============================================================================
@@ -3764,40 +3839,28 @@ window.addEventListener("DOMContentLoaded", () => {
   lucide.createIcons();
 });
 
-function executeDateRangeRecordDeletion() {
-  const fromBS = document.getElementById("del-range-from").value.trim();
-  const toBS = document.getElementById("del-range-to").value.trim();
-  if (!fromBS || !toBS) {
-    showToast("कृपया सुरु र अन्तिम मिति सही रूपमा राख्नुहोस्।", "error");
-    return;
-  }
-
-  if (!confirm(`चेतावनी: के तपाईं मिति ${fromBS} देखि ${toBS} सम्मका सम्पूर्ण कारोबार, बिलिङ, महसुल, ऋण तथा खर्च रेकर्डहरू स्थायी रूपमा डिलिट गर्न चाहनुहुन्छ?`)) {
-    return;
-  }
-
+// १. डिलिट गर्नुअघि एडमिन पासवर्ड प्रमाणीकरण गर्ने साझा फंक्सन
+function verifyAdminPasswordBeforeDelete() {
   const st = window.ERP_STATE;
-
-  st.readings = st.readings.filter(r => !isDateBetweenBS(r.entryDate, fromBS, toBS));
-  st.payments = st.payments.filter(p => !isDateBetweenBS(p.date, fromBS, toBS));
-  st.loanRepayments = st.loanRepayments.filter(r => !isDateBetweenBS(r.date, fromBS, toBS));
-  st.loans = st.loans.filter(l => !isDateBetweenBS(l.issueDate, fromBS, toBS));
-  st.bankTransactions = st.bankTransactions.filter(t => !isDateBetweenBS(t.date, fromBS, toBS));
-  st.incomes = st.incomes.filter(i => !isDateBetweenBS(i.date, fromBS, toBS));
-  st.expenses = st.expenses.filter(e => !isDateBetweenBS(e.date, fromBS, toBS));
-  st.staffPayroll = st.staffPayroll.filter(p => !isDateBetweenBS(p.date, fromBS, toBS));
-  st.tankerSales = st.tankerSales.filter(t => !isDateBetweenBS(t.date, fromBS, toBS));
-
-  window.recalculateAllDynamicValues(true);
-  renderCurrentModule();
-  showToast(`मिति ${fromBS} देखि ${toBS} सम्मका रेकर्डहरू सफलतापूर्वक डिलिट गरियो!`, "success");
+  const actualPass = st.auth?.password || "admin123";
+  const enteredPass = prompt("सुरक्षा प्रमाणीकरण: रेकर्ड डिलिट गर्न कृपया एडमिन पासवर्ड राख्नुहोस्:");
+  
+  if (enteredPass === null) return false; // क्यान्सिल गरेमा
+  if (enteredPass.trim() !== actualPass) {
+    showToast("गलत पासवर्ड! सुरक्षाका कारण डाटा डिलिट रद्द गरियो।", "error");
+    return false;
+  }
+  return true;
 }
+
+// २. सबै मोड्युल चेक/अनचेक गर्ने फंक्सन
 function toggleAllDeleteModules(isChecked) {
   document.querySelectorAll(".del-mod-cb").forEach(cb => {
     cb.checked = isChecked;
   });
 }
 
+// ३. मिति र मोड्युल छानी डिलिट गर्ने (पासवर्ड सुरक्षा सहित)
 function executeDateRangeRecordDeletion() {
   const fromBS = document.getElementById("del-range-from").value.trim();
   const toBS = document.getElementById("del-range-to").value.trim();
@@ -3812,7 +3875,10 @@ function executeDateRangeRecordDeletion() {
     return;
   }
 
-  if (!confirm(`चेतावनी: के तपाईं मिति ${fromBS} देखि ${toBS} सम्मका छानिएका (${selectedModules.length} वटा) मोड्युलका सम्पूर्ण रेकर्डहरू स्थायी रूपमा डिलिट गर्न चाहनुहुन्छ?`)) {
+  // पासवर्ड प्रमाणीकरण जाँच
+  if (!verifyAdminPasswordBeforeDelete()) return;
+
+  if (!confirm(`चेतावनी: पासवर्ड प्रमाणित भयो। के तपाईं मिति ${fromBS} देखि ${toBS} सम्मका छानिएका (${selectedModules.length} वटा) मोड्युलका सम्पूर्ण रेकर्डहरू स्थायी रूपमा डिलिट गर्न चाहनुहुन्छ?`)) {
     return;
   }
 
@@ -3855,13 +3921,18 @@ function executeDateRangeRecordDeletion() {
   showToast(`मिति ${fromBS} देखि ${toBS} सम्मका छानिएका रेकर्डहरू सफलतापूर्वक डिलिट गरियो!`, "success");
 }
 
+// ४. सबै डेमो डाटा क्लिन गर्ने (पासवर्ड सुरक्षा र बैंक खाता खाली गर्ने सुविधा सहित)
 function executeClearDemoRecords() {
-  if (!confirm("चेतावनी: के तपाईं सबै डेमो रेकर्डहरू (ग्राहक, बिल, रसिद, ऋण, बैंक, आम्दानी, खर्च आदि) पूर्ण रूपमा खाली गर्न चाहनुहुन्छ?")) {
+  // पासवर्ड प्रमाणीकरण जाँच
+  if (!verifyAdminPasswordBeforeDelete()) return;
+
+  if (!confirm("चेतावनी: पासवर्ड प्रमाणित भयो। के तपाईं बैंक खाता सहित सबै डेमो रेकर्डहरू पूर्ण रूपमा खाली गर्न चाहनुहुन्छ?")) {
     return;
   }
 
   const st = window.ERP_STATE;
   st.customers = [];
+  st.bankAccounts = [];
   st.readings = [];
   st.payments = [];
   st.loans = [];
@@ -3874,7 +3945,7 @@ function executeClearDemoRecords() {
 
   window.recalculateAllDynamicValues(true);
   renderCurrentModule();
-  showToast("सबै डेमो रेकर्डहरू सफलतापूर्वक क्लिन गरियो!", "success");
+  showToast("बैंक खाता सहित सबै डेमो रेकर्डहरू सफलतापूर्वक क्लिन गरियो!", "success");
 }
 </script>
 </body>
