@@ -908,7 +908,7 @@ function renderDashboard() {
 }
 
 // ============================================================================
-// 6. KYC / CUSTOMER MANAGEMENT MODULE (AUTO ID + OPENING DUE + BULK EXCEL/CSV IMPORT)
+// 6. KYC / CUSTOMER MANAGEMENT MODULE (AUTO ID + OPENING DUE + EDIT & BULK IMPORT)
 // ============================================================================
 function getNextCustomerID() {
   const nums = window.ERP_STATE.customers.map(c => parseInt(c.id.replace(/\D/g, ""), 10) || 0);
@@ -922,14 +922,15 @@ function renderKYCModule() {
 
   return `
     <div class="grid grid-cols-1 xl:grid-cols-3 gap-6">
-      <!-- Single KYC Form -->
+      <!-- Single KYC Form (New / Edit) -->
       <div class="xl:col-span-2 bg-white p-5 rounded-2xl border border-slate-200 shadow-xs">
         <h3 class="text-base font-bold text-slate-800 mb-4 flex items-center gap-2">
-          <i data-lucide="user-plus" class="w-5 h-5 text-teal-700"></i> नयाँ ग्राहक केवाईसी दर्ता तथा ओपनिङ बक्यौता (Customer KYC Entry)
+          <i data-lucide="user-plus" class="w-5 h-5 text-teal-700"></i> <span id="kyc-form-title">नयाँ ग्राहक केवाईसी दर्ता तथा ओपनिङ बक्यौता</span>
         </h3>
-        <form onsubmit="saveNewCustomerKYC(event)" class="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+        <form onsubmit="saveCustomerKYCData(event)" class="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+          <input type="hidden" id="kyc-edit-index" value="-1">
           <div>
-            <label class="font-semibold text-slate-600 block mb-1">ग्राहक आइडी (Auto ID)</label>
+            <label class="font-semibold text-slate-600 block mb-1">ग्राहक आइडी (ID)</label>
             <input type="text" id="kyc-id" value="${nextId}" readonly class="w-full bg-slate-100 border border-slate-300 rounded-xl px-3 py-2 font-bold text-teal-800">
           </div>
           <div>
@@ -976,14 +977,16 @@ function renderKYCModule() {
             <label class="font-semibold text-slate-600 block mb-1">सुरुवाती मिटर अङ्क</label>
             <input type="number" id="kyc-init-reading" value="0" min="0" class="w-full border border-slate-300 rounded-xl px-3 py-2">
           </div>
-          <!-- 🌟 नयाँ थपिएको: गत वर्षको सुरुवाती बाँकी महसुल -->
           <div class="sm:col-span-3">
             <label class="font-semibold text-amber-800 block mb-1">गत वर्षको उठ्न बाँकी महसुल (Opening Due रू.) *</label>
             <input type="number" id="kyc-opening-due" value="0" min="0" class="w-full bg-amber-50 border border-amber-300 rounded-xl px-3 py-2 font-bold text-amber-900" placeholder="पुराना बिल अनुसार तिर्न बाँकी रकम">
           </div>
-          <div class="sm:col-span-3 pt-2 flex justify-end">
-            <button type="submit" class="bg-teal-700 hover:bg-teal-800 text-white font-semibold px-5 py-2.5 rounded-xl shadow-xs flex items-center gap-2 cursor-pointer">
-              <i data-lucide="save" class="w-4 h-4"></i> ग्राहक विवरण तथा बक्यौता सुरक्षित गर्नुहोस्
+          <div class="sm:col-span-3 pt-2 flex justify-between items-center">
+            <button type="button" onclick="resetKYCForm()" id="kyc-cancel-btn" class="hidden px-4 py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 font-semibold rounded-xl text-xs cursor-pointer">
+              सम्पादन रद्द गर्नुहोस् (Cancel)
+            </button>
+            <button type="submit" class="ml-auto bg-teal-700 hover:bg-teal-800 text-white font-semibold px-5 py-2.5 rounded-xl shadow-xs flex items-center gap-2 cursor-pointer">
+              <i data-lucide="save" class="w-4 h-4"></i> <span id="kyc-submit-btn-text">ग्राहक विवरण सुरक्षित गर्नुहोस्</span>
             </button>
           </div>
         </form>
@@ -995,7 +998,7 @@ function renderKYCModule() {
           <h3 class="text-base font-bold text-slate-800 mb-2 flex items-center gap-2">
             <i data-lucide="file-spreadsheet" class="w-5 h-5 text-emerald-700"></i> Excel / CSV बल्क ग्राहक अपलोड
           </h3>
-          <p class="text-xs text-slate-500 mb-3">सुरुमा एकैपटक धेरै ग्राहकहरू तथा तिनको ओपनिङ ड्युज तान्न CSV फाइल अपलोड गर्नुहोस् वा तलको बक्समा डाटा पेस्ट गर्नुहोस्।</p>
+          <p class="text-xs text-slate-500 mb-3">एकैपटक धेरै ग्राहकहरू तान्न CSV फाइल अपलोड गर्नुहोस् वा तलको बक्समा डाटा पेस्ट गर्नुहोस्।</p>
           <div class="flex gap-2 mb-3">
             <button type="button" onclick="downloadSampleKYCCSV()" class="text-xs bg-slate-100 hover:bg-slate-200 text-slate-800 font-semibold px-3 py-2 rounded-xl flex items-center gap-1.5 cursor-pointer">
               <i data-lucide="download" class="w-3.5 h-3.5"></i> Sample CSV डाउनलोड
@@ -1005,7 +1008,7 @@ function renderKYCModule() {
               <input type="file" accept=".csv,.txt" onchange="handleKYCCSVFile(event)" class="hidden">
             </label>
           </div>
-          <textarea id="kyc-bulk-text" rows="5" placeholder="नाम,बुवाको नाम,बाजेको नाम,जन्ममिति,फोन,ठेगाना,नागरिकता नं,जारी मिति,कित्ता नं,सुरु रिडिङ,ओपनिङ बक्यौता&#10;श्यामसुन्दर श्रेष्ठ,रामकृष्ण श्रेष्ठ,हरिकृष्ण श्रेष्ठ,2039-01-10,9841112233,पाँचखाल-४,24-01-71-1122,2057-04-12,305,0,500"
+          <textarea id="kyc-bulk-text" rows="5" placeholder="नाम,बुवाको नाम,बाजेको नाम,जन्ममिति,फोन,ठेगाना,नागरिकता नं,जारी मिति,कित्ता नं,सुरु रिडिङ,ओपनिङ बक्यौता&#10;रामबहादुर,हरिबहादुर,जीतबहादुर,2042-05-15,9841112233,पाँचखाल-४,24-01,2060,305,0,500"
             class="w-full border border-slate-300 rounded-xl p-2.5 text-[11px] font-mono"></textarea>
         </div>
         <button type="button" onclick="importBulkKYCText()" class="w-full bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-semibold py-2.5 rounded-xl cursor-pointer">
@@ -1037,7 +1040,7 @@ function renderKYCModule() {
             </tr>
           </thead>
           <tbody class="divide-y divide-slate-100">
-            ${st.customers.map(c => `
+            ${st.customers.map((c, idx) => `
               <tr class="hover:bg-slate-50">
                 <td class="p-3 font-bold text-teal-800">${c.id}</td>
                 <td class="p-3 font-semibold text-slate-900">${c.name}<div class="text-[10px] text-slate-400">जन्म: ${c.dob || '-'}</div></td>
@@ -1048,7 +1051,10 @@ function renderKYCModule() {
                 <td class="p-3 font-medium">${c.kittaNo}</td>
                 <td class="p-3 tabular-nums">${c.lastReading || 0}</td>
                 <td class="p-3 text-right font-bold text-amber-700 tabular-nums">रु. ${Number(c.openingDue || 0).toLocaleString()}</td>
-                <td class="p-3 text-center">
+                <td class="p-3 text-center space-x-1">
+                  <button onclick="editCustomerKYC(${idx})" class="px-2 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-lg text-[10px] font-semibold cursor-pointer">
+                    सम्पादन
+                  </button>
                   <button onclick="deleteCustomerKYC('${c.id}')" class="px-2 py-1 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-lg text-[10px] font-semibold cursor-pointer">
                     डिलिट
                   </button>
@@ -1062,11 +1068,14 @@ function renderKYCModule() {
   `;
 }
 
-function saveNewCustomerKYC(e) {
+// नयाँ वा एडिट गरिएको ग्राहक सेभ गर्ने फंक्सन
+function saveCustomerKYCData(e) {
   e.preventDefault();
-  const id = getNextCustomerID();
-  const newCust = {
-    id,
+  const st = window.ERP_STATE;
+  const editIdx = parseInt(document.getElementById("kyc-edit-index").value, 10);
+  
+  const customerData = {
+    id: document.getElementById("kyc-id").value.trim(),
     name: document.getElementById("kyc-name").value.trim(),
     fatherName: document.getElementById("kyc-father").value.trim(),
     grandfatherName: document.getElementById("kyc-grandfather").value.trim(),
@@ -1076,15 +1085,56 @@ function saveNewCustomerKYC(e) {
     citizenshipNo: document.getElementById("kyc-cit-no").value.trim(),
     citizenshipDate: document.getElementById("kyc-cit-date").value.trim(),
     kittaNo: document.getElementById("kyc-kitta").value.trim(),
-    regDate: document.getElementById("kyc-reg-date").value.trim() || window.ERP_STATE.activeBSDate,
+    regDate: document.getElementById("kyc-reg-date").value.trim() || st.activeBSDate,
     lastReading: Number(document.getElementById("kyc-init-reading").value) || 0,
     openingDue: Number(document.getElementById("kyc-opening-due").value) || 0
   };
-  window.ERP_STATE.customers.push(newCust);
+
+  if (editIdx >= 0) {
+    // एडिट गर्ने बेला आइडी पुरानै रहने
+    customerData.id = st.customers[editIdx].id;
+    st.customers[editIdx] = customerData;
+    showToast(`ग्राहक ${customerData.name} को विवरण सफलतापूर्वक अपडेट गरियो!`, "success");
+  } else {
+    st.customers.push(customerData);
+    showToast(`ग्राहक ${customerData.name} (${customerData.id}) सफलतापूर्वक दर्ता भयो!`, "success");
+  }
+
   window.recalculateAllDynamicValues(true);
   window.cloudSync?.save();
   renderCurrentModule();
-  showToast(`ग्राहक ${newCust.name} (${id}) र ओपनिङ बक्यौता सफलतापूर्वक दर्ता भयो!`);
+}
+
+// ग्राहक एडिट गर्न फर्ममा डाटा भर्ने फंक्सन
+function editCustomerKYC(idx) {
+  const c = window.ERP_STATE.customers[idx];
+  if (!c) return;
+
+  document.getElementById("kyc-edit-index").value = idx;
+  document.getElementById("kyc-id").value = c.id;
+  document.getElementById("kyc-name").value = c.name || "";
+  document.getElementById("kyc-father").value = c.fatherName || "";
+  document.getElementById("kyc-grandfather").value = c.grandfatherName || "";
+  document.getElementById("kyc-dob").value = c.dob || "";
+  document.getElementById("kyc-phone").value = c.phone || "";
+  document.getElementById("kyc-address").value = c.address || "";
+  document.getElementById("kyc-cit-no").value = c.citizenshipNo || "";
+  document.getElementById("kyc-cit-date").value = c.citizenshipDate || "";
+  document.getElementById("kyc-kitta").value = c.kittaNo || "";
+  document.getElementById("kyc-reg-date").value = c.regDate || window.ERP_STATE.activeBSDate;
+  document.getElementById("kyc-init-reading").value = c.lastReading || 0;
+  document.getElementById("kyc-opening-due").value = c.openingDue || 0;
+
+  document.getElementById("kyc-form-title").innerText = `ग्राहक विवरण सम्पादन गर्दै (${c.id})`;
+  document.getElementById("kyc-submit-btn-text").innerText = "अपडेट सुरक्षित गर्नुहोस्";
+  document.getElementById("kyc-cancel-btn").classList.remove("hidden");
+
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+// एडिट फारम रद्द गर्ने
+function resetKYCForm() {
+  renderCurrentModule();
 }
 
 function deleteCustomerKYC(custId) {
@@ -1119,15 +1169,20 @@ function handleKYCCSVFile(e) {
   reader.readAsText(file);
 }
 
+// सुरक्षित र लचिलो बल्क इम्पोर्ट फंक्सन
 function importBulkKYCText() {
   const raw = document.getElementById("kyc-bulk-text").value.trim();
-  if (!raw) return showToast("कृपया CSV डाटा राख्नुहोस्।", "error");
+  if (!raw) return showToast("कृपया CSV डाटा राख्नुहोस् वा पेस्ट गर्नुहोस्।", "error");
+  
   const lines = raw.split(/\r?\n/).filter(l => l.trim());
   let added = 0;
+  
   lines.forEach((line, idx) => {
     if (idx === 0 && (line.includes("नाम") || line.toLowerCase().includes("name"))) return;
+    
     const cols = line.split(",").map(s => s.trim());
-    if (cols.length < 2 || !cols[0]) return;
+    if (cols.length < 1 || !cols[0]) return;
+    
     window.ERP_STATE.customers.push({
       id: getNextCustomerID(),
       name: cols[0],
@@ -1145,10 +1200,11 @@ function importBulkKYCText() {
     });
     added++;
   });
+  
   window.recalculateAllDynamicValues(true);
   window.cloudSync?.save();
   renderCurrentModule();
-  showToast(`${added} जना ग्राहकहरू र तिनका ओपनिङ बक्यौता इम्पोर्ट गरियो!`);
+  showToast(`${added} जना ग्राहकहरू र तिनका ओपनिङ बक्यौता सफलतापूर्वक इम्पोर्ट गरियो!`, "success");
 }
 
 function filterKYCTable(q) {
