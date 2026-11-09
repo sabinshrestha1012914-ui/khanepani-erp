@@ -290,70 +290,72 @@
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
   import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
- import { getFirestore, doc, setDoc, getDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+  import { getFirestore, doc, setDoc, getDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-window.cloudSync = {
-  enabled: true,
-  db: null,
-  userId: null,
-  appId: 'khanepani-erp-hamro-sanstha',
-  async init() {
-    try {
-      const cfg = {
-        apiKey: "AIzaSyCc-c3h1SECFquI7aabrmF9YqNg8dPKbbE",
-        authDomain: "hamro-sanstha.firebaseapp.com",
-        projectId: "hamro-sanstha",
-        storageBucket: "hamro-sanstha.firebasestorage.app",
-        messagingSenderId: "862126304543",
-        appId: "1:862126304543:web:1decd760850960953b142a"
-      };
+  window.cloudSync = {
+    enabled: true,
+    db: null,
+    userId: null,
+    appId: 'khanepani-erp-hamro-sanstha',
+    async init() {
+      try {
+        const cfg = {
+          apiKey: "AIzaSyCc-c3h1SECFquI7aabrmF9YqNg8dPKbbE",
+          authDomain: "hamro-sanstha.firebaseapp.com",
+          projectId: "hamro-sanstha",
+          storageBucket: "hamro-sanstha.firebasestorage.app",
+          messagingSenderId: "862126304543",
+          appId: "1:862126304543:web:1decd760850960953b142a"
+        };
 
-      const app = initializeApp(cfg);
-      const auth = getAuth(app);
-      this.db = getFirestore(app);
+        const app = initializeApp(cfg);
+        const auth = getAuth(app);
+        this.db = getFirestore(app);
 
-      // Anonymous Authentication
-      const cred = await signInAnonymously(auth);
-      this.userId = cred.user.uid;
-      console.log("CloudSync Authenticated:", this.userId);
+        const cred = await signInAnonymously(auth);
+        this.userId = cred.user.uid;
+        console.log("CloudSync Authenticated:", this.userId);
 
-      // Real-time listener to load and sync data automatically
-      const docRef = doc(this.db, "artifacts", this.appId, "public", "data", "erp_state", "master_v1");
-      
-      onSnapshot(docRef, (docSnap) => {
-        if (docSnap.exists()) {
-          const remoteData = docSnap.data();
-          if (remoteData && remoteData.customers) {
-            window.ERP_STATE = Object.assign({}, window.ERP_STATE, remoteData);
-            if (typeof renderCurrentModule === "function") {
-              renderCurrentModule();
+        const docRef = doc(this.db, "artifacts", this.appId, "public", "data", "erp_state", "master_v1");
+        
+        // रियल-टाइम लिसनर (जसले अनलाइन परिवर्तन हुनासाथ डाटा अपडेट गराउँछ)
+        onSnapshot(docRef, (docSnap) => {
+          if (docSnap.exists()) {
+            const remoteData = docSnap.data();
+            if (remoteData && remoteData.customers) {
+              window.ERP_STATE = Object.assign({}, window.ERP_STATE, remoteData);
+              localStorage.setItem("KHANEPANI_ERP_LOCAL_BACKUP", JSON.stringify(window.ERP_STATE));
+              if (typeof renderCurrentModule === "function") {
+                renderCurrentModule();
+              }
+              console.log("Data synced from Cloud successfully!");
             }
-            console.log("Data synced from Cloud successfully!");
+          } else {
+            this.save();
           }
-        } else {
-          // If no data exists yet in cloud, save current initial state
-          this.save();
-        }
-      }, (error) => {
-        console.error("CloudSync snapshot error:", error);
-      });
+        }, (error) => {
+          console.error("CloudSync snapshot error:", error);
+        });
 
-    } catch (err) {
-      console.error("CloudSync Init Error:", err);
-    }
-  },
+      } catch (err) {
+        console.error("CloudSync Init Error:", err);
+      }
+    },
 
-  async save() {
-    if (!this.enabled || !this.db) return;
-    try {
-      const docRef = doc(this.db, "artifacts", this.appId, "public", "data", "erp_state", "master_v1");
-      await setDoc(docRef, window.ERP_STATE);
-      console.log("Data saved to Cloud successfully!");
-    } catch (err) {
-      console.error("CloudSync Save Error:", err);
+    async save() {
+      // लोकल स्टोरेजमा पनि सेभ गर्ने (रिफ्रेस गर्दा डाटा नहराओस् भन्नका लागि)
+      localStorage.setItem("KHANEPANI_ERP_LOCAL_BACKUP", JSON.stringify(window.ERP_STATE));
+
+      if (!this.enabled || !this.db) return;
+      try {
+        const docRef = doc(this.db, "artifacts", this.appId, "public", "data", "erp_state", "master_v1");
+        await setDoc(docRef, window.ERP_STATE);
+        console.log("Data saved to Cloud successfully!");
+      } catch (err) {
+        console.error("CloudSync Save Error:", err);
+      }
     }
-  }
-};
+  };
   window.cloudSync.init();
 </script>
 
@@ -366,7 +368,6 @@ const NEPALI_MONTHS = [
   "कार्तिक", "मंसिर", "पुष", "माघ", "फागुन", "चैत"
 ];
 
-// Approximate current BS date mapping (2026-11-08 AD ≈ 2083-07-22 BS)
 function getAutoTodayBS() {
   const baseAD = new Date("2026-11-08T00:00:00");
   const now = new Date();
@@ -385,7 +386,6 @@ function formatBS(y, m, d) {
   return `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
 }
 
-// Convert BS date into total pseudo-days (30 days/month, 365 days/year for deterministic financial diff)
 function bsToSerialDays(bsStr) {
   const { y, m, d } = parseBS(bsStr);
   return (y * 365) + ((m - 1) * 30) + d;
@@ -410,7 +410,6 @@ function isDateBetweenBS(targetBS, fromBS, toBS) {
   return t >= f && t <= to;
 }
 
-// Convert numeric amount to Nepali Words (रकम अक्षरमा)
 function numberToNepaliWords(num) {
   num = Math.round(Number(num) || 0);
   if (num === 0) return "शून्य रुपैयाँ मात्र";
@@ -457,7 +456,7 @@ function fmtMoney(n) {
 }
 
 // ============================================================================
-// 2. INITIAL MASTER STATE & RICH PRE-LOADED NEPALI SAMPLE DATA
+// 2. INITIAL MASTER STATE & LOCAL STORAGE LOAD
 // ============================================================================
 const INITIAL_STATE = {
   auth: { loggedIn: false, username: "admin", password: "admin123" },
@@ -474,25 +473,18 @@ const INITIAL_STATE = {
     receiptCounter: 1006,
     loanReceiptCounter: 504,
 
-    // Date-Range Water Tariff Rates (कुन मितिदेखि कुन मितिसम्म न्यूनतम र अतिरिक्त दर)
     tariffRules: [
       { id: "TR-1", fromDate: "2082-01-01", toDate: "2083-03-32", minUnits: 10, minAmount: 150, extraRate: 18 },
       { id: "TR-2", fromDate: "2083-04-01", toDate: "2084-12-30", minUnits: 10, minAmount: 200, extraRate: 25 }
     ],
-
-    // Date-Range Penalty Rules (रिडिङ भएको कति दिनमा कति % जरिवाना)
     penaltyRules: [
       { id: "PR-1", fromDate: "2082-01-01", toDate: "2083-03-32", graceDays: 15, penaltyPercent: 5 },
       { id: "PR-2", fromDate: "2083-04-01", toDate: "2084-12-30", graceDays: 15, penaltyPercent: 10 }
     ],
-
-    // Date-Range Loan Interest Rates (समितिको निर्णय अनुसार वर्षभित्रै परिवर्तन हुने ब्याजदर)
     loanRateRules: [
       { id: "LR-1", fromDate: "2082-01-01", toDate: "2083-04-32", annualRate: 12 },
       { id: "LR-2", fromDate: "2083-05-01", toDate: "2084-12-30", annualRate: 14 }
     ],
-
-    // Date-Range & Customer-Specific Tanker Sale & Driver Wage Rates
     tankerRateRules: [
       { id: "TK-1", customerName: "सबै सामान्य ग्राहक (Default)", fromDate: "2082-01-01", toDate: "2083-04-32", ratePerLiter: 0.40, wagePerLiter: 0.10 },
       { id: "TK-2", customerName: "सबै सामान्य ग्राहक (Default)", fromDate: "2083-05-01", toDate: "2084-12-30", ratePerLiter: 0.50, wagePerLiter: 0.12 },
@@ -522,16 +514,8 @@ const INITIAL_STATE = {
   ],
 
   loans: [
-    {
-      id: "LN-001", customerId: "KH-001", issueDate: "2083-02-10", dueDate: "2083-06-10",
-      principal: 50000, paidPrincipal: 10000, paidInterest: 1500, accruedInterest: 0,
-      purpose: "नयाँ धारा तथा पाइपलाइन विस्तार सहयोग", status: "Active", isOverdue: true, overdueDays: 42
-    },
-    {
-      id: "LN-002", customerId: "KH-003", issueDate: "2083-05-15", dueDate: "2083-11-15",
-      principal: 35000, paidPrincipal: 0, paidInterest: 0, accruedInterest: 0,
-      purpose: "खानेपानी ट्याङ्की निर्माण ऋण", status: "Active", isOverdue: false, overdueDays: 0
-    }
+    { id: "LN-001", customerId: "KH-001", issueDate: "2083-02-10", dueDate: "2083-06-10", principal: 50000, paidPrincipal: 10000, paidInterest: 1500, accruedInterest: 0, purpose: "नयाँ धारा तथा पाइपलाइन विस्तार सहयोग", status: "Active", isOverdue: true, overdueDays: 42 },
+    { id: "LN-002", customerId: "KH-003", issueDate: "2083-05-15", dueDate: "2083-11-15", principal: 35000, paidPrincipal: 0, paidInterest: 0, accruedInterest: 0, purpose: "खानेपानी ट्याङ्की निर्माण ऋण", status: "Active", isOverdue: false, overdueDays: 0 }
   ],
 
   loanRepayments: [
@@ -579,10 +563,20 @@ const INITIAL_STATE = {
   ]
 };
 
-window.ERP_STATE = JSON.parse(JSON.stringify(INITIAL_STATE));
+// लोकल स्टोरेजबाट पहिलेको सेभ भएको डाटा लोड गर्ने (रिफ्रेस गर्दा डाटा नहराओस् भन्नका लागि)
+const savedLocalData = localStorage.getItem("KHANEPANI_ERP_LOCAL_BACKUP");
+if (savedLocalData) {
+  try {
+    window.ERP_STATE = JSON.parse(savedLocalData);
+  } catch (e) {
+    window.ERP_STATE = JSON.parse(JSON.stringify(INITIAL_STATE));
+  }
+} else {
+  window.ERP_STATE = JSON.parse(JSON.stringify(INITIAL_STATE));
+}
 
 // ============================================================================
-// 3. CORE DYNAMIC RECALCULATION ENGINE (TRIGGERS ON ANY BS DATE CHANGE)
+// 3. CORE DYNAMIC RECALCULATION ENGINE
 // ============================================================================
 function getActiveTariffRule(dateBS) {
   const rules = window.ERP_STATE.settings.tariffRules || [];
@@ -613,15 +607,9 @@ function calculateWaterBill(units, billDateBS) {
   const baseAmount = Number(rule.minAmount);
   const extraUnits = Math.max(0, u - Number(rule.minUnits));
   const extraAmount = extraUnits * Number(rule.extraRate);
-  return {
-    baseAmount,
-    extraAmount,
-    totalBill: baseAmount + extraAmount,
-    ruleUsed: rule
-  };
+  return { baseAmount, extraAmount, totalBill: baseAmount + extraAmount, ruleUsed: rule };
 }
 
-// Piece-wise interest calculation across changing committee interest rates within a year!
 function calculateSegmentedLoanInterest(principal, fromBS, toBS) {
   const totalDays = Math.max(0, diffDaysBS(fromBS, toBS));
   if (totalDays === 0 || principal <= 0) return 0;
@@ -631,7 +619,6 @@ function calculateSegmentedLoanInterest(principal, fromBS, toBS) {
   const startSerial = bsToSerialDays(fromBS);
   const endSerial = bsToSerialDays(toBS);
 
-  // Calculate day-by-day segment accurately so mid-year rate changes reflect automatically
   for (let s = startSerial; s < endSerial; s++) {
     const matched = rules.find(r => s >= bsToSerialDays(r.fromDate) && s <= bsToSerialDays(r.toDate)) || rules[rules.length - 1];
     const rate = matched ? Number(matched.annualRate) : 12;
@@ -642,9 +629,8 @@ function calculateSegmentedLoanInterest(principal, fromBS, toBS) {
 
 window.recalculateAllDynamicValues = function(showBanner = true) {
   const activeBS = window.ERP_STATE.activeBSDate;
-
-  // 1. Recalculate Water Bill Penalties based on Active BS Date & Date-Range Penalty Rules
   let totalPenalties = 0;
+
   window.ERP_STATE.readings.forEach(rd => {
     const unpaidBase = Math.max(0, Number(rd.billAmount) - Number(rd.paidAmount || 0));
     if (unpaidBase <= 0) {
@@ -662,7 +648,6 @@ window.recalculateAllDynamicValues = function(showBanner = true) {
     totalPenalties += rd.penaltyAmount;
   });
 
-  // 2. Recalculate Loan Accrued Interest & Overdue Statuses dynamically
   let overdueCount = 0;
   let totalAccruedInt = 0;
   window.ERP_STATE.loans.forEach(ln => {
@@ -690,7 +675,6 @@ window.recalculateAllDynamicValues = function(showBanner = true) {
     }
   });
 
-  // Update Header UI Badges
   const badge = document.getElementById("overdue-count-badge");
   if (badge) badge.textContent = overdueCount;
   document.querySelectorAll(".active-bs-label").forEach(el => el.textContent = activeBS);
@@ -913,7 +897,6 @@ function renderDashboard() {
       </div>
     ` : ''}
 
-    <!-- KPI Cards -->
     <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
       <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs">
         <div class="flex items-center justify-between text-xs text-slate-500 font-medium">
@@ -952,7 +935,6 @@ function renderDashboard() {
       </div>
     </div>
 
-    <!-- Quick Module Shortcuts -->
     <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs">
       <h3 class="text-sm font-bold text-slate-800 mb-3">छिटो कार्य मेनु (Quick Actions)</h3>
       <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-3 text-xs font-semibold">
@@ -974,55 +956,6 @@ function renderDashboard() {
         <button onclick="switchModule('reports')" class="p-3.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-900 border border-slate-300 flex flex-col items-center gap-2 text-center transition">
           <i data-lucide="file-spreadsheet" class="w-5 h-5 text-slate-700"></i> वासलात / A4 रिपोर्ट
         </button>
-      </div>
-    </div>
-
-    <!-- Active Tariff & Rate Summary -->
-    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
-      <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs">
-        <div class="flex items-center justify-between mb-3">
-          <h3 class="text-sm font-bold text-slate-800">हाल लागू भएका दररेटहरू (मिति ${st.activeBSDate} अनुसार)</h3>
-          <button onclick="switchModule('settings')" class="text-xs text-teal-700 font-semibold hover:underline">दररेट परिवर्तन →</button>
-        </div>
-        ${(() => {
-          const tr = getActiveTariffRule(st.activeBSDate);
-          const pr = getActivePenaltyRule(st.activeBSDate);
-          const lr = getActiveLoanRateRule(st.activeBSDate);
-          return `
-            <div class="space-y-2 text-xs">
-              <div class="flex justify-between p-2.5 bg-slate-50 rounded-xl">
-                <span class="text-slate-600">न्यूनतम पानी महसुल (${tr.minUnits} युनिट सम्म):</span>
-                <strong class="text-slate-900">${fmtMoney(tr.minAmount)} (अतिरिक्त: रू. ${tr.extraRate}/युनिट)</strong>
-              </div>
-              <div class="flex justify-between p-2.5 bg-slate-50 rounded-xl">
-                <span class="text-slate-600">जरिवाना नियम (रिडिङ भएको ${pr.graceDays} दिन पछि):</span>
-                <strong class="text-red-700">${pr.penaltyPercent}% जरिवाना लागू</strong>
-              </div>
-              <div class="flex justify-between p-2.5 bg-slate-50 rounded-xl">
-                <span class="text-slate-600">ऋण लगानी वार्षिक ब्याजदर:</span>
-                <strong class="text-indigo-700">${lr.annualRate}% वार्षिक (समितिको निर्णय अनुसार)</strong>
-              </div>
-            </div>
-          `;
-        })()}
-      </div>
-
-      <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs">
-        <h3 class="text-sm font-bold text-slate-800 mb-3">आय-व्यय संक्षिप्त झलक</h3>
-        <div class="space-y-2 text-xs">
-          <div class="flex justify-between p-2.5 bg-emerald-50/70 rounded-xl">
-            <span class="text-emerald-900">कुल संकलित आम्दानी (महसुल + ट्याङ्कर + अन्य):</span>
-            <strong class="text-emerald-800">${fmtMoney(totalWaterCollected + totalTankerIncome + totalOtherIncome)}</strong>
-          </div>
-          <div class="flex justify-between p-2.5 bg-rose-50/70 rounded-xl">
-            <span class="text-rose-900">कुल सञ्चालन तथा कर्मचारी खर्च:</span>
-            <strong class="text-rose-800">${fmtMoney(totalExpenses)}</strong>
-          </div>
-          <div class="flex justify-between p-2.5 bg-teal-50 rounded-xl border border-teal-200">
-            <span class="font-bold text-teal-950">खुद बचत / नाफा (Net Surplus):</span>
-            <strong class="text-teal-900">${fmtMoney((totalWaterCollected + totalTankerIncome + totalOtherIncome) - totalExpenses)}</strong>
-          </div>
-        </div>
       </div>
     </div>
   `;
