@@ -908,7 +908,7 @@ function renderDashboard() {
 }
 
 // ============================================================================
-// 6. KYC / CUSTOMER MANAGEMENT MODULE (AUTO ID + BULK EXCEL/CSV IMPORT)
+// 6. KYC / CUSTOMER MANAGEMENT MODULE (AUTO ID + OPENING DUE + BULK EXCEL/CSV IMPORT)
 // ============================================================================
 function getNextCustomerID() {
   const nums = window.ERP_STATE.customers.map(c => parseInt(c.id.replace(/\D/g, ""), 10) || 0);
@@ -925,7 +925,7 @@ function renderKYCModule() {
       <!-- Single KYC Form -->
       <div class="xl:col-span-2 bg-white p-5 rounded-2xl border border-slate-200 shadow-xs">
         <h3 class="text-base font-bold text-slate-800 mb-4 flex items-center gap-2">
-          <i data-lucide="user-plus" class="w-5 h-5 text-teal-700"></i> नयाँ ग्राहक केवाईसी दर्ता (Customer KYC Entry)
+          <i data-lucide="user-plus" class="w-5 h-5 text-teal-700"></i> नयाँ ग्राहक केवाईसी दर्ता तथा ओपनिङ बक्यौता (Customer KYC Entry)
         </h3>
         <form onsubmit="saveNewCustomerKYC(event)" class="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
           <div>
@@ -976,9 +976,14 @@ function renderKYCModule() {
             <label class="font-semibold text-slate-600 block mb-1">सुरुवाती मिटर अङ्क</label>
             <input type="number" id="kyc-init-reading" value="0" min="0" class="w-full border border-slate-300 rounded-xl px-3 py-2">
           </div>
+          <!-- 🌟 नयाँ थपिएको: गत वर्षको सुरुवाती बाँकी महसुल -->
+          <div class="sm:col-span-3">
+            <label class="font-semibold text-amber-800 block mb-1">गत वर्षको उठ्न बाँकी महसुल (Opening Due रू.) *</label>
+            <input type="number" id="kyc-opening-due" value="0" min="0" class="w-full bg-amber-50 border border-amber-300 rounded-xl px-3 py-2 font-bold text-amber-900" placeholder="पुराना बिल अनुसार तिर्न बाँकी रकम">
+          </div>
           <div class="sm:col-span-3 pt-2 flex justify-end">
-            <button type="submit" class="bg-teal-700 hover:bg-teal-800 text-white font-semibold px-5 py-2.5 rounded-xl shadow-xs flex items-center gap-2">
-              <i data-lucide="save" class="w-4 h-4"></i> ग्राहक विवरण सुरक्षित गर्नुहोस्
+            <button type="submit" class="bg-teal-700 hover:bg-teal-800 text-white font-semibold px-5 py-2.5 rounded-xl shadow-xs flex items-center gap-2 cursor-pointer">
+              <i data-lucide="save" class="w-4 h-4"></i> ग्राहक विवरण तथा बक्यौता सुरक्षित गर्नुहोस्
             </button>
           </div>
         </form>
@@ -990,9 +995,9 @@ function renderKYCModule() {
           <h3 class="text-base font-bold text-slate-800 mb-2 flex items-center gap-2">
             <i data-lucide="file-spreadsheet" class="w-5 h-5 text-emerald-700"></i> Excel / CSV बल्क ग्राहक अपलोड
           </h3>
-          <p class="text-xs text-slate-500 mb-3">सुरुमा एकैपटक धेरै ग्राहकहरू तान्न CSV फाइल अपलोड गर्नुहोस् वा तलको बक्समा डाटा पेस्ट गर्नुहोस्।</p>
+          <p class="text-xs text-slate-500 mb-3">सुरुमा एकैपटक धेरै ग्राहकहरू तथा तिनको ओपनिङ ड्युज तान्न CSV फाइल अपलोड गर्नुहोस् वा तलको बक्समा डाटा पेस्ट गर्नुहोस्।</p>
           <div class="flex gap-2 mb-3">
-            <button type="button" onclick="downloadSampleKYCCSV()" class="text-xs bg-slate-100 hover:bg-slate-200 text-slate-800 font-semibold px-3 py-2 rounded-xl flex items-center gap-1.5">
+            <button type="button" onclick="downloadSampleKYCCSV()" class="text-xs bg-slate-100 hover:bg-slate-200 text-slate-800 font-semibold px-3 py-2 rounded-xl flex items-center gap-1.5 cursor-pointer">
               <i data-lucide="download" class="w-3.5 h-3.5"></i> Sample CSV डाउनलोड
             </button>
             <label class="text-xs bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 font-semibold px-3 py-2 rounded-xl cursor-pointer flex items-center gap-1.5">
@@ -1000,10 +1005,10 @@ function renderKYCModule() {
               <input type="file" accept=".csv,.txt" onchange="handleKYCCSVFile(event)" class="hidden">
             </label>
           </div>
-          <textarea id="kyc-bulk-text" rows="5" placeholder="नाम,बुवाको नाम,बाजेको नाम,जन्ममिति,फोन,ठेगाना,नागरिकता नं,जारी मिति,कित्ता नं,सुरु रिडिङ&#10;श्यामसुन्दर श्रेष्ठ,रामकृष्ण श्रेष्ठ,हरिकृष्ण श्रेष्ठ,2039-01-10,9841112233,पाँचखाल-४,24-01-71-1122,2057-04-12,305,0"
+          <textarea id="kyc-bulk-text" rows="5" placeholder="नाम,बुवाको नाम,बाजेको नाम,जन्ममिति,फोन,ठेगाना,नागरिकता नं,जारी मिति,कित्ता नं,सुरु रिडिङ,ओपनिङ बक्यौता&#10;श्यामसुन्दर श्रेष्ठ,रामकृष्ण श्रेष्ठ,हरिकृष्ण श्रेष्ठ,2039-01-10,9841112233,पाँचखाल-४,24-01-71-1122,2057-04-12,305,0,500"
             class="w-full border border-slate-300 rounded-xl p-2.5 text-[11px] font-mono"></textarea>
         </div>
-        <button type="button" onclick="importBulkKYCText()" class="w-full bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-semibold py-2.5 rounded-xl">
+        <button type="button" onclick="importBulkKYCText()" class="w-full bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-semibold py-2.5 rounded-xl cursor-pointer">
           बल्क ग्राहकहरू इम्पोर्ट गर्नुहोस् (Import Now)
         </button>
       </div>
@@ -1012,7 +1017,7 @@ function renderKYCModule() {
     <!-- Registered Customers Table -->
     <div class="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden mt-6">
       <div class="p-4 border-b border-slate-200 flex flex-wrap items-center justify-between gap-2">
-        <h3 class="text-sm font-bold text-slate-800">दर्ता भएका ग्राहकहरूको केवाईसी सूची (${st.customers.length} जना)</h3>
+        <h3 class="text-sm font-bold text-slate-800">दर्ता भएका ग्राहकहरूको केवाईसी तथा बक्यौता सूची (${st.customers.length} जना)</h3>
         <input type="text" id="kyc-search" oninput="filterKYCTable(this.value)" placeholder="नाम, आइडी वा फोन खोज्नुहोस्..." class="text-xs border border-slate-300 rounded-xl px-3 py-1.5 w-60">
       </div>
       <div class="overflow-x-auto">
@@ -1026,8 +1031,8 @@ function renderKYCModule() {
               <th class="p-3">ठेगाना</th>
               <th class="p-3">नागरिकता नं. (जारी मिति)</th>
               <th class="p-3">कित्ता नं.</th>
-              <th class="p-3">दर्ता मिति</th>
-              <th class="p-3 text-right">अन्तिम रिडिङ</th>
+              <th class="p-3">सुरु रिडिङ</th>
+              <th class="p-3 text-right">ओपनिङ बक्यौता (रु.)</th>
               <th class="p-3 text-center">कार्य (Action)</th>
             </tr>
           </thead>
@@ -1041,8 +1046,8 @@ function renderKYCModule() {
                 <td class="p-3">${c.address}</td>
                 <td class="p-3">${c.citizenshipNo}<div class="text-[10px] text-slate-400">${c.citizenshipDate || '-'}</div></td>
                 <td class="p-3 font-medium">${c.kittaNo}</td>
-                <td class="p-3 tabular-nums">${c.regDate}</td>
-                <td class="p-3 text-right font-bold tabular-nums">${c.lastReading}</td>
+                <td class="p-3 tabular-nums">${c.lastReading || 0}</td>
+                <td class="p-3 text-right font-bold text-amber-700 tabular-nums">रु. ${Number(c.openingDue || 0).toLocaleString()}</td>
                 <td class="p-3 text-center">
                   <button onclick="deleteCustomerKYC('${c.id}')" class="px-2 py-1 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-lg text-[10px] font-semibold cursor-pointer">
                     डिलिट
@@ -1072,17 +1077,20 @@ function saveNewCustomerKYC(e) {
     citizenshipDate: document.getElementById("kyc-cit-date").value.trim(),
     kittaNo: document.getElementById("kyc-kitta").value.trim(),
     regDate: document.getElementById("kyc-reg-date").value.trim() || window.ERP_STATE.activeBSDate,
-    lastReading: Number(document.getElementById("kyc-init-reading").value) || 0
+    lastReading: Number(document.getElementById("kyc-init-reading").value) || 0,
+    openingDue: Number(document.getElementById("kyc-opening-due").value) || 0
   };
   window.ERP_STATE.customers.push(newCust);
+  window.recalculateAllDynamicValues(true);
   window.cloudSync?.save();
   renderCurrentModule();
-  showToast(`ग्राहक ${newCust.name} (${id}) सफलतापूर्वक दर्ता भयो!`);
+  showToast(`ग्राहक ${newCust.name} (${id}) र ओपनिङ बक्यौता सफलतापूर्वक दर्ता भयो!`);
 }
 
 function deleteCustomerKYC(custId) {
   if (confirm(`के तपाईं यो ग्राहक (${custId}) लाई डिलिट गर्न चाहनुहुन्छ?`)) {
     window.ERP_STATE.customers = window.ERP_STATE.customers.filter(c => c.id !== custId);
+    window.recalculateAllDynamicValues(true);
     window.cloudSync?.save();
     renderCurrentModule();
     showToast(`ग्राहक ${custId} सफलतापूर्वक हटाइयो!`, "info");
@@ -1090,9 +1098,9 @@ function deleteCustomerKYC(custId) {
 }
 
 function downloadSampleKYCCSV() {
-  const csv = "नाम,बुवाको नाम,बाजेको नाम,जन्ममिति,फोन,ठेगाना,नागरिकता नं,जारी मिति,कित्ता नं,सुरु रिडिङ\n" +
-              "गोपालप्रसाद शर्मा,देवराज शर्मा,तुलसीप्रसाद शर्मा,2037-05-12,9841223344,पाँचखाल-४,24-01-73-4455,2055-08-10,612,0\n" +
-              "लक्ष्मी माया लामा,वीरमान लामा,सुकमान लामा,2044-09-21,9849001122,पाँचखाल-५,24-02-76-7788,2062-02-15,745,0";
+  const csv = "नाम,बुवाको नाम,बाजेको नाम,जन्ममिति,फोन,ठेगाना,नागरिकता नं,जारी मिति,कित्ता नं,सुरु रिडिङ,ओपनिङ बक्यौता\n" +
+              "गोपालप्रसाद शर्मा,देवराज शर्मा,तुलसीप्रसाद शर्मा,2037-05-12,9841223344,पाँचखाल-४,24-01-73-4455,2055-08-10,612,0,1200\n" +
+              "लक्ष्मी माया लामा,वीरमान लामा,सुकमान लामा,2044-09-21,9849001122,पाँचखाल-५,24-02-76-7788,2062-02-15,745,0,0";
   const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
@@ -1132,13 +1140,15 @@ function importBulkKYCText() {
       citizenshipDate: cols[7] || "",
       kittaNo: cols[8] || "-",
       regDate: window.ERP_STATE.activeBSDate,
-      lastReading: Number(cols[9]) || 0
+      lastReading: Number(cols[9]) || 0,
+      openingDue: Number(cols[10]) || 0
     });
     added++;
   });
+  window.recalculateAllDynamicValues(true);
   window.cloudSync?.save();
   renderCurrentModule();
-  showToast(`${added} जना ग्राहकहरू बल्क इम्पोर्ट गरियो!`);
+  showToast(`${added} जना ग्राहकहरू र तिनका ओपनिङ बक्यौता इम्पोर्ट गरियो!`);
 }
 
 function filterKYCTable(q) {
