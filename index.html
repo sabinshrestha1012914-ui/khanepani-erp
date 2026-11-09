@@ -509,27 +509,68 @@ const INITIAL_STATE = {
   ],
 
   readings: [
-    
+    { id: "RD-101", customerId: "KH-001", month: "असोज", year: "2083", entryDate: "2083-06-28", prevReading: 130, currReading: 145, units: 15, baseAmount: 200, extraAmount: 125, billAmount: 325, penaltyAmount: 0, paidAmount: 0, status: "Unpaid" },
+    { id: "RD-102", customerId: "KH-002", month: "असोज", year: "2083", entryDate: "2083-06-28", prevReading: 192, currReading: 210, units: 18, baseAmount: 200, extraAmount: 200, billAmount: 400, penaltyAmount: 0, paidAmount: 400, status: "Paid" },
+    { id: "RD-103", customerId: "KH-003", month: "असोज", year: "2083", entryDate: "2083-06-29", prevReading: 298, currReading: 320, units: 22, baseAmount: 200, extraAmount: 300, billAmount: 500, penaltyAmount: 0, paidAmount: 0, status: "Unpaid" },
+    { id: "RD-104", customerId: "KH-004", month: "असोज", year: "2083", entryDate: "2083-06-30", prevReading: 88, currReading: 98, units: 10, baseAmount: 200, extraAmount: 0, billAmount: 200, penaltyAmount: 0, paidAmount: 0, status: "Unpaid" },
+    { id: "RD-105", customerId: "KH-005", month: "असोज", year: "2083", entryDate: "2083-06-30", prevReading: 390, currReading: 412, units: 22, baseAmount: 200, extraAmount: 300, billAmount: 500, penaltyAmount: 0, paidAmount: 500, status: "Paid" }
+  ],
+
   payments: [
-   
+    { id: "PAY-1", receiptNo: "REC-2083-1001", customerId: "KH-002", date: "2083-07-05", month: "असोज", billPaid: 400, penaltyPaid: 0, totalPaid: 400, mode: "नगद" },
+    { id: "PAY-2", receiptNo: "REC-2083-1002", customerId: "KH-005", date: "2083-07-08", month: "असोज", billPaid: 500, penaltyPaid: 0, totalPaid: 500, mode: "नगद" }
+  ],
+
   loans: [
-    
+    { id: "LN-001", customerId: "KH-001", issueDate: "2083-02-10", dueDate: "2083-06-10", principal: 50000, paidPrincipal: 10000, paidInterest: 1500, accruedInterest: 0, purpose: "नयाँ धारा तथा पाइपलाइन विस्तार सहयोग", status: "Active", isOverdue: true, overdueDays: 42 },
+    { id: "LN-002", customerId: "KH-003", issueDate: "2083-05-15", dueDate: "2083-11-15", principal: 35000, paidPrincipal: 0, paidInterest: 0, accruedInterest: 0, purpose: "खानेपानी ट्याङ्की निर्माण ऋण", status: "Active", isOverdue: false, overdueDays: 0 }
+  ],
+
   loanRepayments: [
-   
+    { id: "LRP-1", receiptNo: "LREC-2083-501", loanId: "LN-001", customerId: "KH-001", date: "2083-04-20", principalPaid: 10000, interestPaid: 1500, totalPaid: 11500 }
+  ],
+
   bankAccounts: [
-   
+    { id: "BNK-1", bankName: "नेपाल बैंक लिमिटेड (पाँचखाल शाखा)", accountNo: "04500106789123000001", openingBalance: 250000 },
+    { id: "BNK-2", bankName: "कृषि विकास बैंक लिमिटेड", accountNo: "0211400987654321", openingBalance: 145000 }
+  ],
+
   bankTransactions: [
-    
+    { id: "BTX-1", bankId: "BNK-1", date: "2083-06-15", type: "Deposit", amount: 45000, remarks: "मासिक महसुल संकलन जम्मा" },
+    { id: "BTX-2", bankId: "BNK-1", date: "2083-07-02", type: "Withdraw", amount: 18500, remarks: "पम्प मर्मत तथा पाइप खरिद भुक्तानी" },
+    { id: "BTX-3", bankId: "BNK-2", date: "2083-07-10", type: "Deposit", amount: 30000, remarks: "ट्याङ्कर पानी बिक्री आम्दानी जम्मा" }
+  ],
+
   incomes: [
-    
+    { id: "INC-1", date: "2083-06-12", category: "नयाँ धारा सेवा शुल्क", customerId: "KH-004", amount: 15000, remarks: "नयाँ धारा जडान शुल्क" },
+    { id: "INC-2", date: "2083-07-04", category: "मर्मत आम्दानी", customerId: "KH-002", amount: 2500, remarks: "गेटभल्भ तथा मिटर मर्मत शुल्क" },
+    { id: "INC-3", date: "2083-07-12", category: "अनुदान", customerId: "", amount: 120000, remarks: "नगरपालिका खानेपानी मर्मत अनुदान" }
+  ],
+
   expenses: [
-   
+    { id: "EXP-1", date: "2083-06-25", category: "विद्युत महसुल", amount: 28400, remarks: "डिप बोरिङ तथा पम्प हाउस विद्युत बिल" },
+    { id: "EXP-2", date: "2083-07-03", category: "मर्मत खर्च", amount: 12500, remarks: "मुख्य पाइपलाइन लिकेज मर्मत" },
+    { id: "EXP-3", date: "2083-07-14", category: "मसलन्द तथा स्टेसनरी खर्च", amount: 3200, remarks: "रसिद प्याड तथा रजिस्टर छपाइ" },
+    { id: "EXP-4", date: "2083-07-18", category: "पेट्रोल खर्च", amount: 4500, remarks: "ट्याङ्कर तथा फिल्ड अनुगमन इन्धन" }
+  ],
+
   staffList: [
-   
+    { id: "STF-1", name: "सुरेश बहादुर के.सी.", role: "ट्याङ्कर चालक (Tanker Driver)", baseSalary: 22000 },
+    { id: "STF-2", name: "मीना कुमारी भण्डारी", role: "लेखापाल / बिलिङ सहायक", baseSalary: 20000 },
+    { id: "STF-3", name: "दीपक तामाङ", role: "प्लम्बर / मिटर रिडर", baseSalary: 19000 }
+  ],
+
   staffPayroll: [
-    
+    { id: "PAYR-1", staffId: "STF-1", month: "असोज", date: "2083-06-30", type: "तलब", amount: 22000, remarks: "असोज महिनाको मासिक तलब" },
+    { id: "PAYR-2", staffId: "STF-2", month: "असोज", date: "2083-06-30", type: "चाडपर्व खर्च", amount: 20000, remarks: "दशैं चाडपर्व पेश्की/भत्ता" }
+  ],
+
   tankerSales: [
-    
+    { id: "TKS-1", date: "2083-07-05", month: "कार्तिक", buyerName: "होटल हिमालयन भ्यू", driverId: "STF-1", liters: 12000, ratePerLiter: 0.65, saleAmount: 7800, wagePerLiter: 0.15, wageAmount: 1800 },
+    { id: "TKS-2", date: "2083-07-14", month: "कार्तिक", buyerName: "पाँचखाल पार्टी प्यालेस", driverId: "STF-1", liters: 10000, ratePerLiter: 0.50, saleAmount: 5000, wagePerLiter: 0.12, wageAmount: 1200 }
+  ]
+};
+
 // लोकल स्टोरेजबाट पहिलेको सेभ भएको डाटा लोड गर्ने (रिफ्रेस गर्दा डाटा नहराओस् भन्नका लागि)
 const savedLocalData = localStorage.getItem("KHANEPANI_ERP_LOCAL_BACKUP");
 if (savedLocalData) {
