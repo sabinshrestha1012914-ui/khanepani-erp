@@ -804,22 +804,33 @@ function showToast(msg, type = "success") {
 }
 
 // ============================================================================
-// 5. DASHBOARD MODULE
+// 5. DASHBOARD MODULE (WITH OPENING BALANCES & DUES INTEGRATION)
 // ============================================================================
 function renderDashboard() {
   const st = window.ERP_STATE;
+  const s = st.settings || {};
   const totalCustomers = st.customers.length;
-  const totalUnpaidWater = st.readings.reduce((s, r) => s + Math.max(0, r.billAmount - (r.paidAmount || 0)) + (r.penaltyAmount || 0), 0);
-  const totalLoanPrincipalOut = st.loans.reduce((s, l) => s + Math.max(0, l.principal - (l.paidPrincipal || 0)), 0);
-  const totalAccruedInterest = st.loans.reduce((s, l) => s + (l.accruedInterest || 0), 0);
+
+  // १. उठ्न बाँकी महसुल: सेटिङको ओपनिङ ड्युज + सम्पूर्ण ग्राहकहरूको व्यक्तिगत ओपनिङ ड्युज + रिडिङको बाँकी महसुल तथा जरिवाना
+  const totalCustomerOpeningDues = st.customers.reduce((sum, c) => sum + Number(c.openingDue || 0), 0);
+  const currentUnpaidWater = st.readings.reduce((sum, r) => sum + Math.max(0, r.billAmount - (r.paidAmount || 0)) + (r.penaltyAmount || 0), 0);
+  const totalUnpaidWater = Number(s.openingDues || 0) + totalCustomerOpeningDues + currentUnpaidWater;
+
+  // २. बाँकी ऋण लगानी: सेटिङको ओपनिङ लोन + हालको ऋणको बाँकी साँवा + संचित ब्याज
+  const currentLoanPrincipalOut = st.loans.reduce((sum, l) => sum + Math.max(0, l.principal - (l.paidPrincipal || 0)), 0);
+  const totalLoanPrincipalOut = Number(s.openingLoan || 0) + currentLoanPrincipalOut;
+  const totalAccruedInterest = st.loans.reduce((sum, l) => sum + (l.accruedInterest || 0), 0);
   const overdueLoans = st.loans.filter(l => l.isOverdue);
 
-  const totalBankBalance = st.bankAccounts.reduce((sum, b) => {
+  // ३. कुल बैंक मौज्दात: सेटिङको ओपनिङ बैंक + बैंक खाताहरूको ओपनिङ र डिपोजिट/विथड्र
+  const calculatedBankBalance = st.bankAccounts.reduce((sum, b) => {
     const dep = st.bankTransactions.filter(t => t.bankId === b.id && t.type === "Deposit").reduce((a, c) => a + Number(c.amount), 0);
     const wit = st.bankTransactions.filter(t => t.bankId === b.id && t.type === "Withdraw").reduce((a, c) => a + Number(c.amount), 0);
     return sum + Number(b.openingBalance) + dep - wit;
   }, 0);
+  const totalBankBalance = Number(s.openingBank || 0) + calculatedBankBalance;
 
+  // ४. अन्य आम्दानी तथा खर्चहरू
   const totalOtherIncome = st.incomes.reduce((s, i) => s + Number(i.amount), 0);
   const totalWaterCollected = st.payments.reduce((s, p) => s + Number(p.totalPaid), 0);
   const totalTankerIncome = st.tankerSales.reduce((s, t) => s + Number(t.saleAmount), 0);
@@ -837,7 +848,7 @@ function renderDashboard() {
             <p class="text-xs text-red-700">चलिरहेको मिति (${st.activeBSDate}) अनुसार म्याद सकिएका ऋणीहरूको मोबाइलमा तुरुन्त अलर्ट पठाउनुहोस्।</p>
           </div>
         </div>
-        <button onclick="openOverdueModal()" class="bg-red-600 hover:bg-red-700 text-white text-xs font-semibold px-4 py-2 rounded-xl shadow-xs">
+        <button onclick="openOverdueModal()" class="bg-red-600 hover:bg-red-700 text-white text-xs font-semibold px-4 py-2 rounded-xl shadow-xs cursor-pointer">
           मोबाइल नोटिफिकेसन पठाउनुहोस्
         </button>
       </div>
@@ -859,7 +870,7 @@ function renderDashboard() {
           <span class="p-2 bg-amber-50 text-amber-700 rounded-lg"><i data-lucide="droplets" class="w-4 h-4"></i></span>
         </div>
         <div class="text-2xl font-bold text-amber-700 mt-2 tabular-nums">${fmtMoney(totalUnpaidWater)}</div>
-        <div class="text-[11px] text-slate-500 mt-1">मिति ${st.activeBSDate} सम्मको जरिवाना सहित</div>
+        <div class="text-[11px] text-slate-500 mt-1">ओपनिङ र हालको बक्यौता सहित</div>
       </div>
 
       <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs">
@@ -877,29 +888,29 @@ function renderDashboard() {
           <span class="p-2 bg-emerald-50 text-emerald-700 rounded-lg"><i data-lucide="landmark" class="w-4 h-4"></i></span>
         </div>
         <div class="text-2xl font-bold text-emerald-700 mt-2 tabular-nums">${fmtMoney(totalBankBalance)}</div>
-        <div class="text-[11px] text-slate-500 mt-1">${st.bankAccounts.length} वटा बैंक खाताको कुल योग</div>
+        <div class="text-[11px] text-slate-500 mt-1">ओपनिङ बैंक सहित कुल योग</div>
       </div>
     </div>
 
     <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs">
       <h3 class="text-sm font-bold text-slate-800 mb-3">छिटो कार्य मेनु (Quick Actions)</h3>
       <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-3 text-xs font-semibold">
-        <button onclick="switchModule('unit-entry')" class="p-3.5 rounded-xl bg-teal-50 hover:bg-teal-100 text-teal-900 border border-teal-200 flex flex-col items-center gap-2 text-center transition">
+        <button onclick="switchModule('unit-entry')" class="p-3.5 rounded-xl bg-teal-50 hover:bg-teal-100 text-teal-900 border border-teal-200 flex flex-col items-center gap-2 text-center transition cursor-pointer">
           <i data-lucide="gauge" class="w-5 h-5 text-teal-700"></i> बल्क युनिट इन्ट्री
         </button>
-        <button onclick="switchModule('amount-entry')" class="p-3.5 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-900 border border-emerald-200 flex flex-col items-center gap-2 text-center transition">
+        <button onclick="switchModule('amount-entry')" class="p-3.5 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-900 border border-emerald-200 flex flex-col items-center gap-2 text-center transition cursor-pointer">
           <i data-lucide="banknote" class="w-5 h-5 text-emerald-700"></i> महसुल रसिद इन्ट्री
         </button>
-        <button onclick="switchModule('reading-print')" class="p-3.5 rounded-xl bg-sky-50 hover:bg-sky-100 text-sky-900 border border-sky-200 flex flex-col items-center gap-2 text-center transition">
+        <button onclick="switchModule('reading-print')" class="p-3.5 rounded-xl bg-sky-50 hover:bg-sky-100 text-sky-900 border border-sky-200 flex flex-col items-center gap-2 text-center transition cursor-pointer">
           <i data-lucide="printer" class="w-5 h-5 text-sky-700"></i> रिडिङ सिट प्रिन्ट
         </button>
-        <button onclick="switchModule('loans')" class="p-3.5 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-900 border border-indigo-200 flex flex-col items-center gap-2 text-center transition">
+        <button onclick="switchModule('loans')" class="p-3.5 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-900 border border-indigo-200 flex flex-col items-center gap-2 text-center transition cursor-pointer">
           <i data-lucide="hand-coins" class="w-5 h-5 text-indigo-700"></i> ऋण लगानी / किस्ता
         </button>
-        <button onclick="switchModule('tanker')" class="p-3.5 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200 flex flex-col items-center gap-2 text-center transition">
+        <button onclick="switchModule('tanker')" class="p-3.5 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200 flex flex-col items-center gap-2 text-center transition cursor-pointer">
           <i data-lucide="truck" class="w-5 h-5 text-amber-700"></i> ट्याङ्कर पानी बिक्री
         </button>
-        <button onclick="switchModule('reports')" class="p-3.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-900 border border-slate-300 flex flex-col items-center gap-2 text-center transition">
+        <button onclick="switchModule('reports')" class="p-3.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-900 border border-slate-300 flex flex-col items-center gap-2 text-center transition cursor-pointer">
           <i data-lucide="file-spreadsheet" class="w-5 h-5 text-slate-700"></i> वासलात / A4 रिपोर्ट
         </button>
       </div>
