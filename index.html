@@ -3662,30 +3662,33 @@ function generateReportHTML(tab) {
         const maint = Number(r.maintenanceAmount || 0);
         const bill = Number(r.billAmount || 0);
         const pen = Number(r.penaltyAmount || 0);
-        const totalRowAmount = bill + pen; // चालु महिनाको बिल (390)
+        const extraAmt = Number(r.extraAmount || 0);
         
-        // गत वर्षको बक्यौता सहितको कुल साभार रकम
-        const currentTotalDue = (idx === 0 ? initialOpeningDue : 0) + totalRowAmount;
+        // १. जम्मा रकम = बिल रकम + बढी रकम + मर्मत शुल्क + जरिवाना
+        const totalRowAmt = bill + extraAmt + maint + pen; 
+        
+        // २. माथिल्लो पङ्क्तिमा देखाउने कुल बाँकी (गत वर्षको बाँकी + यो महिनाको जम्मा रकम)
+        const upperRowTotalDue = (idx === 0 ? initialOpeningDue : 0) + totalRowAmt;
         
         const matchingPay = payments.find(p => p.month === r.month || (p.date >= r.entryDate));
         const paidM = matchingPay ? Number(matchingPay.totalPaid || 0) : (Number(r.paidAmount || 0) + Number(r.paidMaintAmount || 0));
         
-        // यदि पहिलो महिना हो भने ओपनिङ सहितको जम्मा रकमबाट भुक्तानी घट्छ
-        runningDue = (runningDue + totalRowAmount) - paidM;
+        // ३. तल्लो पङ्क्तिमा देखाउने अन्तिम बाँकी (माथिल्लो कुल बाँकी - प्राप्त रकम)
+        runningDue = upperRowTotalDue - paidM;
 
         tUnits += Number(r.units || 0);
         tBill += bill;
         tMaint += maint;
         tPen += pen;
-        tTotalAmt += currentTotalDue;
+        tTotalAmt += totalRowAmt;
         tPaid += paidM;
 
         const receiptNoStr = matchingPay ? matchingPay.receiptNo : (payments.length > 0 ? payments[0].receiptNo : '-');
         const payDateStr = matchingPay ? matchingPay.date : (payments.length > 0 ? payments[0].date : '-');
 
-        // 🌟 एक्सेलको दुरुस्त ढाँचा अनुसार सही स्तम्भ मिलान
+        // 🌟 एक्सेलको दुरुस्त दुई पङ्क्ति ढाँचा (सही जोड-घटाउ र स्तम्भ मिलान सहित)
         rows += `
-          <!-- माथिल्लो पङ्क्ति: बिल र जम्मा रकम (ओपनिङ सहित) -->
+          <!-- माथिल्लो पङ्क्ति: बिल, मर्मत, जरिवाना जोडिएर जम्मा रकम आउने र बाँकीमा कुल जोडिएर बस्ने -->
           <tr class="bg-white">
             <td rowspan="2" class="border border-slate-300 p-2 text-center align-middle font-bold">${idx + 1}</td>
             <td class="border border-slate-300 p-2 font-bold text-teal-800">${r.month}</td>
@@ -3693,16 +3696,18 @@ function generateReportHTML(tab) {
             <td class="border border-slate-300 p-2 text-right font-mono font-bold">${r.currReading}</td>
             <td class="border border-slate-300 p-2 text-right tabular-nums font-bold">${r.units}</td>
             <td class="border border-slate-300 p-2 text-right tabular-nums">${fmtMoney(bill)}</td>
+            <td class="border border-slate-300 p-2 text-right tabular-nums">${r.extraUnits || 1}</td>
+            <td class="border border-slate-300 p-2 text-right tabular-nums">${fmtMoney(extraAmt)}</td>
             <td class="border border-slate-300 p-2 text-right tabular-nums text-amber-800">${fmtMoney(maint)}</td>
             <td class="border border-slate-300 p-2 text-right tabular-nums text-red-700">${fmtMoney(pen)}</td>
-            <td class="border border-slate-300 p-2 text-right tabular-nums font-bold text-slate-900">${fmtMoney(currentTotalDue)}</td>
+            <td class="border border-slate-300 p-2 text-right tabular-nums font-bold text-slate-900">${fmtMoney(totalRowAmt)}</td>
             <td class="border border-slate-300 p-2 text-right tabular-nums text-slate-400">रू. 0.00</td>
-            <td class="border border-slate-300 p-2 text-right tabular-nums text-rose-700 font-bold">${fmtMoney(currentTotalDue)}</td>
+            <td class="border border-slate-300 p-2 text-right tabular-nums text-rose-700 font-bold">${fmtMoney(upperRowTotalDue)}</td>
             <td class="border border-slate-300 p-2 text-center text-slate-400">-</td>
           </tr>
-          <!-- तल्लो पङ्क्ति: भुक्तानी मिति, प्राप्त रकम (4890), बाँकी (0) र रसिद नं. ठीक स्तम्भमा -->
+          <!-- तल्लो पङ्क्ति: भुक्तानी मिति, प्राप्त रकम, घटेर आएको अन्तिम बाँकी र रसिद नं. -->
           <tr class="bg-slate-50/80">
-            <td colspan="9" class="border border-slate-300 px-3 py-1.5 text-[11px] text-slate-700">
+            <td colspan="11" class="border border-slate-300 px-3 py-1.5 text-[11px] text-slate-700">
               <span class="font-semibold text-teal-900">भुक्तानी मिति:</span> <u class="font-bold text-teal-950">${payDateStr}</u>
             </td>
             <td class="border border-slate-300 p-1.5 text-right tabular-nums text-emerald-700 font-bold text-xs">${fmtMoney(paidM)}</td>
