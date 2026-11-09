@@ -919,462 +919,310 @@ function renderDashboard() {
 }
 
 // ============================================================================
-// 15. COMPREHENSIVE A4 ACCOUNTING & OPERATIONAL REPORTS MODULE (ओपनिङ बक्यौता सहितको सहि हिसाब)
+// 6. KYC / CUSTOMER MANAGEMENT MODULE (AUTO ID + OPENING DUE + EDIT & BULK IMPORT)
 // ============================================================================
-let activeReportTab = "customer-annual";
-let repFromBS = "2083-01-01";
-let repToBS = "2083-12-30";
-let repCustFilter = "ALL";
-
-function renderReportsModule() {
-  const st = window.ERP_STATE;
-  const s = st.settings;
-
-  const tabs = [
-    { id: "customer-annual", label: "वार्षिक / मिति अनुसार ग्राहक युनिट र महसुल" },
-    { id: "loan-portfolio", label: "ऋण लगानी तथा भाखा नाघेको रिपोर्ट" },
-    { id: "income-expense", label: "आय-व्यय / नाफा-नोक्सान हिसाब (P&L)" },
-    { id: "trial-balance", label: "सन्तुलन परीक्षण (Trial Balance)" },
-    { id: "balance-sheet", label: "वासलात (Balance Sheet)" },
-    { id: "cash-flow", label: "नगद प्रवाह विवरण (Cash Flow)" }
-  ];
-
-  return `
-    <div class="space-y-4">
-      <!-- Report Controls & Tabs -->
-      <div class="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs space-y-3">
-        <div class="flex flex-wrap items-center justify-between gap-2">
-          <div class="flex flex-wrap gap-1.5">
-            ${tabs.map(t => `
-              <button onclick="activeReportTab='${t.id}'; renderCurrentModule();"
-                class="px-3 py-1.5 rounded-xl text-xs font-semibold transition ${activeReportTab === t.id ? 'bg-teal-700 text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'}">
-                ${t.label}
-              </button>
-            `).join("")}
-          </div>
-          <button onclick="printCurrentA4Report()" class="bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold px-4 py-2 rounded-xl flex items-center gap-1.5 cursor-pointer">
-            <i data-lucide="printer" class="w-4 h-4"></i> A4 पेपरमा प्रिन्ट गर्नुहोस्
-          </button>
-        </div>
-
-        <div class="flex flex-wrap items-center gap-2 text-xs pt-2 border-t border-slate-100">
-          <span class="font-semibold text-slate-600">अवधि छान्नुहोस्:</span>
-          <input type="text" value="${repFromBS}" onchange="repFromBS=this.value; renderCurrentModule();" class="w-28 border border-slate-300 rounded-xl px-2.5 py-1.5 text-center font-semibold">
-          <span>देखि</span>
-          <input type="text" value="${repToBS}" onchange="repToBS=this.value; renderCurrentModule();" class="w-28 border border-slate-300 rounded-xl px-2.5 py-1.5 text-center font-semibold">
-          ${activeReportTab === 'customer-annual' ? `
-            <select onchange="repCustFilter=this.value; renderCurrentModule();" class="border border-slate-300 rounded-xl px-3 py-1.5 font-semibold cursor-pointer">
-              <option value="ALL">सबै ग्राहकहरू (Summary Report)</option>
-              ${st.customers.map(c => `<option value="${c.id}" ${repCustFilter === c.id ? 'selected' : ''}>${c.id} - ${c.name}</option>`).join("")}
-            </select>
-          ` : ''}
-        </div>
-      </div>
-
-      <!-- Report Output Container -->
-      <div id="a4-report-content" class="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs">
-        ${generateReportHTML(activeReportTab)}
-      </div>
-    </div>
-  `;
+function getNextCustomerID() {
+  const nums = window.ERP_STATE.customers.map(c => parseInt(c.id.replace(/\D/g, ""), 10) || 0);
+  const max = nums.length ? Math.max(...nums) : 0;
+  return `KH-${String(max + 1).padStart(3, "0")}`;
 }
 
-function generateReportHTML(tab) {
+function renderKYCModule() {
   const st = window.ERP_STATE;
-  const s = st.settings;
+  const nextId = getNextCustomerID();
 
-  const header = (title) => `
-    <div class="text-center border-b-2 border-slate-800 pb-3 mb-4">
-      <h2 class="text-lg font-bold text-slate-900">${s.committeeName}</h2>
-      <p class="text-xs text-slate-600">${s.address} | फोन: ${s.phone}</p>
-      <div class="mt-1 font-bold text-sm text-teal-900">${title}</div>
-      <div class="text-[11px] text-slate-500">अवधि: ${repFromBS} देखि ${repToBS} सम्म (चलिरहेको मिति: ${st.activeBSDate})</div>
-    </div>
-  `;
+  return `
+    <div class="grid grid-cols-1 xl:grid-cols-3 gap-6">
+      <!-- Single KYC Form (New / Edit) -->
+      <div class="xl:col-span-2 bg-white p-5 rounded-2xl border border-slate-200 shadow-xs">
+        <h3 class="text-base font-bold text-slate-800 mb-4 flex items-center gap-2">
+          <i data-lucide="user-plus" class="w-5 h-5 text-teal-700"></i> <span id="kyc-form-title">नयाँ ग्राहक केवाईसी दर्ता तथा ओपनिङ बक्यौता</span>
+        </h3>
+        <form onsubmit="saveCustomerKYCData(event)" class="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+          <input type="hidden" id="kyc-edit-index" value="-1">
+          <div>
+            <label class="font-semibold text-slate-600 block mb-1">ग्राहक आइडी (ID)</label>
+            <input type="text" id="kyc-id" value="${nextId}" readonly class="w-full bg-slate-100 border border-slate-300 rounded-xl px-3 py-2 font-bold text-teal-800">
+          </div>
+          <div>
+            <label class="font-semibold text-slate-600 block mb-1">ग्राहकको पूरा नाम *</label>
+            <input type="text" id="kyc-name" required placeholder="उदा: रामबहादुर थापा" class="w-full border border-slate-300 rounded-xl px-3 py-2">
+          </div>
+          <div>
+            <label class="font-semibold text-slate-600 block mb-1">बुवाको नाम *</label>
+            <input type="text" id="kyc-father" required placeholder="बुवाको नाम" class="w-full border border-slate-300 rounded-xl px-3 py-2">
+          </div>
+          <div>
+            <label class="font-semibold text-slate-600 block mb-1">बाजेको नाम *</label>
+            <input type="text" id="kyc-grandfather" required placeholder="बाजेको नाम" class="w-full border border-slate-300 rounded-xl px-3 py-2">
+          </div>
+          <div>
+            <label class="font-semibold text-slate-600 block mb-1">जन्ममिति (BS)</label>
+            <input type="text" id="kyc-dob" placeholder="2042-05-15" class="w-full border border-slate-300 rounded-xl px-3 py-2">
+          </div>
+          <div>
+            <label class="font-semibold text-slate-600 block mb-1">फोन / WhatsApp नम्बर *</label>
+            <input type="text" id="kyc-phone" required placeholder="9841XXXXXX" class="w-full border border-slate-300 rounded-xl px-3 py-2">
+          </div>
+          <div>
+            <label class="font-semibold text-slate-600 block mb-1">ठेगाना *</label>
+            <input type="text" id="kyc-address" required placeholder="वडा नं., टोल" class="w-full border border-slate-300 rounded-xl px-3 py-2">
+          </div>
+          <div>
+            <label class="font-semibold text-slate-600 block mb-1">नागरिकता नम्बर *</label>
+            <input type="text" id="kyc-cit-no" required placeholder="24-01-75-XXXXX" class="w-full border border-slate-300 rounded-xl px-3 py-2">
+          </div>
+          <div>
+            <label class="font-semibold text-slate-600 block mb-1">नागरिकता जारी मिति (BS)</label>
+            <input type="text" id="kyc-cit-date" placeholder="2060-03-10" class="w-full border border-slate-300 rounded-xl px-3 py-2">
+          </div>
+          <div>
+            <label class="font-semibold text-slate-600 block mb-1">जग्गा कित्ता नम्बर *</label>
+            <input type="text" id="kyc-kitta" required placeholder="कित्ता नं." class="w-full border border-slate-300 rounded-xl px-3 py-2">
+          </div>
+          <div>
+            <label class="font-semibold text-slate-600 block mb-1">ग्राहक बनेको मिति (Auto BS)</label>
+            <input type="text" id="kyc-reg-date" value="${st.activeBSDate}" class="w-full bg-teal-50 border border-teal-300 rounded-xl px-3 py-2 font-semibold text-teal-900">
+          </div>
+          <div>
+            <label class="font-semibold text-slate-600 block mb-1">सुरुवाती मिटर अङ्क</label>
+            <input type="number" id="kyc-init-reading" value="0" min="0" class="w-full border border-slate-300 rounded-xl px-3 py-2">
+          </div>
+          <div class="sm:col-span-3">
+            <label class="font-semibold text-amber-800 block mb-1">गत वर्षको उठ्न बाँकी महसुल (Opening Due रू.) *</label>
+            <input type="number" id="kyc-opening-due" value="0" min="0" class="w-full bg-amber-50 border border-amber-300 rounded-xl px-3 py-2 font-bold text-amber-900" placeholder="पुराना बिल अनुसार तिर्न बाँकी रकम">
+          </div>
+          <div class="sm:col-span-3 pt-2 flex justify-between items-center">
+            <button type="button" onclick="resetKYCForm()" id="kyc-cancel-btn" class="hidden px-4 py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 font-semibold rounded-xl text-xs cursor-pointer">
+              सम्पादन रद्द गर्नुहोस् (Cancel)
+            </button>
+            <button type="submit" class="ml-auto bg-teal-700 hover:bg-teal-800 text-white font-semibold px-5 py-2.5 rounded-xl shadow-xs flex items-center gap-2 cursor-pointer">
+              <i data-lucide="save" class="w-4 h-4"></i> <span id="kyc-submit-btn-text">ग्राहक विवरण सुरक्षित गर्नुहोस्</span>
+            </button>
+          </div>
+        </form>
+      </div>
 
-  if (tab === "customer-annual") {
-    // 🌟 निश्चित सदस्य (Member ID) छान्दा विस्तृत स्टेटमेन्ट (ओपनिङ बक्यौता सहित)
-    if (repCustFilter !== "ALL") {
-      const cust = st.customers.find(c => c.id === repCustFilter);
-      if (!cust) return `<div class="p-6 text-center text-slate-500">ग्राहक फेला परेन।</div>`;
-
-      const openingDue = Number(cust.openingDue || 0);
-      const rds = st.readings.filter(r => r.customerId === cust.id && isDateBetweenBS(r.entryDate, repFromBS, repToBS));
-      const payments = st.payments.filter(p => p.customerId === cust.id && isDateBetweenBS(p.date, repFromBS, repToBS));
-
-      let tUnits = 0, tBill = 0, tMaint = 0, tPen = 0, tTotalAmt = openingDue, tPaid = 0;
-      let runningDue = openingDue;
-
-      let rows = "";
-
-      // यदि ओपनिङ बक्यौता छ भने पहिलो पङ्क्तिमा ओपनिङ बक्यौता देखाउने
-      if (openingDue > 0) {
-        rows += `
-          <tr class="bg-amber-50/50">
-            <td class="border border-slate-300 p-2 text-center font-bold"> - </td>
-            <td class="border border-slate-300 p-2 font-bold text-amber-900" colspan="8">गत वर्षको उठ्न बाँकी ओपनिङ बक्यौता</td>
-            <td class="border border-slate-300 p-2 text-right tabular-nums font-bold text-amber-900">${fmtMoney(openingDue)}</td>
-            <td class="border border-slate-300 p-2 text-right tabular-nums text-emerald-700">-</td>
-            <td class="border border-slate-300 p-2 text-right tabular-nums font-bold text-rose-700">${fmtMoney(openingDue)}</td>
-            <td class="border border-slate-300 p-2 text-center">-</td>
-          </tr>
-        `;
-      }
-
-      rds.forEach((r, idx) => {
-        const maint = Number(r.maintenanceAmount || 0);
-        const bill = Number(r.billAmount || 0);
-        const pen = Number(r.penaltyAmount || 0);
-        const totalRowAmt = bill + pen; 
-        
-        const matchingPay = payments.find(p => p.month === r.month || (p.date >= r.entryDate));
-        const paidM = matchingPay ? Number(matchingPay.totalPaid || 0) : (Number(r.paidAmount || 0) + Number(r.paidMaintAmount || 0));
-        
-        runningDue = (runningDue + totalRowAmt) - paidM;
-
-        tUnits += Number(r.units || 0);
-        tBill += bill;
-        tMaint += maint;
-        tPen += pen;
-        tTotalAmt += totalRowAmt;
-        tPaid += paidM;
-
-        const receiptNoStr = matchingPay ? matchingPay.receiptNo : '-';
-        const payDateStr = matchingPay ? matchingPay.date : 'भुक्तानी बाँकी';
-
-        rows += `
-          <!-- 1. माथिल्लो पङ्क्ति: रिडिङ तथा बिल डाटा -->
-          <tr class="bg-white">
-            <td rowspan="2" class="border border-slate-300 p-2 text-center align-middle font-bold">${idx + 1}</td>
-            <td class="border border-slate-300 p-2 font-bold text-teal-800">${r.month}</td>
-            <td class="border border-slate-300 p-2 text-right font-mono">${r.prevReading}</td>
-            <td class="border border-slate-300 p-2 text-right font-mono font-bold">${r.currReading}</td>
-            <td class="border border-slate-300 p-2 text-right tabular-nums font-bold">${r.units}</td>
-            <td class="border border-slate-300 p-2 text-right tabular-nums">${fmtMoney(bill)}</td>
-            <td class="border border-slate-300 p-2 text-right tabular-nums text-amber-800">${fmtMoney(maint)}</td>
-            <td class="border border-slate-300 p-2 text-right tabular-nums text-red-700">${fmtMoney(pen)}</td>
-            <td class="border border-slate-300 p-2 text-right tabular-nums font-bold text-slate-900">${fmtMoney(totalRowAmt)}</td>
-            <td class="border border-slate-300 p-2 text-right tabular-nums text-emerald-700 font-bold">-</td>
-            <td class="border border-slate-300 p-2 text-right tabular-nums text-rose-700 font-bold">${fmtMoney(runningDue)}</td>
-            <td rowspan="2" class="border border-slate-300 p-2 text-center align-middle font-bold text-indigo-900">${receiptNoStr}</td>
-          </tr>
-          <!-- 2. तल्लो पङ्क्ति: भुक्तानी विवरण (Payment Details with Date) -->
-          <tr class="bg-slate-50/80">
-            <td colspan="8" class="border border-slate-300 px-3 py-1.5 text-[11px] text-slate-700">
-              <span class="font-semibold text-teal-900">भुक्तानी मिति:</span> <u class="font-bold text-teal-950">${payDateStr}</u>
-            </td>
-            <td class="border border-slate-300 p-1.5 text-right tabular-nums text-emerald-700 font-bold text-xs">${fmtMoney(paidM)}</td>
-            <td class="border border-slate-300 p-1.5 text-right text-[10px] text-slate-400">चुक्ता</td>
-          </tr>
-        `;
-      });
-
-      return `
-        ${header(`सदस्यगत विस्तृत रिडिङ तथा महसुल स्टेटमेन्ट - ${cust.name} (${cust.id})`)}
-        <div class="grid grid-cols-2 gap-2 text-xs bg-slate-50 p-3 rounded border border-slate-300 mb-4">
-          <div><strong>ग्राहक आइडी:</strong> ${cust.id}</div>
-          <div><strong>फोन नं.:</strong> ${cust.phone || '-'}</div>
-          <div><strong>ग्राहकको नाम:</strong> ${cust.name}</div>
-          <div><strong>ठेगाना:</strong> ${cust.address || '-'} | <strong class="text-amber-800">ओपनिङ बक्यौता:</strong> ${fmtMoney(openingDue)}</div>
+      <!-- Bulk Excel/CSV Import Card -->
+      <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs flex flex-col justify-between space-y-3">
+        <div>
+          <h3 class="text-base font-bold text-slate-800 mb-2 flex items-center gap-2">
+            <i data-lucide="file-spreadsheet" class="w-5 h-5 text-emerald-700"></i> Excel / CSV बल्क ग्राहक अपलोड
+          </h3>
+          <p class="text-xs text-slate-500 mb-3">एकैपटक धेरै ग्राहकहरू तान्न CSV फाइल अपलोड गर्नुहोस् वा तलको बक्समा डाटा पेस्ट गर्नुहोस्।</p>
+          <div class="flex gap-2 mb-3">
+            <button type="button" onclick="downloadSampleKYCCSV()" class="text-xs bg-slate-100 hover:bg-slate-200 text-slate-800 font-semibold px-3 py-2 rounded-xl flex items-center gap-1.5 cursor-pointer">
+              <i data-lucide="download" class="w-3.5 h-3.5"></i> Sample CSV डाउनलोड
+            </button>
+            <label class="text-xs bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 font-semibold px-3 py-2 rounded-xl cursor-pointer flex items-center gap-1.5">
+              <i data-lucide="upload" class="w-3.5 h-3.5"></i> फाइल छान्नुहोस्
+              <input type="file" accept=".csv,.txt" onchange="handleKYCCSVFile(event)" class="hidden">
+            </label>
+          </div>
+          <textarea id="kyc-bulk-text" rows="5" placeholder="नाम,बुवाको नाम,बाजेको नाम,जन्ममिति,फोन,ठेगाना,नागरिकता नं,जारी मिति,कित्ता नं,सुरु रिडिङ,ओपनिङ बक्यौता&#10;रामबहादुर,हरिबहादुर,जीतबहादुर,2042-05-15,9841112233,पाँचखाल-४,24-01,2060,305,0,500"
+            class="w-full border border-slate-300 rounded-xl p-2.5 text-[11px] font-mono"></textarea>
         </div>
-        <table class="w-full text-xs border-collapse border border-slate-300">
-          <thead class="bg-slate-100">
+        <button type="button" onclick="importBulkKYCText()" class="w-full bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-semibold py-2.5 rounded-xl cursor-pointer">
+          बल्क ग्राहकहरू इम्पोर्ट गर्नुहोस् (Import Now)
+        </button>
+      </div>
+    </div>
+
+    <!-- Registered Customers Table -->
+    <div class="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden mt-6">
+      <div class="p-4 border-b border-slate-200 flex flex-wrap items-center justify-between gap-2">
+        <h3 class="text-sm font-bold text-slate-800">दर्ता भएका ग्राहकहरूको केवाईसी तथा बक्यौता सूची (${st.customers.length} जना)</h3>
+        <input type="text" id="kyc-search" oninput="filterKYCTable(this.value)" placeholder="नाम, आइडी वा फोन खोज्नुहोस्..." class="text-xs border border-slate-300 rounded-xl px-3 py-1.5 w-60">
+      </div>
+      <div class="overflow-x-auto">
+        <table class="w-full text-xs text-left" id="kyc-table">
+          <thead class="bg-slate-50 text-slate-600 font-semibold border-b border-slate-200">
             <tr>
-              <th class="border border-slate-300 p-2 text-center">क्र.सं.</th>
-              <th class="border border-slate-300 p-2">महिना</th>
-              <th class="border border-slate-300 p-2 text-right">साविक</th>
-              <th class="border border-slate-300 p-2 text-right">हालको</th>
-              <th class="border border-slate-300 p-2 text-right">युनिट</th>
-              <th class="border border-slate-300 p-2 text-right">बिल रकम</th>
-              <th class="border border-slate-300 p-2 text-right">मर्मत शुल्क</th>
-              <th class="border border-slate-300 p-2 text-right">जरिवाना</th>
-              <th class="border border-slate-300 p-2 text-right">जम्मा रकम</th>
-              <th class="border border-slate-300 p-2 text-right">प्राप्त रकम</th>
-              <th class="border border-slate-300 p-2 text-right">बाँकी रकम</th>
-              <th class="border border-slate-300 p-2 text-center">रसिद नं.</th>
+              <th class="p-3">आइडी</th>
+              <th class="p-3">ग्राहकको नाम</th>
+              <th class="p-3">बुवा / बाजेको नाम</th>
+              <th class="p-3">फोन</th>
+              <th class="p-3">ठेगाना</th>
+              <th class="p-3">नागरिकता नं. (जारी मिति)</th>
+              <th class="p-3">कित्ता नं.</th>
+              <th class="p-3">सुरु रिडिङ</th>
+              <th class="p-3 text-right">ओपनिङ बक्यौता (रु.)</th>
+              <th class="p-3 text-center">कार्य (Action)</th>
             </tr>
           </thead>
-          <tbody>
-            ${rows || `<tr><td colspan="12" class="p-6 text-center text-slate-400">तोकिएको अवधिमा कुनै रिडिङ रेकर्ड भेटिएन।</td></tr>`}
-          </tbody>
-          <tfoot class="bg-slate-100 font-bold">
-            <tr>
-              <td colspan="4" class="border border-slate-300 p-2 text-right">कुल जम्मा:</td>
-              <td class="border border-slate-300 p-2 text-right tabular-nums">${tUnits}</td>
-              <td class="border border-slate-300 p-2 text-right tabular-nums">${fmtMoney(tBill)}</td>
-              <td class="border border-slate-300 p-2 text-right tabular-nums text-amber-800">${fmtMoney(tMaint)}</td>
-              <td class="border border-slate-300 p-2 text-right tabular-nums text-red-700">${fmtMoney(tPen)}</td>
-              <td class="border border-slate-300 p-2 text-right tabular-nums">${fmtMoney(tTotalAmt)}</td>
-              <td class="border border-slate-300 p-2 text-right tabular-nums text-emerald-700">${fmtMoney(tPaid)}</td>
-              <td class="border border-slate-300 p-2 text-right tabular-nums text-rose-700">${fmtMoney(runningDue)}</td>
-              <td class="border border-slate-300 p-2 text-center">-</td>
-            </tr>
-          </tfoot>
-        </table>
-      `;
-    }
-
-    // 🌟 सबै ग्राहक छान्दा (Summary Report)
-    const custs = st.customers;
-    let grandUnits = 0, grandBill = 0, grandMaint = 0, grandPen = 0, grandPaid = 0, grandDue = 0;
-
-    const rows = custs.map((c, idx) => {
-      const openingDue = Number(c.openingDue || 0);
-      const rds = st.readings.filter(r => r.customerId === c.id && isDateBetweenBS(r.entryDate, repFromBS, repToBS));
-      const units = rds.reduce((a, b) => a + Number(b.units), 0);
-      const bill = rds.reduce((a, b) => a + Number(b.billAmount), 0);
-      const maint = rds.reduce((a, b) => a + Number(b.maintenanceAmount || 0), 0);
-      const pen = rds.reduce((a, b) => a + Number(b.penaltyAmount || 0), 0);
-      const paid = rds.reduce((a, b) => a + Number(b.paidAmount || 0) + Number(b.paidMaintAmount || 0), 0);
-      const due = (openingDue + bill + pen) - paid;
-
-      grandUnits += units; grandBill += bill; grandMaint += maint; grandPen += pen; grandPaid += paid; grandDue += due;
-      
-      return `
-        <tr>
-          <td class="border border-slate-300 p-2 text-center">${idx + 1}</td>
-          <td class="border border-slate-300 p-2 font-bold">${c.id}</td>
-          <td class="border border-slate-300 p-2 font-semibold">${c.name}</td>
-          <td class="border border-slate-300 p-2 text-right tabular-nums">${units}</td>
-          <td class="border border-slate-300 p-2 text-right tabular-nums">${fmtMoney(bill + openingDue)}</td>
-          <td class="border border-slate-300 p-2 text-right tabular-nums text-amber-800">${fmtMoney(maint)}</td>
-          <td class="border border-slate-300 p-2 text-right tabular-nums text-red-700">${fmtMoney(pen)}</td>
-          <td class="border border-slate-300 p-2 text-right tabular-nums text-emerald-700">${fmtMoney(paid)}</td>
-          <td class="border border-slate-300 p-2 text-right font-bold tabular-nums text-rose-700">${fmtMoney(due)}</td>
-        </tr>
-      `;
-    }).join("");
-
-    return `
-      ${header("ग्राहकवार वार्षिक / आवधिक पानी खपत, महसुल तथा मर्मत प्रतिवेदन (Summary)")}
-      <table class="w-full text-xs border-collapse border border-slate-300">
-        <thead class="bg-slate-100">
-          <tr>
-            <th class="border border-slate-300 p-2">क्र.सं.</th>
-            <th class="border border-slate-300 p-2">आइडी</th>
-            <th class="border border-slate-300 p-2 text-left">ग्राहकको नाम</th>
-            <th class="border border-slate-300 p-2 text-right">जम्मा युनिट</th>
-            <th class="border border-slate-300 p-2 text-right">जम्मा बिल (ओपनिङ सहित)</th>
-            <th class="border border-slate-300 p-2 text-right">मर्मत शुल्क</th>
-            <th class="border border-slate-300 p-2 text-right">जरिवाना</th>
-            <th class="border border-slate-300 p-2 text-right">बुझाएको रकम</th>
-            <th class="border border-slate-300 p-2 text-right">उठ्न बाँकी</th>
-          </tr>
-        </thead>
-        <tbody>${rows}</tbody>
-        <tfoot class="bg-slate-100 font-bold">
-          <tr>
-            <td colspan="3" class="border border-slate-300 p-2 text-right">कुल जम्मा:</td>
-            <td class="border border-slate-300 p-2 text-right tabular-nums">${grandUnits}</td>
-            <td class="border border-slate-300 p-2 text-right tabular-nums">${fmtMoney(grandBill)}</td>
-            <td class="border border-slate-300 p-2 text-right tabular-nums text-amber-800">${fmtMoney(grandMaint)}</td>
-            <td class="border border-slate-300 p-2 text-right tabular-nums text-red-700">${fmtMoney(grandPen)}</td>
-            <td class="border border-slate-300 p-2 text-right tabular-nums text-emerald-700">${fmtMoney(grandPaid)}</td>
-            <td class="border border-slate-300 p-2 text-right tabular-nums text-rose-700">${fmtMoney(grandDue)}</td>
-          </tr>
-        </tfoot>
-      </table>
-    `;
-  }
-
-  if (tab === "loan-portfolio") {
-    return `
-      ${header("ऋण लगानी, असुली तथा भाखा नाघेको विस्तृत प्रतिवेदन")}
-      <table class="w-full text-xs border-collapse border border-slate-300">
-        <thead class="bg-slate-100">
-          <tr>
-            <th class="border border-slate-300 p-2">ऋण नं.</th>
-            <th class="border border-slate-300 p-2 text-left">सदस्यको नाम</th>
-            <th class="border border-slate-300 p-2">लगानी मिति</th>
-            <th class="border border-slate-300 p-2">भाखा मिति</th>
-            <th class="border border-slate-300 p-2 text-right">लगानी रकम</th>
-            <th class="border border-slate-300 p-2 text-right">बाँकी साँवा</th>
-            <th class="border border-slate-300 p-2 text-right">प्राप्त ब्याज</th>
-            <th class="border border-slate-300 p-2 text-right">पाकेको ब्याज</th>
-            <th class="border border-slate-300 p-2">स्थिति</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${st.loans.map(l => {
-            const c = st.customers.find(x => x.id === l.customerId) || { name: l.customerId };
-            return `
-              <tr>
-                <td class="border border-slate-300 p-2 font-bold">${l.id}</td>
-                <td class="border border-slate-300 p-2">${c.name}</td>
-                <td class="border border-slate-300 p-2">${l.issueDate}</td>
-                <td class="border border-slate-300 p-2">${l.dueDate}</td>
-                <td class="border border-slate-300 p-2 text-right">${fmtMoney(l.principal)}</td>
-                <td class="border border-slate-300 p-2 text-right font-bold">${fmtMoney(l.principal - (l.paidPrincipal || 0))}</td>
-                <td class="border border-slate-300 p-2 text-right">${fmtMoney(l.paidInterest || 0)}</td>
-                <td class="border border-slate-300 p-2 text-right text-amber-800 font-bold">${fmtMoney(l.accruedInterest || 0)}</td>
-                <td class="border border-slate-300 p-2 font-semibold ${l.isOverdue ? 'text-red-700' : 'text-emerald-700'}">${l.isOverdue ? `भाखा नाघेको (${l.overdueDays} दिन)` : l.status}</td>
+          <tbody class="divide-y divide-slate-100">
+            ${st.customers.map((c, idx) => `
+              <tr class="hover:bg-slate-50">
+                <td class="p-3 font-bold text-teal-800">${c.id}</td>
+                <td class="p-3 font-semibold text-slate-900">${c.name}<div class="text-[10px] text-slate-400">जन्म: ${c.dob || '-'}</div></td>
+                <td class="p-3">${c.fatherName}<div class="text-[10px] text-slate-500">बाजे: ${c.grandfatherName}</div></td>
+                <td class="p-3 tabular-nums">${c.phone}</td>
+                <td class="p-3">${c.address}</td>
+                <td class="p-3">${c.citizenshipNo}<div class="text-[10px] text-slate-400">${c.citizenshipDate || '-'}</div></td>
+                <td class="p-3 font-medium">${c.kittaNo}</td>
+                <td class="p-3 tabular-nums">${c.lastReading || 0}</td>
+                <td class="p-3 text-right font-bold text-amber-700 tabular-nums">रु. ${Number(c.openingDue || 0).toLocaleString()}</td>
+                <td class="p-3 text-center space-x-1">
+                  <button onclick="editCustomerKYC(${idx})" class="px-2 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-lg text-[10px] font-semibold cursor-pointer">
+                    सम्पादन
+                  </button>
+                  <button onclick="deleteCustomerKYC('${c.id}')" class="px-2 py-1 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-lg text-[10px] font-semibold cursor-pointer">
+                    डिलिट
+                  </button>
+                </td>
               </tr>
-            `;
-          }).join("")}
-        </tbody>
-      </table>
-    `;
-  }
-
-  // Accounting aggregates
-  const periodPayments = st.payments.filter(p => isDateBetweenBS(p.date, repFromBS, repToBS));
-  const waterInc = periodPayments.reduce((a, b) => a + (Number(b.totalPaid) - Number(b.maintPaid || 0)), 0);
-  const receiptMaintInc = periodPayments.reduce((a, b) => a + Number(b.maintPaid || 0), 0);
-  const tankerInc = st.tankerSales.filter(t => isDateBetweenBS(t.date, repFromBS, repToBS)).reduce((a, b) => a + Number(b.saleAmount), 0);
-  const loanIntInc = st.loanRepayments.filter(r => isDateBetweenBS(r.date, repFromBS, repToBS)).reduce((a, b) => a + Number(b.interestPaid), 0);
-
-  const incByCat = {};
-  INCOME_CATEGORIES.forEach(c => incByCat[c] = 0);
-  st.incomes.filter(i => isDateBetweenBS(i.date, repFromBS, repToBS)).forEach(i => incByCat[i.category] = (incByCat[i.category] || 0) + Number(i.amount));
-  incByCat["मर्मत आम्दानी"] = (incByCat["मर्मत आम्दानी"] || 0) + receiptMaintInc;
-
-  const expByCat = {};
-  EXPENSE_CATEGORIES.forEach(c => expByCat[c] = 0);
-  st.expenses.filter(e => isDateBetweenBS(e.date, repFromBS, repToBS)).forEach(e => expByCat[e.category] = (expByCat[e.category] || 0) + Number(e.amount));
-
-  const staffExp = st.staffPayroll.filter(p => isDateBetweenBS(p.date, repFromBS, repToBS)).reduce((a, b) => a + Number(b.amount), 0);
-  const tankerWageExp = st.tankerSales.filter(t => isDateBetweenBS(t.date, repFromBS, repToBS)).reduce((a, b) => a + Number(b.wageAmount), 0);
-
-  const totalIncome = waterInc + tankerInc + loanIntInc + Object.values(incByCat).reduce((a, b) => a + b, 0);
-  const totalExpense = Object.values(expByCat).reduce((a, b) => a + b, 0) + staffExp + tankerWageExp;
-  const netSurplus = totalIncome - totalExpense;
-
-  if (tab === "income-expense") {
-    return `
-      ${header("आय-व्यय तथा नाफा-नोक्सान हिसाब (Income & Expenditure / P&L Statement)")}
-      <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
-        <table class="w-full border-collapse border border-slate-300">
-          <thead><tr class="bg-rose-50"><th class="border border-slate-300 p-2 text-left">खर्च शीर्षक (Expenditure)</th><th class="border border-slate-300 p-2 text-right">रकम (रू.)</th></tr></thead>
-          <tbody>
-            ${Object.entries(expByCat).filter(([, v]) => v > 0).map(([k, v]) => `<tr><td class="border border-slate-300 p-2">${k}</td><td class="border border-slate-300 p-2 text-right">${fmtMoney(v)}</td></tr>`).join("")}
-            <tr><td class="border border-slate-300 p-2">कर्मचारी तलब, भत्ता तथा सुविधा</td><td class="border border-slate-300 p-2 text-right">${fmtMoney(staffExp)}</td></tr>
-            <tr><td class="border border-slate-300 p-2">ट्याङ्कर पानी बिक्री चालक ज्याला</td><td class="border border-slate-300 p-2 text-right">${fmtMoney(tankerWageExp)}</td></tr>
-            <tr class="bg-emerald-50 font-bold"><td class="border border-slate-300 p-2">खुद बचत / नाफा (Net Surplus)</td><td class="border border-slate-300 p-2 text-right">${fmtMoney(netSurplus)}</td></tr>
+            `).join("")}
           </tbody>
-          <tfoot><tr class="bg-slate-100 font-bold"><td class="border border-slate-300 p-2">कुल जम्मा</td><td class="border border-slate-300 p-2 text-right">${fmtMoney(totalExpense + netSurplus)}</td></tr></tfoot>
-        </table>
-
-        <table class="w-full border-collapse border border-slate-300">
-          <thead><tr class="bg-emerald-50"><th class="border border-slate-300 p-2 text-left">आम्दानी शीर्षक (Income)</th><th class="border border-slate-300 p-2 text-right">रकम (रू.)</th></tr></thead>
-          <tbody>
-            <tr><td class="border border-slate-300 p-2">खानेपानी महसुल तथा जरिवाना आम्दानी</td><td class="border border-slate-300 p-2 text-right">${fmtMoney(waterInc)}</td></tr>
-            <tr><td class="border border-slate-300 p-2">ट्याङ्कर पानी बिक्री आम्दानी</td><td class="border border-slate-300 p-2 text-right">${fmtMoney(tankerInc)}</td></tr>
-            <tr><td class="border border-slate-300 p-2">ऋण लगानी ब्याज आम्दानी</td><td class="border border-slate-300 p-2 text-right">${fmtMoney(loanIntInc)}</td></tr>
-            ${Object.entries(incByCat).filter(([, v]) => v > 0).map(([k, v]) => `<tr><td class="border border-slate-300 p-2">${k}</td><td class="border border-slate-300 p-2 text-right">${fmtMoney(v)}</td></tr>`).join("")}
-          </tbody>
-          <tfoot><tr class="bg-slate-100 font-bold"><td class="border border-slate-300 p-2">कुल जम्मा</td><td class="border border-slate-300 p-2 text-right">${fmtMoney(totalIncome)}</td></tr></tfoot>
         </table>
       </div>
-    `;
-  }
-
-  const bankTotal = st.bankAccounts.reduce((sum, b) => {
-    const dep = st.bankTransactions.filter(t => t.bankId === b.id && t.type === "Deposit").reduce((a, c) => a + Number(c.amount), 0);
-    const wit = st.bankTransactions.filter(t => t.bankId === b.id && t.type === "Withdraw").reduce((a, c) => a + Number(c.amount), 0);
-    return sum + Number(b.openingBalance) + dep - wit;
-  }, 0);
-  const loanReceivable = st.loans.reduce((s, l) => s + Math.max(0, l.principal - (l.paidPrincipal || 0)), 0);
-  const waterReceivable = st.readings.reduce((s, r) => s + Math.max(0, r.billAmount - (Number(r.paidAmount || 0) + Number(r.paidMaintAmount || 0))) + (r.penaltyAmount || 0), 0);
-  const cashInHand = Math.max(0, 85000 + netSurplus);
-  const fixedAssets = 650000;
-  const totalAssets = bankTotal + cashInHand + loanReceivable + waterReceivable + fixedAssets;
-  const reserveFund = totalAssets - netSurplus;
-
-  if (tab === "trial-balance") {
-    const tbRows = [
-      { name: "बैंक मौज्दात (Bank Accounts)", dr: bankTotal, cr: 0 },
-      { name: "नगद मौज्दात (Cash in Hand)", dr: cashInHand, cr: 0 },
-      { name: "असुली हुन बाँकी ऋण लगानी (Loans Receivable)", dr: loanReceivable, cr: 0 },
-      { name: "उठ्न बाँकी पानी महसुल तथा मर्मत (Water & Maint Dues)", dr: waterReceivable, cr: 0 },
-      { name: "स्थिर सम्पत्ति - पाइपलाइन/ट्याङ्की", dr: fixedAssets, cr: 0 },
-      { name: "कुल सञ्चालन तथा प्रशासनिक खर्च", dr: totalExpense, cr: 0 },
-      { name: "कुल संकलित आम्दानी (Revenue)", dr: 0, cr: totalIncome },
-      { name: "संस्थागत जगेडा कोष तथा पुँजी (Reserve Fund)", dr: 0, cr: reserveFund }
-    ];
-    const sumDr = tbRows.reduce((s, r) => s + r.dr, 0);
-    const sumCr = tbRows.reduce((s, r) => s + r.cr, 0);
-
-    return `
-      ${header("सन्तुलन परीक्षण (Trial Balance)")}
-      <table class="w-full text-xs border-collapse border border-slate-300">
-        <thead class="bg-slate-100">
-          <tr>
-            <th class="border border-slate-300 p-2 text-left">खाता शीर्षक (Account Head)</th>
-            <th class="border border-slate-300 p-2 text-right">डेबिट (Debit रू.)</th>
-            <th class="border border-slate-300 p-2 text-right">क्रेडिट (Credit रू.)</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${tbRows.map(r => `
-            <tr>
-              <td class="border border-slate-300 p-2 font-medium">${r.name}</td>
-              <td class="border border-slate-300 p-2 text-right tabular-nums">${r.dr ? fmtMoney(r.dr) : '-'}</td>
-              <td class="border border-slate-300 p-2 text-right tabular-nums">${r.cr ? fmtMoney(r.cr) : '-'}</td>
-            </tr>
-          `).join("")}
-        </tbody>
-        <tfoot class="bg-slate-100 font-bold">
-          <tr>
-            <td class="border border-slate-300 p-2 text-right">कुल जम्मा (Total):</td>
-            <td class="border border-slate-300 p-2 text-right tabular-nums">${fmtMoney(sumDr)}</td>
-            <td class="border border-slate-300 p-2 text-right tabular-nums">${fmtMoney(sumCr)}</td>
-          </tr>
-        </tfoot>
-      </table>
-    `;
-  }
-
-  if (tab === "balance-sheet") {
-    return `
-      ${header("वासलात (Balance Sheet)")}
-      <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
-        <table class="w-full border-collapse border border-slate-300">
-          <thead><tr class="bg-slate-100"><th class="border border-slate-300 p-2 text-left">पुँजी तथा दायित्व (Capital & Liabilities)</th><th class="border border-slate-300 p-2 text-right">रकम (रू.)</th></tr></thead>
-          <tbody>
-            <tr><td class="border border-slate-300 p-2">संस्थागत जगेडा कोष (General Reserve)</td><td class="border border-slate-300 p-2 text-right">${fmtMoney(reserveFund)}</td></tr>
-            <tr><td class="border border-slate-300 p-2">चालु वर्षको खुद बचत (Net Surplus)</td><td class="border border-slate-300 p-2 text-right">${fmtMoney(netSurplus)}</td></tr>
-          </tbody>
-          <tfoot><tr class="bg-slate-100 font-bold"><td class="border border-slate-300 p-2">कुल दायित्व</td><td class="border border-slate-300 p-2 text-right">${fmtMoney(totalAssets)}</td></tr></tfoot>
-        </table>
-
-        <table class="w-full border-collapse border border-slate-300">
-          <thead><tr class="bg-slate-100"><th class="border border-slate-300 p-2 text-left">सम्पत्ति (Assets)</th><th class="border border-slate-300 p-2 text-right">रकम (रू.)</th></tr></thead>
-          <tbody>
-            <tr><td class="border border-slate-300 p-2">स्थिर सम्पत्ति (पाइपलाइन/ट्याङ्की/पम्प)</td><td class="border border-slate-300 p-2 text-right">${fmtMoney(fixedAssets)}</td></tr>
-            <tr><td class="border border-slate-300 p-2">बैंक मौज्दात</td><td class="border border-slate-300 p-2 text-right">${fmtMoney(bankTotal)}</td></tr>
-            <tr><td class="border border-slate-300 p-2">नगद मौज्दात</td><td class="border border-slate-300 p-2 text-right">${fmtMoney(cashInHand)}</td></tr>
-            <tr><td class="border border-slate-300 p-2">ऋण लगानी साँवा प्राप्य</td><td class="border border-slate-300 p-2 text-right">${fmtMoney(loanReceivable)}</td></tr>
-            <tr><td class="border border-slate-300 p-2">उठ्न बाँकी पानी महसुल तथा मर्मत</td><td class="border border-slate-300 p-2 text-right">${fmtMoney(waterReceivable)}</td></tr>
-          </tbody>
-          <tfoot><tr class="bg-slate-100 font-bold"><td class="border border-slate-300 p-2">कुल सम्पत्ति</td><td class="border border-slate-300 p-2 text-right">${fmtMoney(totalAssets)}</td></tr></tfoot>
-        </table>
-      </div>
-    `;
-  }
-
-  return `
-    ${header("नगद प्रवाह विवरण (Cash Flow Statement)")}
-    <table class="w-full text-xs border-collapse border border-slate-300">
-      <thead class="bg-slate-100">
-        <tr><th class="border border-slate-300 p-2 text-left">नगद प्रवाह शीर्षक</th><th class="border border-slate-300 p-2 text-right">रकम (रू.)</th></tr>
-      </thead>
-      <tbody>
-        <tr><td class="border border-slate-300 p-2 font-semibold">१. सञ्चालन क्रियाकलापबाट नगद प्रवाह (Operating Activities)</td><td class="border border-slate-300 p-2 text-right font-bold">${fmtMoney(netSurplus)}</td></tr>
-        <tr><td class="border border-slate-300 p-2 font-semibold">२. ऋण लगानी तथा असुली प्रवाह (Financing/Lending)</td><td class="border border-slate-300 p-2 text-right">${fmtMoney(-loanReceivable)}</td></tr>
-        <tr class="bg-teal-50 font-bold"><td class="border border-slate-300 p-2">अन्तिम नगद तथा बैंक मौज्दात (Closing Cash & Bank)</td><td class="border border-slate-300 p-2 text-right">${fmtMoney(bankTotal + cashInHand)}</td></tr>
-      </tbody>
-    </table>
+    </div>
   `;
 }
 
-function printCurrentA4Report() {
-  const html = document.getElementById("a4-report-content").innerHTML + `
-    <div class="flex justify-between pt-10 text-xs">
-      <div>तयार गर्ने (लेखापाल): ___________________</div>
-      <div>प्रमाणित गर्ने (${window.ERP_STATE.settings.authorizedPerson}): ___________________</div>
-    </div>
-  `;
-  openPrintModal("A4 लेखा प्रतिवेदन प्रिन्ट", html);
+// नयाँ वा एडिट गरिएको ग्राहक सेभ गर्ने फंक्सन
+function saveCustomerKYCData(e) {
+  e.preventDefault();
+  const st = window.ERP_STATE;
+  const editIdx = parseInt(document.getElementById("kyc-edit-index").value, 10);
+  
+  const customerData = {
+    id: document.getElementById("kyc-id").value.trim(),
+    name: document.getElementById("kyc-name").value.trim(),
+    fatherName: document.getElementById("kyc-father").value.trim(),
+    grandfatherName: document.getElementById("kyc-grandfather").value.trim(),
+    dob: document.getElementById("kyc-dob").value.trim(),
+    phone: document.getElementById("kyc-phone").value.trim(),
+    address: document.getElementById("kyc-address").value.trim(),
+    citizenshipNo: document.getElementById("kyc-cit-no").value.trim(),
+    citizenshipDate: document.getElementById("kyc-cit-date").value.trim(),
+    kittaNo: document.getElementById("kyc-kitta").value.trim(),
+    regDate: document.getElementById("kyc-reg-date").value.trim() || st.activeBSDate,
+    lastReading: Number(document.getElementById("kyc-init-reading").value) || 0,
+    openingDue: Number(document.getElementById("kyc-opening-due").value) || 0
+  };
+
+  if (editIdx >= 0) {
+    // एडिट गर्ने बेला आइडी पुरानै रहने
+    customerData.id = st.customers[editIdx].id;
+    st.customers[editIdx] = customerData;
+    showToast(`ग्राहक ${customerData.name} को विवरण सफलतापूर्वक अपडेट गरियो!`, "success");
+  } else {
+    st.customers.push(customerData);
+    showToast(`ग्राहक ${customerData.name} (${customerData.id}) सफलतापूर्वक दर्ता भयो!`, "success");
+  }
+
+  window.recalculateAllDynamicValues(true);
+  window.cloudSync?.save();
+  renderCurrentModule();
+}
+
+// ग्राहक एडिट गर्न फर्ममा डाटा भर्ने फंक्सन
+function editCustomerKYC(idx) {
+  const c = window.ERP_STATE.customers[idx];
+  if (!c) return;
+
+  document.getElementById("kyc-edit-index").value = idx;
+  document.getElementById("kyc-id").value = c.id;
+  document.getElementById("kyc-name").value = c.name || "";
+  document.getElementById("kyc-father").value = c.fatherName || "";
+  document.getElementById("kyc-grandfather").value = c.grandfatherName || "";
+  document.getElementById("kyc-dob").value = c.dob || "";
+  document.getElementById("kyc-phone").value = c.phone || "";
+  document.getElementById("kyc-address").value = c.address || "";
+  document.getElementById("kyc-cit-no").value = c.citizenshipNo || "";
+  document.getElementById("kyc-cit-date").value = c.citizenshipDate || "";
+  document.getElementById("kyc-kitta").value = c.kittaNo || "";
+  document.getElementById("kyc-reg-date").value = c.regDate || window.ERP_STATE.activeBSDate;
+  document.getElementById("kyc-init-reading").value = c.lastReading || 0;
+  document.getElementById("kyc-opening-due").value = c.openingDue || 0;
+
+  document.getElementById("kyc-form-title").innerText = `ग्राहक विवरण सम्पादन गर्दै (${c.id})`;
+  document.getElementById("kyc-submit-btn-text").innerText = "अपडेट सुरक्षित गर्नुहोस्";
+  document.getElementById("kyc-cancel-btn").classList.remove("hidden");
+
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+// एडिट फारम रद्द गर्ने
+function resetKYCForm() {
+  renderCurrentModule();
+}
+
+function deleteCustomerKYC(custId) {
+  if (confirm(`के तपाईं यो ग्राहक (${custId}) लाई डिलिट गर्न चाहनुहुन्छ?`)) {
+    window.ERP_STATE.customers = window.ERP_STATE.customers.filter(c => c.id !== custId);
+    window.recalculateAllDynamicValues(true);
+    window.cloudSync?.save();
+    renderCurrentModule();
+    showToast(`ग्राहक ${custId} सफलतापूर्वक हटाइयो!`, "info");
+  }
+}
+
+function downloadSampleKYCCSV() {
+  const csv = "नाम,बुवाको नाम,बाजेको नाम,जन्ममिति,फोन,ठेगाना,नागरिकता नं,जारी मिति,कित्ता नं,सुरु रिडिङ,ओपनिङ बक्यौता\n" +
+              "गोपालप्रसाद शर्मा,देवराज शर्मा,तुलसीप्रसाद शर्मा,2037-05-12,9841223344,पाँचखाल-४,24-01-73-4455,2055-08-10,612,0,1200\n" +
+              "लक्ष्मी माया लामा,वीरमान लामा,सुकमान लामा,2044-09-21,9849001122,पाँचखाल-५,24-02-76-7788,2062-02-15,745,0,0";
+  const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "khanepani_kyc_sample.csv";
+  a.click();
+}
+
+function handleKYCCSVFile(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = ev => {
+    document.getElementById("kyc-bulk-text").value = ev.target.result;
+    showToast("CSV फाइल लोड भयो। अब 'बल्क ग्राहकहरू इम्पोर्ट गर्नुहोस्' थिच्नुहोस्।", "info");
+  };
+  reader.readAsText(file);
+}
+
+// सुरक्षित र लचिलो बल्क इम्पोर्ट फंक्सन
+function importBulkKYCText() {
+  const raw = document.getElementById("kyc-bulk-text").value.trim();
+  if (!raw) return showToast("कृपया CSV डाटा राख्नुहोस् वा पेस्ट गर्नुहोस्।", "error");
+  
+  const lines = raw.split(/\r?\n/).filter(l => l.trim());
+  let added = 0;
+  
+  lines.forEach((line, idx) => {
+    if (idx === 0 && (line.includes("नाम") || line.toLowerCase().includes("name"))) return;
+    
+    const cols = line.split(",").map(s => s.trim());
+    if (cols.length < 1 || !cols[0]) return;
+    
+    window.ERP_STATE.customers.push({
+      id: getNextCustomerID(),
+      name: cols[0],
+      fatherName: cols[1] || "-",
+      grandfatherName: cols[2] || "-",
+      dob: cols[3] || "",
+      phone: cols[4] || "",
+      address: cols[5] || "पाँचखाल",
+      citizenshipNo: cols[6] || "-",
+      citizenshipDate: cols[7] || "",
+      kittaNo: cols[8] || "-",
+      regDate: window.ERP_STATE.activeBSDate,
+      lastReading: Number(cols[9]) || 0,
+      openingDue: Number(cols[10]) || 0
+    });
+    added++;
+  });
+  
+  window.recalculateAllDynamicValues(true);
+  window.cloudSync?.save();
+  renderCurrentModule();
+  showToast(`${added} जना ग्राहकहरू र तिनका ओपनिङ बक्यौता सफलतापूर्वक इम्पोर्ट गरियो!`, "success");
+}
+
+function filterKYCTable(q) {
+  q = q.toLowerCase();
+  document.querySelectorAll("#kyc-table tbody tr").forEach(tr => {
+    tr.style.display = tr.textContent.toLowerCase().includes(q) ? "" : "none";
+  });
 }
 
 // ============================================================================
@@ -3706,7 +3554,7 @@ function addTankerSaleEntry(e) {
 }
 
 // ============================================================================
-// 15. COMPREHENSIVE A4 ACCOUNTING & OPERATIONAL REPORTS MODULE (अन्तिम अपडेट)
+// 15. COMPREHENSIVE A4 ACCOUNTING & OPERATIONAL REPORTS MODULE (ओपनिङ बक्यौता सहितको सहि हिसाब)
 // ============================================================================
 let activeReportTab = "customer-annual";
 let repFromBS = "2083-01-01";
@@ -3780,17 +3628,35 @@ function generateReportHTML(tab) {
   `;
 
   if (tab === "customer-annual") {
-    // 🌟 निश्चित सदस्य (Member ID) छान्दा विस्तृत स्टेटमेन्ट (रसिद नं. अन्तिममा)
+    // 🌟 निश्चित सदस्य (Member ID) छान्दा विस्तृत स्टेटमेन्ट (ओपनिङ बक्यौता सहित)
     if (repCustFilter !== "ALL") {
       const cust = st.customers.find(c => c.id === repCustFilter);
       if (!cust) return `<div class="p-6 text-center text-slate-500">ग्राहक फेला परेन।</div>`;
 
+      const openingDue = Number(cust.openingDue || 0);
       const rds = st.readings.filter(r => r.customerId === cust.id && isDateBetweenBS(r.entryDate, repFromBS, repToBS));
       const payments = st.payments.filter(p => p.customerId === cust.id && isDateBetweenBS(p.date, repFromBS, repToBS));
 
-      let tUnits = 0, tBill = 0, tMaint = 0, tPen = 0, tTotalAmt = 0, tPaid = 0, tDue = 0;
+      let tUnits = 0, tBill = 0, tMaint = 0, tPen = 0, tTotalAmt = openingDue, tPaid = 0;
+      let runningDue = openingDue;
 
-      const rows = rds.map((r, idx) => {
+      let rows = "";
+
+      // यदि ओपनिङ बक्यौता छ भने पहिलो पङ्क्तिमा ओपनिङ बक्यौता देखाउने
+      if (openingDue > 0) {
+        rows += `
+          <tr class="bg-amber-50/50">
+            <td class="border border-slate-300 p-2 text-center font-bold"> - </td>
+            <td class="border border-slate-300 p-2 font-bold text-amber-900" colspan="8">गत वर्षको उठ्न बाँकी ओपनिङ बक्यौता</td>
+            <td class="border border-slate-300 p-2 text-right tabular-nums font-bold text-amber-900">${fmtMoney(openingDue)}</td>
+            <td class="border border-slate-300 p-2 text-right tabular-nums text-emerald-700">-</td>
+            <td class="border border-slate-300 p-2 text-right tabular-nums font-bold text-rose-700">${fmtMoney(openingDue)}</td>
+            <td class="border border-slate-300 p-2 text-center">-</td>
+          </tr>
+        `;
+      }
+
+      rds.forEach((r, idx) => {
         const maint = Number(r.maintenanceAmount || 0);
         const bill = Number(r.billAmount || 0);
         const pen = Number(r.penaltyAmount || 0);
@@ -3798,7 +3664,8 @@ function generateReportHTML(tab) {
         
         const matchingPay = payments.find(p => p.month === r.month || (p.date >= r.entryDate));
         const paidM = matchingPay ? Number(matchingPay.totalPaid || 0) : (Number(r.paidAmount || 0) + Number(r.paidMaintAmount || 0));
-        const due = totalRowAmt - paidM;
+        
+        runningDue = (runningDue + totalRowAmt) - paidM;
 
         tUnits += Number(r.units || 0);
         tBill += bill;
@@ -3806,12 +3673,11 @@ function generateReportHTML(tab) {
         tPen += pen;
         tTotalAmt += totalRowAmt;
         tPaid += paidM;
-        tDue += due;
 
         const receiptNoStr = matchingPay ? matchingPay.receiptNo : '-';
         const payDateStr = matchingPay ? matchingPay.date : 'भुक्तानी बाँकी';
 
-        return `
+        rows += `
           <!-- 1. माथिल्लो पङ्क्ति: रिडिङ तथा बिल डाटा -->
           <tr class="bg-white">
             <td rowspan="2" class="border border-slate-300 p-2 text-center align-middle font-bold">${idx + 1}</td>
@@ -3824,7 +3690,7 @@ function generateReportHTML(tab) {
             <td class="border border-slate-300 p-2 text-right tabular-nums text-red-700">${fmtMoney(pen)}</td>
             <td class="border border-slate-300 p-2 text-right tabular-nums font-bold text-slate-900">${fmtMoney(totalRowAmt)}</td>
             <td class="border border-slate-300 p-2 text-right tabular-nums text-emerald-700 font-bold">-</td>
-            <td class="border border-slate-300 p-2 text-right tabular-nums text-rose-700 font-bold">${fmtMoney(due)}</td>
+            <td class="border border-slate-300 p-2 text-right tabular-nums text-rose-700 font-bold">${fmtMoney(runningDue)}</td>
             <td rowspan="2" class="border border-slate-300 p-2 text-center align-middle font-bold text-indigo-900">${receiptNoStr}</td>
           </tr>
           <!-- 2. तल्लो पङ्क्ति: भुक्तानी विवरण (Payment Details with Date) -->
@@ -3836,7 +3702,7 @@ function generateReportHTML(tab) {
             <td class="border border-slate-300 p-1.5 text-right text-[10px] text-slate-400">चुक्ता</td>
           </tr>
         `;
-      }).join("");
+      });
 
       return `
         ${header(`सदस्यगत विस्तृत रिडिङ तथा महसुल स्टेटमेन्ट - ${cust.name} (${cust.id})`)}
@@ -3844,7 +3710,7 @@ function generateReportHTML(tab) {
           <div><strong>ग्राहक आइडी:</strong> ${cust.id}</div>
           <div><strong>फोन नं.:</strong> ${cust.phone || '-'}</div>
           <div><strong>ग्राहकको नाम:</strong> ${cust.name}</div>
-          <div><strong>ठेगाना:</strong> ${cust.address || '-'} | <strong>ओपनिङ बक्यौता:</strong> ${fmtMoney(cust.openingDue || 0)}</div>
+          <div><strong>ठेगाना:</strong> ${cust.address || '-'} | <strong class="text-amber-800">ओपनिङ बक्यौता:</strong> ${fmtMoney(openingDue)}</div>
         </div>
         <table class="w-full text-xs border-collapse border border-slate-300">
           <thead class="bg-slate-100">
@@ -3875,7 +3741,7 @@ function generateReportHTML(tab) {
               <td class="border border-slate-300 p-2 text-right tabular-nums text-red-700">${fmtMoney(tPen)}</td>
               <td class="border border-slate-300 p-2 text-right tabular-nums">${fmtMoney(tTotalAmt)}</td>
               <td class="border border-slate-300 p-2 text-right tabular-nums text-emerald-700">${fmtMoney(tPaid)}</td>
-              <td class="border border-slate-300 p-2 text-right tabular-nums text-rose-700">${fmtMoney(tDue)}</td>
+              <td class="border border-slate-300 p-2 text-right tabular-nums text-rose-700">${fmtMoney(runningDue)}</td>
               <td class="border border-slate-300 p-2 text-center">-</td>
             </tr>
           </tfoot>
@@ -3888,13 +3754,14 @@ function generateReportHTML(tab) {
     let grandUnits = 0, grandBill = 0, grandMaint = 0, grandPen = 0, grandPaid = 0, grandDue = 0;
 
     const rows = custs.map((c, idx) => {
+      const openingDue = Number(c.openingDue || 0);
       const rds = st.readings.filter(r => r.customerId === c.id && isDateBetweenBS(r.entryDate, repFromBS, repToBS));
       const units = rds.reduce((a, b) => a + Number(b.units), 0);
       const bill = rds.reduce((a, b) => a + Number(b.billAmount), 0);
       const maint = rds.reduce((a, b) => a + Number(b.maintenanceAmount || 0), 0);
       const pen = rds.reduce((a, b) => a + Number(b.penaltyAmount || 0), 0);
       const paid = rds.reduce((a, b) => a + Number(b.paidAmount || 0) + Number(b.paidMaintAmount || 0), 0);
-      const due = (bill + pen) - paid;
+      const due = (openingDue + bill + pen) - paid;
 
       grandUnits += units; grandBill += bill; grandMaint += maint; grandPen += pen; grandPaid += paid; grandDue += due;
       
@@ -3904,11 +3771,11 @@ function generateReportHTML(tab) {
           <td class="border border-slate-300 p-2 font-bold">${c.id}</td>
           <td class="border border-slate-300 p-2 font-semibold">${c.name}</td>
           <td class="border border-slate-300 p-2 text-right tabular-nums">${units}</td>
-          <td class="border border-slate-300 p-2 text-right tabular-nums">${fmtMoney(bill)}</td>
+          <td class="border border-slate-300 p-2 text-right tabular-nums">${fmtMoney(bill + openingDue)}</td>
           <td class="border border-slate-300 p-2 text-right tabular-nums text-amber-800">${fmtMoney(maint)}</td>
           <td class="border border-slate-300 p-2 text-right tabular-nums text-red-700">${fmtMoney(pen)}</td>
           <td class="border border-slate-300 p-2 text-right tabular-nums text-emerald-700">${fmtMoney(paid)}</td>
-          <td class="border border-slate-300 p-2 text-right font-bold tabular-nums">${fmtMoney(due)}</td>
+          <td class="border border-slate-300 p-2 text-right font-bold tabular-nums text-rose-700">${fmtMoney(due)}</td>
         </tr>
       `;
     }).join("");
@@ -3922,7 +3789,7 @@ function generateReportHTML(tab) {
             <th class="border border-slate-300 p-2">आइडी</th>
             <th class="border border-slate-300 p-2 text-left">ग्राहकको नाम</th>
             <th class="border border-slate-300 p-2 text-right">जम्मा युनिट</th>
-            <th class="border border-slate-300 p-2 text-right">जम्मा बिल रकम</th>
+            <th class="border border-slate-300 p-2 text-right">जम्मा बिल (ओपनिङ सहित)</th>
             <th class="border border-slate-300 p-2 text-right">मर्मत शुल्क</th>
             <th class="border border-slate-300 p-2 text-right">जरिवाना</th>
             <th class="border border-slate-300 p-2 text-right">बुझाएको रकम</th>
@@ -3938,7 +3805,7 @@ function generateReportHTML(tab) {
             <td class="border border-slate-300 p-2 text-right tabular-nums text-amber-800">${fmtMoney(grandMaint)}</td>
             <td class="border border-slate-300 p-2 text-right tabular-nums text-red-700">${fmtMoney(grandPen)}</td>
             <td class="border border-slate-300 p-2 text-right tabular-nums text-emerald-700">${fmtMoney(grandPaid)}</td>
-            <td class="border border-slate-300 p-2 text-right tabular-nums">${fmtMoney(grandDue)}</td>
+            <td class="border border-slate-300 p-2 text-right tabular-nums text-rose-700">${fmtMoney(grandDue)}</td>
           </tr>
         </tfoot>
       </table>
