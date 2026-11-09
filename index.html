@@ -3645,7 +3645,7 @@ function generateReportHTML(tab) {
 
       let rows = "";
 
-      // १. यदि ओपनिङ बक्यौता बाँकी छ वा रसिदमा उठेको छ भने पहिलो पङ्क्तिमा देखाउने
+   // १. यदि ओपनिङ बक्यौता छ भने पहिलो पङ्क्तिमा ओपनिङ र रसिदको विवरण देखाउने
       if (initialOpeningDue > 0) {
         rows += `
           <tr class="bg-amber-50">
@@ -3654,7 +3654,10 @@ function generateReportHTML(tab) {
             <td class="border border-slate-300 p-2 text-right tabular-nums font-bold text-amber-900">${fmtMoney(initialOpeningDue)}</td>
             <td class="border border-slate-300 p-2 text-right tabular-nums text-emerald-700">${fmtMoney(totalOpeningPaidInPeriod)}</td>
             <td class="border border-slate-300 p-2 text-right tabular-nums font-bold text-rose-700">${fmtMoney(initialOpeningDue - totalOpeningPaidInPeriod)}</td>
-            <td class="border border-slate-300 p-2 text-center">-</td>
+            <td class="border border-slate-300 p-2 text-center font-bold text-indigo-900">
+              ${payments.length > 0 ? payments[0].receiptNo : '-'}
+              <div class="text-[10px] text-teal-900 font-normal">मिति: ${payments.length > 0 ? payments[0].date : '-'}</div>
+            </td>
           </tr>
         `;
         runningDue = initialOpeningDue - totalOpeningPaidInPeriod;
