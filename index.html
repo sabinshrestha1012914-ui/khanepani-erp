@@ -3751,5 +3751,33 @@ window.addEventListener("DOMContentLoaded", () => {
   lucide.createIcons();
 });
 </script>
+function executeDateRangeRecordDeletion() {
+  const fromBS = document.getElementById("del-range-from").value.trim();
+  const toBS = document.getElementById("del-range-to").value.trim();
+  if (!fromBS || !toBS) {
+    showToast("कृपया सुरु र अन्तिम मिति सही रूपमा राख्नुहोस्।", "error");
+    return;
+  }
+
+  if (!confirm(`चेतावनी: के तपाईं मिति ${fromBS} देखि ${toBS} सम्मका सम्पूर्ण कारोबार, बिलिङ, महसुल, ऋण तथा खर्च रेकर्डहरू स्थायी रूपमा डिलिट गर्न चाहनुहुन्छ?`)) {
+    return;
+  }
+
+  const st = window.ERP_STATE;
+
+  st.readings = st.readings.filter(r => !isDateBetweenBS(r.entryDate, fromBS, toBS));
+  st.payments = st.payments.filter(p => !isDateBetweenBS(p.date, fromBS, toBS));
+  st.loanRepayments = st.loanRepayments.filter(r => !isDateBetweenBS(r.date, fromBS, toBS));
+  st.loans = st.loans.filter(l => !isDateBetweenBS(l.issueDate, fromBS, toBS));
+  st.bankTransactions = st.bankTransactions.filter(t => !isDateBetweenBS(t.date, fromBS, toBS));
+  st.incomes = st.incomes.filter(i => !isDateBetweenBS(i.date, fromBS, toBS));
+  st.expenses = st.expenses.filter(e => !isDateBetweenBS(e.date, fromBS, toBS));
+  st.staffPayroll = st.staffPayroll.filter(p => !isDateBetweenBS(p.date, fromBS, toBS));
+  st.tankerSales = st.tankerSales.filter(t => !isDateBetweenBS(t.date, fromBS, toBS));
+
+  window.recalculateAllDynamicValues(true);
+  renderCurrentModule();
+  showToast(`मिति ${fromBS} देखि ${toBS} सम्मका रेकर्डहरू सफलतापूर्वक डिलिट गरियो!`, "success");
+}
 </body>
 </html>
