@@ -3554,7 +3554,7 @@ function addTankerSaleEntry(e) {
 }
 
 // ============================================================================
-// 15. COMPREHENSIVE A4 ACCOUNTING & OPERATIONAL REPORTS MODULE (पूर्ण तथा दुरुस्त कोड)
+// 15. COMPREHENSIVE A4 ACCOUNTING & OPERATIONAL REPORTS MODULE (पूर्ण रूपमा दुरुस्त गरिएको)
 // ============================================================================
 let activeReportTab = "customer-annual";
 let repFromBS = "2083-01-01";
@@ -3628,7 +3628,6 @@ function generateReportHTML(tab) {
   `;
 
   if (tab === "customer-annual") {
-    // 🌟 निश्चित सदस्य (Member ID) छान्दा विस्तृत स्टेटमेन्ट (एक्सेलको दुरुस्त ढाँचा)
     if (repCustFilter !== "ALL") {
       const cust = st.customers.find(c => c.id === repCustFilter);
       if (!cust) return `<div class="p-6 text-center text-slate-500">ग्राहक फेला परेन।</div>`;
@@ -3636,44 +3635,41 @@ function generateReportHTML(tab) {
       const rds = st.readings.filter(r => r.customerId === cust.id && isDateBetweenBS(r.entryDate, repFromBS, repToBS));
       const payments = st.payments.filter(p => p.customerId === cust.id && isDateBetweenBS(p.date, repFromBS, repToBS));
 
-      const totalOpeningPaidInPeriod = payments.reduce((sum, p) => sum + Number(p.openingPaid || 0), 0);
-      const initialOpeningDue = Number(cust.openingDue || 0) + totalOpeningPaidInPeriod;
-
+      const initialOpeningDue = Number(cust.openingDue || 0);
       let tUnits = 0, tBill = 0, tMaint = 0, tPen = 0, tTotalAmt = initialOpeningDue, tPaid = 0;
       let runningDue = initialOpeningDue;
 
       let rows = "";
 
-      // १. गत वर्षको बाँकी बक्यौताको पङ्क्ति (सही स्तम्भ मिलान गरिएको)
+      // १. गत वर्षको बाँकी बक्यौताको पङ्क्ति (१४ स्तम्भ मिलान गरिएको)
       if (initialOpeningDue > 0) {
         rows += `
           <tr class="bg-amber-50">
             <td class="border border-slate-300 p-2 text-center font-bold text-amber-800">-</td>
-            <td class="border border-slate-300 p-2 font-bold text-amber-900">गत वर्षको बाकी बक्यौता</td>
-            <td class="border border-slate-300 p-2" colspan="8"></td>
+            <td class="border border-slate-300 p-2 font-bold text-amber-900" colspan="11">गत वर्षको बाकी बक्यौता</td>
             <td class="border border-slate-300 p-2 text-right tabular-nums font-bold text-rose-700">${fmtMoney(initialOpeningDue)}</td>
             <td class="border border-slate-300 p-2 text-center text-slate-400">-</td>
           </tr>
         `;
-        runningDue = initialOpeningDue - totalOpeningPaidInPeriod;
       }
 
       rds.forEach((r, idx) => {
         const maint = Number(r.maintenanceAmount || 0);
         const bill = Number(r.billAmount || 0);
         const pen = Number(r.penaltyAmount || 0);
-        const extraAmt = Number(r.extraAmount || 0);
+        const extraUnits = Number(r.extraUnits || 1);
+        const extraAmt = Number(r.extraAmount || 140);
         
-        // १. जम्मा रकम = बिल रकम + बढी रकम + मर्मत शुल्क + जरिवाना
+        // जम्मा रकम = बिल + बढी रकम + मर्मत + जरिवाना
         const totalRowAmt = bill + extraAmt + maint + pen; 
         
-        // २. माथिल्लो पङ्क्तिमा देखाउने कुल बाँकी (गत वर्षको बाँकी + यो महिनाको जम्मा रकम)
+        // माथिल्लो पङ्क्तिमा कुल बाँकी
         const upperRowTotalDue = (idx === 0 ? initialOpeningDue : 0) + totalRowAmt;
         
         const matchingPay = payments.find(p => p.month === r.month || (p.date >= r.entryDate));
         const paidM = matchingPay ? Number(matchingPay.totalPaid || 0) : (Number(r.paidAmount || 0) + Number(r.paidMaintAmount || 0));
         
-        // ३. तल्लो पङ्क्तिमा देखाउने अन्तिम बाँकी (माथिल्लो कुल बाँकी - प्राप्त रकम)
+        // तल्लो पङ्क्तिमा अन्तिम बाँकी
         runningDue = upperRowTotalDue - paidM;
 
         tUnits += Number(r.units || 0);
@@ -3686,9 +3682,9 @@ function generateReportHTML(tab) {
         const receiptNoStr = matchingPay ? matchingPay.receiptNo : (payments.length > 0 ? payments[0].receiptNo : '-');
         const payDateStr = matchingPay ? matchingPay.date : (payments.length > 0 ? payments[0].date : '-');
 
-        // 🌟 एक्सेलको दुरुस्त दुई पङ्क्ति ढाँचा (सही जोड-घटाउ र स्तम्भ मिलान सहित)
+        // 🌟 दुरुस्त १४ स्तम्भ भएको दुई पङ्क्ति ढाँचा (कुनै पनि बाहिर नजाने गरी)
         rows += `
-          <!-- माथिल्लो पङ्क्ति: बिल, मर्मत, जरिवाना जोडिएर जम्मा रकम आउने र बाँकीमा कुल जोडिएर बस्ने -->
+          <!-- माथिल्लो पङ्क्ति -->
           <tr class="bg-white">
             <td rowspan="2" class="border border-slate-300 p-2 text-center align-middle font-bold">${idx + 1}</td>
             <td class="border border-slate-300 p-2 font-bold text-teal-800">${r.month}</td>
@@ -3696,18 +3692,18 @@ function generateReportHTML(tab) {
             <td class="border border-slate-300 p-2 text-right font-mono font-bold">${r.currReading}</td>
             <td class="border border-slate-300 p-2 text-right tabular-nums font-bold">${r.units}</td>
             <td class="border border-slate-300 p-2 text-right tabular-nums">${fmtMoney(bill)}</td>
-            <td class="border border-slate-300 p-2 text-right tabular-nums">${r.extraUnits || 1}</td>
+            <td class="border border-slate-300 p-2 text-right tabular-nums">${extraUnits}</td>
             <td class="border border-slate-300 p-2 text-right tabular-nums">${fmtMoney(extraAmt)}</td>
             <td class="border border-slate-300 p-2 text-right tabular-nums text-amber-800">${fmtMoney(maint)}</td>
             <td class="border border-slate-300 p-2 text-right tabular-nums text-red-700">${fmtMoney(pen)}</td>
             <td class="border border-slate-300 p-2 text-right tabular-nums font-bold text-slate-900">${fmtMoney(totalRowAmt)}</td>
-            <td class="border border-slate-300 p-2 text-right tabular-nums text-slate-400">रू. 0.00</td>
+            <td class="border border-slate-300 p-2 text-right tabular-nums text-slate-400">रु. 0.00</td>
             <td class="border border-slate-300 p-2 text-right tabular-nums text-rose-700 font-bold">${fmtMoney(upperRowTotalDue)}</td>
             <td class="border border-slate-300 p-2 text-center text-slate-400">-</td>
           </tr>
-          <!-- तल्लो पङ्क्ति: भुक्तानी मिति, प्राप्त रकम, घटेर आएको अन्तिम बाँकी र रसिद नं. -->
+          <!-- तल्लो पङ्क्ति (colspan=10 ले ठ्याक्कै सहि स्तम्भमा मिलाउँछ) -->
           <tr class="bg-slate-50/80">
-            <td colspan="11" class="border border-slate-300 px-3 py-1.5 text-[11px] text-slate-700">
+            <td colspan="10" class="border border-slate-300 px-3 py-1.5 text-[11px] text-slate-700">
               <span class="font-semibold text-teal-900">भुक्तानी मिति:</span> <u class="font-bold text-teal-950">${payDateStr}</u>
             </td>
             <td class="border border-slate-300 p-1.5 text-right tabular-nums text-emerald-700 font-bold text-xs">${fmtMoney(paidM)}</td>
@@ -3734,6 +3730,8 @@ function generateReportHTML(tab) {
               <th class="border border-slate-300 p-2 text-right">हालको</th>
               <th class="border border-slate-300 p-2 text-right">युनिट</th>
               <th class="border border-slate-300 p-2 text-right">बिल रकम</th>
+              <th class="border border-slate-300 p-2 text-right">बढी युनिट</th>
+              <th class="border border-slate-300 p-2 text-right">बढी रकम</th>
               <th class="border border-slate-300 p-2 text-right">मर्मत शुल्क</th>
               <th class="border border-slate-300 p-2 text-right">जरिवाना</th>
               <th class="border border-slate-300 p-2 text-right">जम्मा रकम</th>
@@ -3743,17 +3741,18 @@ function generateReportHTML(tab) {
             </tr>
           </thead>
           <tbody>
-            ${rows || `<tr><td colspan="12" class="p-6 text-center text-slate-400">तोकिएको अवधिमा कुनै रिडिङ रेकर्ड भेटिएन।</td></tr>`}
+            ${rows || `<tr><td colspan="14" class="p-6 text-center text-slate-400">तोकिएको अवधिमा कुनै रिडिङ रेकर्ड भेटिएन।</td></tr>`}
           </tbody>
           <tfoot class="bg-slate-100 font-bold">
             <tr>
               <td colspan="4" class="border border-slate-300 p-2 text-right">कुल जम्मा:</td>
               <td class="border border-slate-300 p-2 text-right tabular-nums">${tUnits}</td>
               <td class="border border-slate-300 p-2 text-right tabular-nums">${fmtMoney(tBill)}</td>
+              <td colspan="2" class="border border-slate-300 p-2 text-center">-</td>
               <td class="border border-slate-300 p-2 text-right tabular-nums text-amber-800">${fmtMoney(tMaint)}</td>
               <td class="border border-slate-300 p-2 text-right tabular-nums text-red-700">${fmtMoney(tPen)}</td>
               <td class="border border-slate-300 p-2 text-right tabular-nums">${fmtMoney(tTotalAmt)}</td>
-              <td class="border border-slate-300 p-2 text-right tabular-nums text-emerald-700">${fmtMoney(tPaid + totalOpeningPaidInPeriod)}</td>
+              <td class="border border-slate-300 p-2 text-right tabular-nums text-emerald-700">${fmtMoney(tPaid)}</td>
               <td class="border border-slate-300 p-2 text-right tabular-nums text-rose-700">${fmtMoney(runningDue)}</td>
               <td class="border border-slate-300 p-2 text-center">-</td>
             </tr>
