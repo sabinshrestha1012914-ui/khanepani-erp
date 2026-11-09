@@ -3552,8 +3552,9 @@ function addTankerSaleEntry(e) {
   renderCurrentModule();
   showToast("ट्याङ्कर पानी बिक्री तथा चालक ज्याला अभिलेख सुरक्षित भयो!");
 }
+
 // ============================================================================
-// 15. COMPREHENSIVE A4 ACCOUNTING & OPERATIONAL REPORTS MODULE (एक्सेलको दुरुस्त ढाँचा अनुसार)
+// 15. COMPREHENSIVE A4 ACCOUNTING & OPERATIONAL REPORTS MODULE (पूर्ण तथा दुरुस्त कोड)
 // ============================================================================
 let activeReportTab = "customer-annual";
 let repFromBS = "2083-01-01";
@@ -3643,14 +3644,15 @@ function generateReportHTML(tab) {
 
       let rows = "";
 
-      // १. गत वर्षको बाँकी बक्यौताको पङ्क्ति (एक्सेलको पङ्क्ति ४ जस्तै)
+      // १. गत वर्षको बाँकी बक्यौताको पङ्क्ति (सही स्तम्भ मिलान गरिएको)
       if (initialOpeningDue > 0) {
         rows += `
           <tr class="bg-amber-50">
             <td class="border border-slate-300 p-2 text-center font-bold text-amber-800">-</td>
-            <td class="border border-slate-300 p-2 font-bold text-amber-900" colspan="11">
-              गत वर्षको बाकी बक्यौता: <span class="float-right text-rose-700">${fmtMoney(initialOpeningDue)}</span>
-            </td>
+            <td class="border border-slate-300 p-2 font-bold text-amber-900">गत वर्षको बाकी बक्यौता</td>
+            <td class="border border-slate-300 p-2" colspan="8"></td>
+            <td class="border border-slate-300 p-2 text-right tabular-nums font-bold text-rose-700">${fmtMoney(initialOpeningDue)}</td>
+            <td class="border border-slate-300 p-2 text-center text-slate-400">-</td>
           </tr>
         `;
         runningDue = initialOpeningDue - totalOpeningPaidInPeriod;
@@ -3677,9 +3679,9 @@ function generateReportHTML(tab) {
         const receiptNoStr = matchingPay ? matchingPay.receiptNo : (payments.length > 0 ? payments[0].receiptNo : '-');
         const payDateStr = matchingPay ? matchingPay.date : (payments.length > 0 ? payments[0].date : '-');
 
-        // 🌟 एक्सेलको दुरुस्त दुई पङ्क्ति ढाँचा (माथि बिल, तल मिति, प्राप्त रकम, बाँकी र रसिद नं.)
+        // 🌟 एक्सेलको दुरुस्त दुई पङ्क्ति ढाँचा
         rows += `
-          <!-- माथिल्लो पङ्क्ति: महिना, साविक, हालको, युनिट, बिल, मर्मत, जरिवाना, जम्मा, प्राप्त(0), बाँकी(4890) -->
+          <!-- माथिल्लो पङ्क्ति: महिना, साविक, हालको, युनिट, बिल, मर्मत, जरिवाना, जम्मा रकम -->
           <tr class="bg-white">
             <td rowspan="2" class="border border-slate-300 p-2 text-center align-middle font-bold">${idx + 1}</td>
             <td class="border border-slate-300 p-2 font-bold text-teal-800">${r.month}</td>
@@ -3690,11 +3692,11 @@ function generateReportHTML(tab) {
             <td class="border border-slate-300 p-2 text-right tabular-nums text-amber-800">${fmtMoney(maint)}</td>
             <td class="border border-slate-300 p-2 text-right tabular-nums text-red-700">${fmtMoney(pen)}</td>
             <td class="border border-slate-300 p-2 text-right tabular-nums font-bold text-slate-900">${fmtMoney(totalRowAmt)}</td>
-            <td class="border border-slate-300 p-2 text-right tabular-nums text-emerald-700 font-bold">रू. 0.00</td>
+            <td class="border border-slate-300 p-2 text-right tabular-nums text-slate-400">रु. 0.00</td>
             <td class="border border-slate-300 p-2 text-right tabular-nums text-rose-700 font-bold">${fmtMoney(totalRowAmt)}</td>
             <td class="border border-slate-300 p-2 text-center text-slate-400">-</td>
           </tr>
-          <!-- तल्लो पङ्क्ति: भुक्तानी मिति, प्राप्त रकम, बाँकी(0) र रसिद नं. (एक्सेल ढाँचा अनुसार) -->
+          <!-- तल्लो पङ्क्ति: भुक्तानी मिति, प्राप्त रकम, बाँकी र रसिद नं. ठीक स्तम्भमा -->
           <tr class="bg-slate-50/80">
             <td colspan="9" class="border border-slate-300 px-3 py-1.5 text-[11px] text-slate-700">
               <span class="font-semibold text-teal-900">भुक्तानी मिति:</span> <u class="font-bold text-teal-950">${payDateStr}</u>
@@ -3707,7 +3709,7 @@ function generateReportHTML(tab) {
       });
 
       return `
-        ${header(`सदस्यगत विस्तृत रिडिङ तथा महसुल स्टेटमेन्ट - ${cust.name} (${cust.id})`)}
+        ${header(`सदस्यगत विस्तृत रिडिङ तथा महसुल स्टेटमेन्ट`)}
         <div class="grid grid-cols-2 gap-2 text-xs bg-slate-50 p-3 rounded border border-slate-300 mb-4">
           <div><strong>ग्राहक आइडी:</strong> ${cust.id}</div>
           <div><strong>फोन नं.:</strong> ${cust.phone || '-'}</div>
