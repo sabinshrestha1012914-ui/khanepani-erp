@@ -3554,7 +3554,7 @@ function addTankerSaleEntry(e) {
 }
 
 // ============================================================================
-// 15. COMPREHENSIVE A4 ACCOUNTING & OPERATIONAL REPORTS MODULE (अपडेटेड)
+// 15. COMPREHENSIVE A4 ACCOUNTING & OPERATIONAL REPORTS MODULE (परिमार्जित स्टेटमेन्ट)
 // ============================================================================
 let activeReportTab = "customer-annual";
 let repFromBS = "2083-01-01";
@@ -3628,7 +3628,7 @@ function generateReportHTML(tab) {
   `;
 
   if (tab === "customer-annual") {
-    // 🌟 यदि कुनै विशिष्ट सदस्य (Member ID) छनिएको छ भने विस्तृत लेजर रिपोर्ट देखाउने
+    // 🌟 निश्चित सदस्य (Member ID) छान्दा विस्तृत स्टेटमेन्ट
     if (repCustFilter !== "ALL") {
       const cust = st.customers.find(c => c.id === repCustFilter);
       if (!cust) return `<div class="p-6 text-center text-slate-500">ग्राहक फेला परेन।</div>`;
@@ -3636,42 +3636,50 @@ function generateReportHTML(tab) {
       const rds = st.readings.filter(r => r.customerId === cust.id && isDateBetweenBS(r.entryDate, repFromBS, repToBS));
       const payments = st.payments.filter(p => p.customerId === cust.id && isDateBetweenBS(p.date, repFromBS, repToBS));
 
-      let tUnits = 0, tBill = 0, tMaint = 0, tPen = 0, tPaid = 0, tDue = 0;
+      let tUnits = 0, tBill = 0, tMaint = 0, tPen = 0, tTotalAmt = 0, tPaid = 0, tDue = 0;
 
       const rows = rds.map((r, idx) => {
         const maint = Number(r.maintenanceAmount || 0);
         const bill = Number(r.billAmount || 0);
         const pen = Number(r.penaltyAmount || 0);
-        const paidM = Number(r.paidAmount || 0) + Number(r.paidMaintAmount || 0);
-        const due = (bill + pen) - paidM;
+        const totalRowAmt = bill + pen; // जम्मा रकम (बिल + जरिवाना)
+        
+        // भुक्तानी भएको रकम
+        const matchingPay = payments.find(p => p.month === r.month || (p.date >= r.entryDate));
+        const paidM = matchingPay ? Number(matchingPay.totalPaid || 0) : (Number(r.paidAmount || 0) + Number(r.paidMaintAmount || 0));
+        const due = totalRowAmt - paidM;
 
         tUnits += Number(r.units || 0);
         tBill += bill;
         tMaint += maint;
         tPen += pen;
+        tTotalAmt += totalRowAmt;
         tPaid += paidM;
         tDue += due;
 
-        // उक्त महिनामा काटेको रसिदको विवरण पत्ता लगाउने
-        const matchingPay = payments.find(p => p.month === r.month || (p.date >= r.entryDate));
         const receiptNoStr = matchingPay ? matchingPay.receiptNo : '-';
         const payDateStr = matchingPay ? matchingPay.date : '-';
 
         return `
-          <tr>
+          <tr class="hover:bg-slate-50">
             <td class="border border-slate-300 p-2 text-center">${idx + 1}</td>
-            <td class="border border-slate-300 p-2 font-bold text-teal-800">${r.month}</td>
-            <td class="border border-slate-300 p-2 text-center">${r.entryDate || '-'}</td>
+            <td class="border border-slate-300 p-2 font-bold text-teal-800">
+              ${r.month}
+              <div class="text-[10px] text-slate-500 font-normal">इन्ट्री: ${r.entryDate || '-'}</div>
+            </td>
             <td class="border border-slate-300 p-2 text-right font-mono">${r.prevReading}</td>
             <td class="border border-slate-300 p-2 text-right font-mono font-bold">${r.currReading}</td>
             <td class="border border-slate-300 p-2 text-right tabular-nums font-bold">${r.units}</td>
             <td class="border border-slate-300 p-2 text-right tabular-nums">${fmtMoney(bill)}</td>
             <td class="border border-slate-300 p-2 text-right tabular-nums text-amber-800">${fmtMoney(maint)}</td>
             <td class="border border-slate-300 p-2 text-right tabular-nums text-red-700">${fmtMoney(pen)}</td>
-            <td class="border border-slate-300 p-2 text-center">${payDateStr}</td>
+            <td class="border border-slate-300 p-2 text-right tabular-nums font-bold text-slate-900">${fmtMoney(totalRowAmt)}</td>
+            <td class="border border-slate-300 p-2 text-center text-slate-700">
+              ${payDateStr}
+              <div class="text-[10px] text-emerald-700 font-semibold">रसिद: ${receiptNoStr}</div>
+            </td>
             <td class="border border-slate-300 p-2 text-right tabular-nums text-emerald-700 font-bold">${fmtMoney(paidM)}</td>
-            <td class="border border-slate-300 p-2 text-right tabular-nums font-bold">${fmtMoney(due)}</td>
-            <td class="border border-slate-300 p-2 text-center font-bold text-indigo-900">${receiptNoStr}</td>
+            <td class="border border-slate-300 p-2 text-right tabular-nums text-rose-700 font-bold">${fmtMoney(due)}</td>
           </tr>
         `;
       }).join("");
@@ -3687,35 +3695,34 @@ function generateReportHTML(tab) {
         <table class="w-full text-xs border-collapse border border-slate-300">
           <thead class="bg-slate-100">
             <tr>
-              <th class="border border-slate-300 p-2">क्र.सं.</th>
-              <th class="border border-slate-300 p-2">महिना</th>
-              <th class="border border-slate-300 p-2">इन्ट्री मिति</th>
+              <th class="border border-slate-300 p-2 text-center">क्र.सं.</th>
+              <th class="border border-slate-300 p-2">महिना / मिति</th>
               <th class="border border-slate-300 p-2 text-right">साविक</th>
               <th class="border border-slate-300 p-2 text-right">हालको</th>
               <th class="border border-slate-300 p-2 text-right">युनिट</th>
               <th class="border border-slate-300 p-2 text-right">बिल रकम</th>
               <th class="border border-slate-300 p-2 text-right">मर्मत शुल्क</th>
               <th class="border border-slate-300 p-2 text-right">जरिवाना</th>
-              <th class="border border-slate-300 p-2 text-center">भुक्तानी मिति</th>
-              <th class="border border-slate-300 p-2 text-right">बुझाएको रकम</th>
+              <th class="border border-slate-300 p-2 text-right">जम्मा रकम</th>
+              <th class="border border-slate-300 p-2 text-center">भुक्तानी मिति / रसिद नं.</th>
+              <th class="border border-slate-300 p-2 text-right">प्राप्त रकम</th>
               <th class="border border-slate-300 p-2 text-right">बाँकी रकम</th>
-              <th class="border border-slate-300 p-2 text-center">रसिद नं.</th>
             </tr>
           </thead>
           <tbody>
-            ${rows || `<tr><td colspan="13" class="p-6 text-center text-slate-400">तोकिएको अवधिमा कुनै रिडिङ रेकर्ड भेटिएन।</td></tr>`}
+            ${rows || `<tr><td colspan="12" class="p-6 text-center text-slate-400">तोकिएको अवधिमा कुनै रिडिङ रेकर्ड भेटिएन।</td></tr>`}
           </tbody>
           <tfoot class="bg-slate-100 font-bold">
             <tr>
-              <td colspan="5" class="border border-slate-300 p-2 text-right">कुल जम्मा:</td>
+              <td colspan="4" class="border border-slate-300 p-2 text-right">कुल जम्मा:</td>
               <td class="border border-slate-300 p-2 text-right tabular-nums">${tUnits}</td>
               <td class="border border-slate-300 p-2 text-right tabular-nums">${fmtMoney(tBill)}</td>
               <td class="border border-slate-300 p-2 text-right tabular-nums text-amber-800">${fmtMoney(tMaint)}</td>
               <td class="border border-slate-300 p-2 text-right tabular-nums text-red-700">${fmtMoney(tPen)}</td>
+              <td class="border border-slate-300 p-2 text-right tabular-nums">${fmtMoney(tTotalAmt)}</td>
               <td class="border border-slate-300 p-2 text-center">-</td>
               <td class="border border-slate-300 p-2 text-right tabular-nums text-emerald-700">${fmtMoney(tPaid)}</td>
-              <td class="border border-slate-300 p-2 text-right tabular-nums">${fmtMoney(tDue)}</td>
-              <td class="border border-slate-300 p-2 text-center">-</td>
+              <td class="border border-slate-300 p-2 text-right tabular-nums text-rose-700">${fmtMoney(tDue)}</td>
             </tr>
           </tfoot>
         </table>
