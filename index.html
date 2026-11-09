@@ -3554,7 +3554,7 @@ function addTankerSaleEntry(e) {
 }
 
 // ============================================================================
-// 15. COMPREHENSIVE A4 ACCOUNTING & OPERATIONAL REPORTS MODULE (ओपनिङ बक्यौता पूर्ण समाधान)
+// 15. COMPREHENSIVE A4 ACCOUNTING & OPERATIONAL REPORTS MODULE (अन्तिम र दुरुस्त समाधान)
 // ============================================================================
 let activeReportTab = "customer-annual";
 let repFromBS = "2083-01-01";
@@ -3633,29 +3633,31 @@ function generateReportHTML(tab) {
       const cust = st.customers.find(c => c.id === repCustFilter);
       if (!cust) return `<div class="p-6 text-center text-slate-500">ग्राहक फेला परेन।</div>`;
 
-      // 🔍 ग्राहकको सही ओपनिङ बक्यौता तानेको (openingDue वा openingBalance वा opening)
-      const openingDue = Number(cust.openingDue || cust.openingBalance || cust.opening || 0);
-      
       const rds = st.readings.filter(r => r.customerId === cust.id && isDateBetweenBS(r.entryDate, repFromBS, repToBS));
       const payments = st.payments.filter(p => p.customerId === cust.id && isDateBetweenBS(p.date, repFromBS, repToBS));
 
-      let tUnits = 0, tBill = 0, tMaint = 0, tPen = 0, tTotalAmt = openingDue, tPaid = 0;
-      let runningDue = openingDue;
+      // रसिदहरूबाट जम्मा ओपनिङ असुली रकम पत्ता लगाउने
+      const totalOpeningPaidInPeriod = payments.reduce((sum, p) => sum + Number(p.openingPaid || 0), 0);
+      const initialOpeningDue = Number(cust.openingDue || 0) + totalOpeningPaidInPeriod; // साविकको कुल ओपनिङ
+
+      let tUnits = 0, tBill = 0, tMaint = 0, tPen = 0, tTotalAmt = initialOpeningDue, tPaid = 0;
+      let runningDue = initialOpeningDue;
 
       let rows = "";
 
-      // १. यदि ओपनिङ बक्यौता छ भने टेबलको पहिलो पङ्क्तिमा स्पष्ट देखाउने
-      if (openingDue > 0) {
+      // १. यदि ओपनिङ बक्यौता बाँकी छ वा रसिदमा उठेको छ भने पहिलो पङ्क्तिमा देखाउने
+      if (initialOpeningDue > 0) {
         rows += `
           <tr class="bg-amber-50">
             <td class="border border-slate-300 p-2 text-center font-bold text-amber-800">-</td>
             <td class="border border-slate-300 p-2 font-bold text-amber-900" colspan="7">गत वर्षको उठ्न बाँकी ओपनिङ बक्यौता</td>
-            <td class="border border-slate-300 p-2 text-right tabular-nums font-bold text-amber-900">${fmtMoney(openingDue)}</td>
-            <td class="border border-slate-300 p-2 text-right tabular-nums text-emerald-700">-</td>
-            <td class="border border-slate-300 p-2 text-right tabular-nums font-bold text-rose-700">${fmtMoney(openingDue)}</td>
+            <td class="border border-slate-300 p-2 text-right tabular-nums font-bold text-amber-900">${fmtMoney(initialOpeningDue)}</td>
+            <td class="border border-slate-300 p-2 text-right tabular-nums text-emerald-700">${fmtMoney(totalOpeningPaidInPeriod)}</td>
+            <td class="border border-slate-300 p-2 text-right tabular-nums font-bold text-rose-700">${fmtMoney(initialOpeningDue - totalOpeningPaidInPeriod)}</td>
             <td class="border border-slate-300 p-2 text-center">-</td>
           </tr>
         `;
+        runningDue = initialOpeningDue - totalOpeningPaidInPeriod;
       }
 
       rds.forEach((r, idx) => {
@@ -3665,7 +3667,7 @@ function generateReportHTML(tab) {
         const totalRowAmt = bill + pen; 
         
         const matchingPay = payments.find(p => p.month === r.month || (p.date >= r.entryDate));
-        const paidM = matchingPay ? Number(matchingPay.totalPaid || 0) : (Number(r.paidAmount || 0) + Number(r.paidMaintAmount || 0));
+        const paidM = matchingPay ? Number(matchingPay.totalPaid || 0) - Number(matchingPay.openingPaid || 0) : (Number(r.paidAmount || 0) + Number(r.paidMaintAmount || 0));
         
         runningDue = (runningDue + totalRowAmt) - paidM;
 
@@ -3712,7 +3714,7 @@ function generateReportHTML(tab) {
           <div><strong>ग्राहक आइडी:</strong> ${cust.id}</div>
           <div><strong>फोन नं.:</strong> ${cust.phone || '-'}</div>
           <div><strong>ग्राहकको नाम:</strong> ${cust.name}</div>
-          <div><strong>ठेगाना:</strong> ${cust.address || '-'} | <strong class="text-amber-800">ओपनिङ बक्यौता:</strong> ${fmtMoney(openingDue)}</div>
+          <div><strong>ठेगाना:</strong> ${cust.address || '-'} | <strong class="text-amber-800">हालको बाँकी ओपनिङ:</strong> ${fmtMoney(cust.openingDue || 0)}</div>
         </div>
         <table class="w-full text-xs border-collapse border border-slate-300">
           <thead class="bg-slate-100">
@@ -3742,7 +3744,7 @@ function generateReportHTML(tab) {
               <td class="border border-slate-300 p-2 text-right tabular-nums text-amber-800">${fmtMoney(tMaint)}</td>
               <td class="border border-slate-300 p-2 text-right tabular-nums text-red-700">${fmtMoney(tPen)}</td>
               <td class="border border-slate-300 p-2 text-right tabular-nums">${fmtMoney(tTotalAmt)}</td>
-              <td class="border border-slate-300 p-2 text-right tabular-nums text-emerald-700">${fmtMoney(tPaid)}</td>
+              <td class="border border-slate-300 p-2 text-right tabular-nums text-emerald-700">${fmtMoney(tPaid + totalOpeningPaidInPeriod)}</td>
               <td class="border border-slate-300 p-2 text-right tabular-nums text-rose-700">${fmtMoney(runningDue)}</td>
               <td class="border border-slate-300 p-2 text-center">-</td>
             </tr>
@@ -3756,13 +3758,16 @@ function generateReportHTML(tab) {
     let grandUnits = 0, grandBill = 0, grandMaint = 0, grandPen = 0, grandPaid = 0, grandDue = 0;
 
     const rows = custs.map((c, idx) => {
-      const openingDue = Number(c.openingDue || c.openingBalance || c.opening || 0);
+      const custPayments = st.payments.filter(p => p.customerId === c.id);
+      const totalOpPaid = custPayments.reduce((sum, p) => sum + Number(p.openingPaid || 0), 0);
+      const openingDue = Number(c.openingDue || 0) + totalOpPaid;
+      
       const rds = st.readings.filter(r => r.customerId === c.id && isDateBetweenBS(r.entryDate, repFromBS, repToBS));
       const units = rds.reduce((a, b) => a + Number(b.units), 0);
       const bill = rds.reduce((a, b) => a + Number(b.billAmount), 0);
       const maint = rds.reduce((a, b) => a + Number(b.maintenanceAmount || 0), 0);
       const pen = rds.reduce((a, b) => a + Number(b.penaltyAmount || 0), 0);
-      const paid = rds.reduce((a, b) => a + Number(b.paidAmount || 0) + Number(b.paidMaintAmount || 0), 0);
+      const paid = rds.reduce((a, b) => a + Number(b.paidAmount || 0) + Number(b.paidMaintAmount || 0), 0) + totalOpPaid;
       const due = (openingDue + bill + pen) - paid;
 
       grandUnits += units; grandBill += (bill + openingDue); grandMaint += maint; grandPen += pen; grandPaid += paid; grandDue += due;
