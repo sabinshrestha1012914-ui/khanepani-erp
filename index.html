@@ -3554,7 +3554,7 @@ function addTankerSaleEntry(e) {
 }
 
 // ============================================================================
-// 15. COMPREHENSIVE A4 ACCOUNTING & OPERATIONAL REPORTS MODULE (दुई पङ्क्ति ढाँचा)
+// 15. COMPREHENSIVE A4 ACCOUNTING & OPERATIONAL REPORTS MODULE (अन्तिम अपडेट)
 // ============================================================================
 let activeReportTab = "customer-annual";
 let repFromBS = "2083-01-01";
@@ -3628,7 +3628,7 @@ function generateReportHTML(tab) {
   `;
 
   if (tab === "customer-annual") {
-    // 🌟 निश्चित सदस्य (Member ID) छान्दा दुई पङ्क्ति (Two Rows per Reading) भएको स्टेटमेन्ट
+    // 🌟 निश्चित सदस्य (Member ID) छान्दा विस्तृत स्टेटमेन्ट (रसिद नं. अन्तिममा)
     if (repCustFilter !== "ALL") {
       const cust = st.customers.find(c => c.id === repCustFilter);
       if (!cust) return `<div class="p-6 text-center text-slate-500">ग्राहक फेला परेन।</div>`;
@@ -3671,13 +3671,13 @@ function generateReportHTML(tab) {
             <td class="border border-slate-300 p-2 text-right tabular-nums text-amber-800">${fmtMoney(maint)}</td>
             <td class="border border-slate-300 p-2 text-right tabular-nums text-red-700">${fmtMoney(pen)}</td>
             <td class="border border-slate-300 p-2 text-right tabular-nums font-bold text-slate-900">${fmtMoney(totalRowAmt)}</td>
-            <td class="border border-slate-300 p-2 text-center font-bold text-indigo-900">${receiptNoStr}</td>
             <td class="border border-slate-300 p-2 text-right tabular-nums text-emerald-700 font-bold">-</td>
             <td class="border border-slate-300 p-2 text-right tabular-nums text-rose-700 font-bold">${fmtMoney(due)}</td>
+            <td rowspan="2" class="border border-slate-300 p-2 text-center align-middle font-bold text-indigo-900">${receiptNoStr}</td>
           </tr>
-          <!-- 2. तल्लो पङ्क्ति: भुक्तानी विवरण (Payment Details) -->
+          <!-- 2. तल्लो पङ्क्ति: भुक्तानी विवरण (Payment Details with Date) -->
           <tr class="bg-slate-50/80">
-            <td colspan="9" class="border border-slate-300 px-3 py-1.5 text-[11px] text-slate-700">
+            <td colspan="8" class="border border-slate-300 px-3 py-1.5 text-[11px] text-slate-700">
               <span class="font-semibold text-teal-900">भुक्तानी मिति:</span> <u class="font-bold text-teal-950">${payDateStr}</u>
             </td>
             <td class="border border-slate-300 p-1.5 text-right tabular-nums text-emerald-700 font-bold text-xs">${fmtMoney(paidM)}</td>
@@ -3706,9 +3706,9 @@ function generateReportHTML(tab) {
               <th class="border border-slate-300 p-2 text-right">मर्मत शुल्क</th>
               <th class="border border-slate-300 p-2 text-right">जरिवाना</th>
               <th class="border border-slate-300 p-2 text-right">जम्मा रकम</th>
-              <th class="border border-slate-300 p-2 text-center">रसिद नं.</th>
               <th class="border border-slate-300 p-2 text-right">प्राप्त रकम</th>
               <th class="border border-slate-300 p-2 text-right">बाँकी रकम</th>
+              <th class="border border-slate-300 p-2 text-center">रसिद नं.</th>
             </tr>
           </thead>
           <tbody>
@@ -3722,9 +3722,9 @@ function generateReportHTML(tab) {
               <td class="border border-slate-300 p-2 text-right tabular-nums text-amber-800">${fmtMoney(tMaint)}</td>
               <td class="border border-slate-300 p-2 text-right tabular-nums text-red-700">${fmtMoney(tPen)}</td>
               <td class="border border-slate-300 p-2 text-right tabular-nums">${fmtMoney(tTotalAmt)}</td>
-              <td class="border border-slate-300 p-2 text-center">-</td>
               <td class="border border-slate-300 p-2 text-right tabular-nums text-emerald-700">${fmtMoney(tPaid)}</td>
               <td class="border border-slate-300 p-2 text-right tabular-nums text-rose-700">${fmtMoney(tDue)}</td>
+              <td class="border border-slate-300 p-2 text-center">-</td>
             </tr>
           </tfoot>
         </table>
