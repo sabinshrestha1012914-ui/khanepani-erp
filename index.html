@@ -286,7 +286,7 @@
 <!-- ==================== SYSTEM NOTIFICATION TOAST ==================== -->
 <div id="toast-box" class="fixed bottom-4 right-4 z-50 space-y-2 pointer-events-none"></div>
 
-<!-- ==================== FIREBASE & CORE ERP ENGINE ==================== -->
+<!-- ==================== FIREBASE & CORE CLOUD SYNC (SAFE MULTI-DEVICE TIMESTAMPS) ==================== -->
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
   import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
@@ -297,6 +297,7 @@
     db: null,
     userId: null,
     appId: 'khanepani-erp-hamro-sanstha',
+    isSaving: false,
     async init() {
       try {
         const cfg = {
@@ -318,30 +319,30 @@
 
         const docRef = doc(this.db, "artifacts", this.appId, "public", "data", "erp_state", "master_v1");
         
-        // पेज खोल्दा तुरुन्तै सर्भरबाट ताजा डाटा लोड गर्ने
         const initialSnap = await getDoc(docRef);
         if (initialSnap.exists()) {
           const remoteData = initialSnap.data();
           if (remoteData && remoteData.customers) {
             window.ERP_STATE = Object.assign({}, window.ERP_STATE, remoteData);
             localStorage.setItem("KHANEPANI_ERP_LOCAL_BACKUP", JSON.stringify(window.ERP_STATE));
-            if (typeof renderCurrentModule === "function") {
-              renderCurrentModule();
-            }
+            if (typeof renderCurrentModule === "function") renderCurrentModule();
           }
         }
 
-        // लाइभ रियल-टाइम लिसनर (जसले गर्दा मोबाइल वा अर्को डिभाइसमा अटोमेटिक अपडेट हुन्छ)
         onSnapshot(docRef, (docSnap) => {
-          if (docSnap.exists()) {
+          if (docSnap.exists() && !this.isSaving) {
             const remoteData = docSnap.data();
             if (remoteData && remoteData.customers) {
-              window.ERP_STATE = Object.assign({}, window.ERP_STATE, remoteData);
-              localStorage.setItem("KHANEPANI_ERP_LOCAL_BACKUP", JSON.stringify(window.ERP_STATE));
-              if (typeof renderCurrentModule === "function") {
-                renderCurrentModule();
+              const localState = window.ERP_STATE || {};
+              const remoteTime = remoteData.lastModified || 0;
+              const localTime = localState.lastModified || 0;
+
+              if (remoteTime >= localTime) {
+                window.ERP_STATE = Object.assign({}, window.ERP_STATE, remoteData);
+                localStorage.setItem("KHANEPANI_ERP_LOCAL_BACKUP", JSON.stringify(window.ERP_STATE));
+                if (typeof renderCurrentModule === "function") renderCurrentModule();
+                console.log("Data auto-synced safely from cloud!");
               }
-              console.log("Data auto-synced from cloud!");
             }
           }
         }, (error) => {
@@ -354,20 +355,27 @@
     },
 
     async save() {
+      if (!window.ERP_STATE) return;
+      window.ERP_STATE.lastModified = Date.now();
       localStorage.setItem("KHANEPANI_ERP_LOCAL_BACKUP", JSON.stringify(window.ERP_STATE));
       if (!this.enabled || !this.db) return;
       try {
+        this.isSaving = true;
         const docRef = doc(this.db, "artifacts", this.appId, "public", "data", "erp_state", "master_v1");
         await setDoc(docRef, window.ERP_STATE);
         console.log("Data saved to cloud successfully!");
       } catch (err) {
         console.error("CloudSync Save Error:", err);
+      } finally {
+        setTimeout(() => { this.isSaving = false; }, 1000);
       }
     }
   };
   window.cloudSync.init();
 </script>
+
 <script>
+
 // ============================================================================
 // 1. NEPALI BIKRAM SAMBAT (BS) DATE ENGINE & NUMBER-TO-NEPALI-WORDS CONVERTER
 // ============================================================================
