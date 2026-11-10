@@ -4167,12 +4167,30 @@ function renderDatabaseModule() {
 }
 
 // ============================================================================
-// 17. SETTINGS MODULE (COMMITTEE PROFILE + OPENING BALANCES + RATES & RULES + SECURITY)
+// 17. SETTINGS MODULE (COMMITTEE PROFILE + OPENING BALANCES + BS CALENDAR + RATES & RULES + SECURITY)
 // ============================================================================
+
+// डिफल्ट पात्रो डेटा (यदि सेटिङमा छैन भने प्रयोग हुने)
+const DEFAULT_BS_CALENDAR = {
+  2080: [31, 32, 31, 32, 31, 30, 30, 30, 29, 29, 30, 30],
+  2081: [31, 32, 31, 32, 31, 30, 30, 30, 29, 30, 29, 31],
+  2082: [31, 31, 32, 31, 31, 31, 30, 29, 30, 29, 30, 30],
+  2083: [31, 31, 32, 31, 31, 30, 30, 29, 30, 29, 30, 30],
+  2084: [31, 32, 31, 32, 31, 30, 30, 30, 29, 29, 30, 31],
+  2085: [31, 32, 31, 32, 31, 30, 30, 30, 29, 30, 29, 31]
+};
+
 function renderSettingsModule() {
   const st = window.ERP_STATE;
   const s = st.settings;
   const auth = st.auth || { username: "admin", password: "123" };
+
+  // यदि bsCalendar सेटिङमा छैन भने डिफल्ट सेट गर्ने
+  if (!s.bsCalendar) {
+    s.bsCalendar = JSON.parse(JSON.stringify(DEFAULT_BS_CALENDAR));
+  }
+  const cal = s.bsCalendar;
+  const months = ["बैशाख", "जेठ", "असार", "साउन", "भदौ", "असोज", "कात्तिक", "मंसिर", "पुस", "माघ", "फागुन", "चैत"];
 
   return `
     <div class="space-y-6">
@@ -4212,7 +4230,45 @@ function renderSettingsModule() {
         </form>
       </div>
 
-      <!-- 🌟 ओपनिङ ब्यालेन्स तथा गत वर्षको बाँकी बक्यौता सेटिङ (Opening Balances & Dues) -->
+      <!-- 🌟 नेपाली पात्रो व्यवस्थापन (BS Month Days Settings) -->
+      <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs space-y-4">
+        <div class="flex flex-wrap justify-between items-center border-b border-slate-100 pb-3">
+          <div>
+            <h3 class="text-sm font-bold text-slate-800 text-teal-800">नेपाली पात्रो व्यवस्थापन (BS Month Days Settings)</h3>
+            <p class="text-[11px] text-slate-500">प्रत्येक सालको १२ महिनाका दिनहरू यहाँबाट सच्याउन र नयाँ साल थप्न सक्नुहुन्छ।</p>
+          </div>
+          <button type="button" onclick="addNewCalendarYear()" class="bg-indigo-50 hover:bg-indigo-100 text-indigo-800 border border-indigo-200 text-xs font-semibold px-3 py-1.5 rounded-xl">
+            + नयाँ साल थप्नुहोस्
+          </button>
+        </div>
+
+        <div class="overflow-x-auto">
+          <table class="w-full text-xs border-collapse border border-slate-300 text-center">
+            <thead class="bg-slate-100 font-bold">
+              <tr>
+                <th class="border border-slate-300 p-2">साल (BS)</th>
+                ${months.map(m => `<th class="border border-slate-300 p-2">${m}</th>`).join("")}
+              </tr>
+            </thead>
+            <tbody>
+              ${Object.keys(cal).sort().map(yr => `
+                <tr>
+                  <td class="border border-slate-300 p-2 font-bold bg-slate-50">${yr}</td>
+                  ${cal[yr].map((days, mIdx) => `
+                    <td class="border border-slate-300 p-1">
+                      <input type="number" min="28" max="32" value="${days}" 
+                        onchange="updateBSCalendarDay('${yr}', ${mIdx}, this.value)"
+                        class="w-11 text-center border border-slate-200 rounded py-1 font-bold text-teal-900 focus:border-teal-600">
+                    </td>
+                  `).join("")}
+                </tr>
+              `).join("")}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- ओपनिङ ब्यालेन्स तथा गत वर्षको बाँकी बक्यौता सेटिङ -->
       <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs space-y-4">
         <h3 class="text-base font-bold text-slate-800 flex items-center gap-2 text-teal-700">
           <i data-lucide="wallet" class="w-5 h-5"></i> ओपनिङ ब्यालेन्स र गत वर्षको बाँकी बक्यौता (Opening Balances & Dues)
@@ -4276,7 +4332,7 @@ function renderSettingsModule() {
       <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs space-y-3">
         <div class="flex items-center justify-between">
           <h3 class="text-sm font-bold text-slate-800">१. मिति अनुसार न्यूनतम रकम तथा अतिरिक्त युनिट दर (Water Tariff Schedule)</h3>
-          <button onclick="addRuleRow('tariffRules')" class="text-xs bg-teal-50 text-teal-800 border border-teal-200 font-semibold px-3 py-1.5 rounded-xl">+ नयाँ मिति दर थप्नुहोस्</button>
+          <button type="button" onclick="addRuleRow('tariffRules')" class="text-xs bg-teal-50 text-teal-800 border border-teal-200 font-semibold px-3 py-1.5 rounded-xl">+ नयाँ मिति दर थप्नुहोस्</button>
         </div>
         <div class="overflow-x-auto">
           <table class="w-full text-xs text-left">
@@ -4298,7 +4354,7 @@ function renderSettingsModule() {
                   <td class="p-2"><input type="number" value="${r.minUnits}" onchange="updateSettingRule('tariffRules',${i},'minUnits',Number(this.value))" class="w-20 border rounded-lg px-2 py-1"></td>
                   <td class="p-2"><input type="number" value="${r.minAmount}" onchange="updateSettingRule('tariffRules',${i},'minAmount',Number(this.value))" class="w-24 border rounded-lg px-2 py-1 font-bold"></td>
                   <td class="p-2"><input type="number" value="${r.extraRate}" onchange="updateSettingRule('tariffRules',${i},'extraRate',Number(this.value))" class="w-24 border rounded-lg px-2 py-1 font-bold"></td>
-                  <td class="p-2"><button onclick="deleteSettingRule('tariffRules',${i})" class="text-red-600 font-bold">✕</button></td>
+                  <td class="p-2"><button type="button" onclick="deleteSettingRule('tariffRules',${i})" class="text-red-600 font-bold">✕</button></td>
                 </tr>
               `).join("")}
             </tbody>
@@ -4310,7 +4366,7 @@ function renderSettingsModule() {
       <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs space-y-3">
         <div class="flex items-center justify-between">
           <h3 class="text-sm font-bold text-slate-800">२. मिति अनुसार जरिवाना दिन र प्रतिशत दर (Penalty Schedule)</h3>
-          <button onclick="addRuleRow('penaltyRules')" class="text-xs bg-rose-50 text-rose-800 border border-rose-200 font-semibold px-3 py-1.5 rounded-xl">+ नयाँ जरिवाना नियम</button>
+          <button type="button" onclick="addRuleRow('penaltyRules')" class="text-xs bg-rose-50 text-rose-800 border border-rose-200 font-semibold px-3 py-1.5 rounded-xl">+ नयाँ जरिवाना नियम</button>
         </div>
         <div class="overflow-x-auto">
           <table class="w-full text-xs text-left">
@@ -4330,7 +4386,7 @@ function renderSettingsModule() {
                   <td class="p-2"><input type="text" value="${r.toDate}" onchange="updateSettingRule('penaltyRules',${i},'toDate',this.value)" class="w-28 border rounded-lg px-2 py-1"></td>
                   <td class="p-2"><input type="number" value="${r.graceDays}" onchange="updateSettingRule('penaltyRules',${i},'graceDays',Number(this.value))" class="w-24 border rounded-lg px-2 py-1 font-bold"></td>
                   <td class="p-2"><input type="number" value="${r.penaltyPercent}" onchange="updateSettingRule('penaltyRules',${i},'penaltyPercent',Number(this.value))" class="w-24 border rounded-lg px-2 py-1 font-bold text-red-700"></td>
-                  <td class="p-2"><button onclick="deleteSettingRule('penaltyRules',${i})" class="text-red-600 font-bold">✕</button></td>
+                  <td class="p-2"><button type="button" onclick="deleteSettingRule('penaltyRules',${i})" class="text-red-600 font-bold">✕</button></td>
                 </tr>
               `).join("")}
             </tbody>
@@ -4342,7 +4398,7 @@ function renderSettingsModule() {
       <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs space-y-3">
         <div class="flex items-center justify-between">
           <h3 class="text-sm font-bold text-slate-800">३. ऋण लगानी ब्याजदर तालिका (समितिको निर्णय अनुसार वर्षभित्रै परिवर्तन योग्य)</h3>
-          <button onclick="addRuleRow('loanRateRules')" class="text-xs bg-indigo-50 text-indigo-800 border border-indigo-200 font-semibold px-3 py-1.5 rounded-xl">+ नयाँ ब्याजदर अवधि</button>
+          <button type="button" onclick="addRuleRow('loanRateRules')" class="text-xs bg-indigo-50 text-indigo-800 border border-indigo-200 font-semibold px-3 py-1.5 rounded-xl">+ नयाँ ब्याजदर अवधि</button>
         </div>
         <div class="overflow-x-auto">
           <table class="w-full text-xs text-left">
@@ -4360,7 +4416,7 @@ function renderSettingsModule() {
                   <td class="p-2"><input type="text" value="${r.fromDate}" onchange="updateSettingRule('loanRateRules',${i},'fromDate',this.value)" class="w-28 border rounded-lg px-2 py-1"></td>
                   <td class="p-2"><input type="text" value="${r.toDate}" onchange="updateSettingRule('loanRateRules',${i},'toDate',this.value)" class="w-28 border rounded-lg px-2 py-1"></td>
                   <td class="p-2"><input type="number" step="0.1" value="${r.annualRate}" onchange="updateSettingRule('loanRateRules',${i},'annualRate',Number(this.value))" class="w-24 border rounded-lg px-2 py-1 font-bold text-indigo-800"></td>
-                  <td class="p-2"><button onclick="deleteSettingRule('loanRateRules',${i})" class="text-red-600 font-bold">✕</button></td>
+                  <td class="p-2"><button type="button" onclick="deleteSettingRule('loanRateRules',${i})" class="text-red-600 font-bold">✕</button></td>
                 </tr>
               `).join("")}
             </tbody>
@@ -4372,7 +4428,7 @@ function renderSettingsModule() {
       <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs space-y-3">
         <div class="flex items-center justify-between">
           <h3 class="text-sm font-bold text-slate-800">४. गाडीमा पानी बिक्री दर तथा ज्याला दर (व्यक्ति तथा मिति अनुसार)</h3>
-          <button onclick="addRuleRow('tankerRateRules')" class="text-xs bg-amber-50 text-amber-800 border border-amber-200 font-semibold px-3 py-1.5 rounded-xl">+ नयाँ व्यक्ति/मिति दर</button>
+          <button type="button" onclick="addRuleRow('tankerRateRules')" class="text-xs bg-amber-50 text-amber-800 border border-amber-200 font-semibold px-3 py-1.5 rounded-xl">+ नयाँ व्यक्ति/मिति दर</button>
         </div>
         <div class="overflow-x-auto">
           <table class="w-full text-xs text-left">
@@ -4394,7 +4450,7 @@ function renderSettingsModule() {
                   <td class="p-2"><input type="text" value="${r.toDate}" onchange="updateSettingRule('tankerRateRules',${i},'toDate',this.value)" class="w-28 border rounded-lg px-2 py-1"></td>
                   <td class="p-2"><input type="number" step="0.01" value="${r.ratePerLiter}" onchange="updateSettingRule('tankerRateRules',${i},'ratePerLiter',Number(this.value))" class="w-24 border rounded-lg px-2 py-1 font-bold"></td>
                   <td class="p-2"><input type="number" step="0.01" value="${r.wagePerLiter}" onchange="updateSettingRule('tankerRateRules',${i},'wagePerLiter',Number(this.value))" class="w-24 border rounded-lg px-2 py-1 font-bold"></td>
-                  <td class="p-2"><button onclick="deleteSettingRule('tankerRateRules',${i})" class="text-red-600 font-bold">✕</button></td>
+                  <td class="p-2"><button type="button" onclick="deleteSettingRule('tankerRateRules',${i})" class="text-red-600 font-bold">✕</button></td>
                 </tr>
               `).join("")}
             </tbody>
@@ -4403,6 +4459,38 @@ function renderSettingsModule() {
       </div>
     </div>
   `;
+}
+
+// 🌟 पात्रोको महिनाको दिन अपडेट गर्ने फंक्सन
+function updateBSCalendarDay(year, monthIndex, val) {
+  const st = window.ERP_STATE;
+  const num = Number(val);
+  if (num >= 28 && num <= 32) {
+    if (!st.settings.bsCalendar[year]) {
+      st.settings.bsCalendar[year] = [31, 31, 32, 31, 31, 30, 30, 29, 30, 29, 30, 30];
+    }
+    st.settings.bsCalendar[year][monthIndex] = num;
+    window.recalculateAllDynamicValues?.(true);
+    showToast(`${year} सालको महिना दिन अपडेट भयो!`);
+  } else {
+    showToast("महिनाको दिन २८ देखि ३२ भित्र हुनुपर्छ।", "error");
+  }
+}
+
+// 🌟 नयाँ साल थप्ने फंक्सन
+function addNewCalendarYear() {
+  const yr = prompt("थप्न चाहेको नयाँ साल लेख्नुहोस् (जस्तै: 2086):");
+  if (!yr || isNaN(yr) || yr.length !== 4) return;
+  const st = window.ERP_STATE;
+  if (!st.settings.bsCalendar) {
+    st.settings.bsCalendar = JSON.parse(JSON.stringify(DEFAULT_BS_CALENDAR));
+  }
+  if (st.settings.bsCalendar[yr]) {
+    return showToast("यो साल पहिल्यै लिस्टमा छ!", "error");
+  }
+  st.settings.bsCalendar[yr] = [31, 31, 32, 31, 31, 30, 30, 29, 30, 29, 30, 30];
+  renderCurrentModule();
+  showToast(`${yr} साल पात्रोमा थपियो!`);
 }
 
 function saveCommitteeProfile(e) {
@@ -4418,11 +4506,9 @@ function saveCommitteeProfile(e) {
   showToast("समितिको विवरण सुरक्षित भयो!");
 }
 
-// 🌟 ओपनिङ ब्यालेन्स सेभ गर्ने फंक्सन
 function saveOpeningBalances(e) {
   e.preventDefault();
   const s = window.ERP_STATE.settings;
-  
   s.openingCash = Number(document.getElementById("set-open-cash").value) || 0;
   s.openingDues = Number(document.getElementById("set-open-dues").value) || 0;
   s.openingLoan = Number(document.getElementById("set-open-loan").value) || 0;
@@ -4471,6 +4557,7 @@ function deleteSettingRule(arrName, idx) {
   window.recalculateAllDynamicValues(false);
   renderCurrentModule();
 }
+
 // ============================================================================
 // 18. SUPPORT & BACKUP MODULE (JSON BACKUP, RESTORE, RESET & DATE RANGE DELETE)
 // ============================================================================
