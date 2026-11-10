@@ -2351,79 +2351,15 @@ function openBulkCustomerReadingSlips() {
 }
 
 // ============================================================================
-// 10. LOAN MANAGEMENT MODULE (AUTO INTEREST, CAPITALIZATION, SEQUENTIAL ID)
+// 10. LOAN MANAGEMENT MODULE (MANUAL INTEREST CAPITALIZATION & MONTHLY DURATION)
 // ============================================================================
 let loanFilterCust = "ALL";
 let loanFromBS = "2083-01-01";
 let loanToBS = "2083-12-30";
 
-function processOverdueLoanCapitalization() {
-  const st = window.ERP_STATE;
-  if (!st || !st.loans) return;
-  const todayBS = st.activeBSDate;
-  let anyUpdated = false;
-
-  st.loans.forEach(l => {
-    if (!l.initialIssueDate) l.initialIssueDate = l.issueDate;
-    if (!l.initialPrincipal) l.initialPrincipal = Number(l.principal);
-
-    if (l.status === 'Active' && l.dueDate) {
-      if (bsToSerialDays(todayBS) > bsToSerialDays(l.dueDate)) {
-        const accruedInt = Number(l.accruedInterest || 0);
-        const oldDueDate = l.dueDate;
-
-        if (!l.remarksHistory) l.remarksHistory = [];
-        if (!l.capitalizationLogs) l.capitalizationLogs = [];
-
-        if (accruedInt > 0) {
-          l.principal = Number(l.principal) + accruedInt;
-
-          l.capitalizationLogs.push({
-            date: oldDueDate,
-            amount: accruedInt,
-            note: `भाखा (${oldDueDate}) नाघेकोले पाकेको ब्याज साँवामा गाभिएको (Capitalized)`
-          });
-
-          if (!st.incomes) st.incomes = [];
-          st.incomes.push({
-            id: "INC-CAP-" + Date.now() + "-" + l.id,
-            date: oldDueDate,
-            category: "ऋण ब्याज आम्दानी (साँवामा गाभिएको)",
-            amount: accruedInt,
-            remarks: `ऋण नं. ${l.id} को भाखा नाघेको ब्याज साँवामा समायोजन`
-          });
-
-          l.remarksHistory.push({
-            date: todayBS,
-            note: `भाखा (${oldDueDate}) नाघेकोले पाकेको ब्याज रु. ${accruedInt.toLocaleString()} साँवामा थपियो र ६ महिना म्याद बढाइयो।`
-          });
-
-          l.accruedInterest = 0;
-          l.paidInterest = 0;
-        } else {
-          l.remarksHistory.push({
-            date: todayBS,
-            note: `भाखा (${oldDueDate}) नाघेकोले स्वतः ६ महिना म्याद नवीकरण गरियो।`
-          });
-        }
-
-        l.issueDate = oldDueDate;
-        l.dueDate = addDaysToBS(oldDueDate, 180);
-        l.isOverdue = false;
-        l.overdueDays = 0;
-        anyUpdated = true;
-      }
-    }
-  });
-
-  if (anyUpdated && typeof window.cloudSync?.save === "function") {
-    window.cloudSync.save();
-  }
-}
+// स्वचालित क्यापिटलाइजेसन हटाइएको छ। अब एड्मिनले चाहेको बेला म्यानुअल रूपमा साँवामा गाभ्न सक्नेछन्।
 
 function renderLoansModule() {
-  processOverdueLoanCapitalization();
-
   const st = window.ERP_STATE;
   const activeRate = getActiveLoanRateRule(st.activeBSDate);
   const nextLoanRec = `LREC-${parseBS(st.activeBSDate).y}-${st.settings.loanReceiptCounter}`;
@@ -2473,7 +2409,7 @@ function renderLoansModule() {
 
       <!-- Disbursement & Recovery Forms -->
       <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <!-- New Loan Disbursement -->
+        <!-- New Loan Disbursement with Month Selection -->
         <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs">
           <h3 class="text-sm font-bold text-slate-800 mb-3 flex items-center gap-2">
             <i data-lucide="plus-circle" class="w-4 h-4 text-indigo-700"></i> नयाँ ऋण लगानी (Loan Disbursement)
@@ -2494,6 +2430,17 @@ function renderLoansModule() {
               <input type="text" id="ln-issue-date" value="${st.activeBSDate}" class="w-full bg-teal-50 border border-teal-300 rounded-xl px-3 py-2 font-bold">
             </div>
             <div>
+              <label class="font-semibold text-slate-600 block mb-1">लगानी अवधि (कति महिनाको लागि?) *</label>
+              <select id="ln-duration-months" onchange="updateDueDateByMonths(this.value)" class="w-full border border-slate-300 rounded-xl px-3 py-2 font-bold text-indigo-800">
+                <option value="1">१ महिना</option>
+                <option value="3">३ महिना</option>
+                <option value="6" selected>६ महिना</option>
+                <option value="12">१२ महिना (१ वर्ष)</option>
+                <option value="24">२४ महिना (२ वर्ष)</option>
+                <option value="36">३६ महिना (३ वर्ष)</option>
+              </select>
+            </div>
+            <div class="sm:col-span-2">
               <label class="font-semibold text-slate-600 block mb-1">भाखा नाघ्ने अन्तिम मिति (Due BS) *</label>
               <input type="text" id="ln-due-date" value="${addDaysToBS(st.activeBSDate, 180)}" required class="w-full border border-slate-300 rounded-xl px-3 py-2 font-semibold">
             </div>
@@ -2567,7 +2514,7 @@ function renderLoansModule() {
       <!-- Member-wise & Date-wise Loan Statement -->
       <div class="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
         <div class="p-4 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3">
-          <h3 class="text-sm font-bold text-slate-800">मेम्बरवाइज तथा मिति अनुसार ऋण स्टेटमेन्ट (लेजर प्रिन्ट र अपडेट सहित)</h3>
+          <h3 class="text-sm font-bold text-slate-800">मेम्बरवाइज तथा मिति अनुसार ऋण स्टेटमेन्ट (म्यानुअल ब्याज क्यापिटलाइजेसन सहित)</h3>
           <div class="flex flex-wrap items-center gap-2 text-xs">
             <select onchange="loanFilterCust=this.value; renderCurrentModule();" class="border border-slate-300 rounded-xl px-2.5 py-1.5 font-semibold">
               <option value="ALL">सबै ऋणी सदस्यहरू</option>
@@ -2618,6 +2565,9 @@ function renderLoansModule() {
                     <td class="p-3 text-center space-x-1">
                       <button onclick="openMemberLoanLedgerStatement('${l.id}')" class="px-2 py-1 bg-teal-50 hover:bg-teal-100 text-teal-800 border border-teal-200 rounded-lg font-semibold">
                         स्टेटमेन्ट
+                      </button>
+                      <button onclick="promptManualCapitalization('${l.id}')" class="px-2 py-1 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 rounded-lg font-semibold" title="ब्याज साँवामा गाभ्ने">
+                        ब्याज गाभ्ने
                       </button>
                       <button onclick="promptEditLoan('${l.id}')" class="px-2 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-800 border border-indigo-200 rounded-lg font-semibold">
                         अपडेट
@@ -2674,6 +2624,86 @@ function renderLoansModule() {
   `;
 }
 
+// नयाँ ऋण लगानी गर्दा महिनाको आधारमा भाखा मिति अटो अपडेट गर्ने फंक्सन
+function updateDueDateByMonths(months) {
+  const st = window.ERP_STATE;
+  const issueDate = document.getElementById("ln-issue-date").value.trim() || st.activeBSDate;
+  // एक महिनालाई ३० दिनको दरले वा दिन थप्ने फंक्सन प्रयोग गर्ने (यहाँ ६ महिनालाई १८० दिन मानेर अनुपातमा)
+  const totalDays = Number(months) * 30;
+  const dueInput = document.getElementById("ln-due-date");
+  if (dueInput) {
+    dueInput.value = addDaysToBS(issueDate, totalDays);
+  }
+}
+
+// 🌟 म्यानुअल रूपमा पाकेको ब्याज साँवामा जोड्ने (Capitalization) फंक्सन
+function promptManualCapitalization(loanId) {
+  const st = window.ERP_STATE;
+  const ln = st.loans.find(l => l.id === loanId);
+  if (!ln) return showToast("ऋण खाता फेला परेन।", "error");
+
+  const accruedInt = Number(ln.accruedInterest || 0);
+  if (accruedInt <= 0) {
+    return showToast("यस ऋण खातामा गाभ्न मिल्ने पाकेको ब्याज छैन!", "warning");
+  }
+
+  const confirmCap = confirm(`ऋण नं. ${ln.id} को जम्मा पाकेको ब्याज रु. ${accruedInt.toLocaleString()} लाई साँवामा जोड्न (Capitalize गर्न) चाहनुहुन्छ?`);
+  if (!confirmCap) return;
+
+  const todayBS = st.activeBSDate;
+
+  if (!ln.remarksHistory) ln.remarksHistory = [];
+  if (!ln.capitalizationLogs) ln.capitalizationLogs = [];
+
+  // साँवामा ब्याज जोड्ने
+  ln.principal = Number(ln.principal) + accruedInt;
+
+  // क्यापिटलाइजेसनलगमा रेकर्ड राख्ने
+  ln.capitalizationLogs.push({
+    date: todayBS,
+    amount: accruedInt,
+    note: `म्यानुअल रूपमा पाकेको ब्याज साँवामा गाभिएको (Capitalized)`
+  });
+
+  // आम्दानी खातामा प्रविष्टि थप्ने
+  if (!st.incomes) st.incomes = [];
+  st.incomes.push({
+    id: "INC-CAP-" + Date.now() + "-" + ln.id,
+    date: todayBS,
+    category: "ऋण ब्याज आम्दानी (साँवामा गाभिएको)",
+    amount: accruedInt,
+    remarks: `ऋण नं. ${ln.id} को पाकेको ब्याज म्यानुअल साँवामा समायोजन`
+  });
+
+  ln.remarksHistory.push({
+    date: todayBS,
+    note: `म्यानुअल रूपमा पाकेको ब्याज रु. ${accruedInt.toLocaleString()} साँवामा थप गरियो।`
+  });
+
+  // ब्याज शून्य गर्ने
+  ln.accruedInterest = 0;
+  ln.paidInterest = 0;
+
+  // म्याद थप गर्ने अप्सन (चाहेमा मिति नवीकरण गर्न सकिने)
+  const extendMonths = prompt("के यो ऋणको म्याद पनि थप गर्ने हो? (महिनाको संख्या लेख्नुहोस्, जस्तै: 6 वा खाली छोड्नुहोस्):", "6");
+  if (extendMonths && !isNaN(extendMonths) && Number(extendMonths) > 0) {
+    const addDays = Number(extendMonths) * 30;
+    ln.dueDate = addDaysToBS(ln.dueDate || todayBS, addDays);
+    ln.remarksHistory.push({
+      date: todayBS,
+      note: `साँवामा ब्याज गाभ्दा ${extendMonths} महिना म्याद थप गरियो। नयाँ भाखा: ${ln.dueDate}`
+    });
+  }
+
+  if (typeof window.cloudSync?.save === "function") {
+    window.cloudSync.save();
+  }
+
+  window.recalculateAllDynamicValues(true);
+  renderCurrentModule();
+  showToast(`ऋण नं. ${ln.id} को ब्याज सफलतापूर्वक साँवामा गाभियो!`);
+}
+
 // 🌟 सदस्य लेजर स्टेटमेन्ट प्रिन्ट गर्ने फंक्सन
 function openMemberLoanLedgerStatement(loanId) {
   const st = window.ERP_STATE;
@@ -2708,7 +2738,7 @@ function openMemberLoanLedgerStatement(loanId) {
       date: cap.date,
       serial: bsToSerialDays(cap.date),
       order: 2,
-      particulars: `भाखा नाघेको पाकेको ब्याज साँवामा जोडिएको (Capitalized)`,
+      particulars: `पाकेको ब्याज म्यानुअल रूपमा साँवामा जोडिएको (Capitalized)`,
       drPrincipal: Number(cap.amount),
       crPrincipal: 0,
       crInterest: 0
@@ -2823,18 +2853,16 @@ function prefillLoanInstallment(loanId) {
   }
 }
 
-// 🌟 क्रमिक रूपमा (LN-001, LN-002...) स्वतः बन्ने र कहिल्यै दोहोरो नपर्ने युनिक सिक्वेन्सियल ID जेनेरेटर
+// नयाँ ऋण लगानी सेभ गर्ने फंक्सन
 function disburseNewLoan(e) {
   e.preventDefault();
   const st = window.ERP_STATE;
   const issueDt = document.getElementById("ln-issue-date").value.trim() || st.activeBSDate;
   const prinAmt = Number(document.getElementById("ln-principal").value);
 
-  // अवस्थित ऋणहरूको संख्या हेरेर सही क्रमिक (Sequential) ID बनाउने
   let nextIdNum = st.loans.length + 1;
   let sequentialLoanId = "LN-" + String(nextIdNum).padStart(3, "0");
 
-  // यदि यो ID पहिले नै कुनै ऋणमा छ भने, नभेटिंदال सम्म नम्बर बढाउँदै जाने (Double Protection)
   while (st.loans.some(l => l.id === sequentialLoanId)) {
     nextIdNum++;
     sequentialLoanId = "LN-" + String(nextIdNum).padStart(3, "0");
@@ -2963,7 +2991,7 @@ function printLoanReceipt(repId) {
         <tr><td class="border border-slate-400 p-2">ब्याज भुक्तानी</td><td class="border border-slate-400 p-2 text-right font-bold">${fmtMoney(rp.interestPaid)}</td></tr>
         <tr class="bg-slate-100 font-bold"><td class="border border-slate-400 p-2">कुल प्राप्त रकम</td><td class="border border-slate-400 p-2 text-right">${fmtMoney(rp.totalPaid)}</td></tr>
       </table>
-      <div class="text-xs p-2 bg-slate-50 border rounded"><strong>रकम अक्षरमा:ག</strong> <u>${numberToNepaliWords(rp.totalPaid)}</u></div>
+      <div class="text-xs p-2 bg-slate-50 border rounded"><strong>रकम अक्षरमा:</strong> <u>${numberToNepaliWords(rp.totalPaid)}</u></div>
       <div class="flex justify-between pt-8 text-xs">
         <div>बुझाउनेको सही: _________________</div>
         <div>आधिकारिक सही: _________________</div>
