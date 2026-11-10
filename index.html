@@ -2350,7 +2350,7 @@ function openBulkCustomerReadingSlips() {
   openPrintModal(`बल्क ग्राहक मिटर रिडिङ बिल - ${printReadingMonth}`, html);
 }
 
-// ============================================================================
+/// ============================================================================
 // 10. LOAN MANAGEMENT MODULE (AUTO INTEREST, INSTALLMENT RECEIPT, OVERDUE)
 // ============================================================================
 let loanFilterCust = "ALL";
@@ -2444,18 +2444,37 @@ function renderLoansModule() {
             <i data-lucide="banknote" class="w-4 h-4 text-emerald-700"></i> किस्ता तथा ब्याज असुली (Installment Recovery)
           </h3>
           <form onsubmit="collectLoanInstallment(event)" class="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
-            <div>
+            <div class="sm:col-span-2">
               <label class="font-semibold text-slate-600 block mb-1">ऋण खाता छान्नुहोस् *</label>
               <select id="rep-loan-id" onchange="prefillLoanInstallment(this.value)" class="w-full border border-slate-300 rounded-xl px-3 py-2 font-semibold">
                 ${st.loans.filter(l => l.status === 'Active').map(l => {
                   const c = st.customers.find(x => x.id === l.customerId) || { name: l.customerId };
-                  return `<option value="${l.id}">${l.id} - ${c.name} (ब्याज: ${fmtMoney(l.accruedInterest)})</option>`;
+                  return `<option value="${l.id}">${l.id} - ${c.name}</option>`;
                 }).join("")}
               </select>
             </div>
+
+            <!-- 🌟 छनोट गरिएको खाताको बाँकी साँवा र पाकेको ब्याज देखाउने लाइभ बक्स -->
+            <div class="sm:col-span-2 bg-teal-50/90 border border-teal-200 p-2.5 rounded-xl text-xs flex justify-between items-center" id="loan-balance-info">
+              ${(() => {
+                const firstActive = st.loans.find(l => l.status === 'Active');
+                if (!firstActive) return `<span>कुनै पनि सक्रिय ऋण फेला परेन।</span>`;
+                const remP = Number(firstActive.principal) - Number(firstActive.paidPrincipal || 0);
+                const accI = Number(firstActive.accruedInterest || 0);
+                return `
+                  <div>उठ्न बाँकी साँवा: <strong class="text-indigo-800">${fmtMoney(remP)}</strong></div>
+                  <div>सञ्चित पाकेको ब्याज: <strong class="text-amber-800">${fmtMoney(accI)}</strong></div>
+                `;
+              })()}
+            </div>
+
             <div>
               <label class="font-semibold text-slate-600 block mb-1">किस्ता रसिद नं. (Auto)</label>
               <input type="text" value="${nextLoanRec}" readonly class="w-full bg-slate-100 border border-slate-300 rounded-xl px-3 py-2 font-bold text-teal-800">
+            </div>
+            <div>
+              <label class="font-semibold text-slate-600 block mb-1">असुली मिति (Auto BS)</label>
+              <input type="text" id="rep-date" value="${st.activeBSDate}" class="w-full bg-teal-50 border border-teal-300 rounded-xl px-3 py-2 font-bold">
             </div>
             <div>
               <label class="font-semibold text-slate-600 block mb-1">साँवा असुली रकम (रू.)</label>
@@ -2465,11 +2484,7 @@ function renderLoansModule() {
               <label class="font-semibold text-slate-600 block mb-1">ब्याज असुली रकम (रू.)</label>
               <input type="number" id="rep-interest" value="${st.loans.find(l => l.status === 'Active')?.accruedInterest || 0}" min="0" step="0.01" class="w-full border border-slate-300 rounded-xl px-3 py-2 font-bold text-amber-800">
             </div>
-            <div>
-              <label class="font-semibold text-slate-600 block mb-1">असुली मिति (Auto BS)</label>
-              <input type="text" id="rep-date" value="${st.activeBSDate}" class="w-full bg-teal-50 border border-teal-300 rounded-xl px-3 py-2 font-bold">
-            </div>
-            <div class="flex items-end justify-end">
+            <div class="sm:col-span-2 flex justify-end pt-1">
               <button type="submit" class="w-full bg-emerald-700 hover:bg-emerald-800 text-white font-semibold px-4 py-2 rounded-xl flex items-center justify-center gap-1.5">
                 <i data-lucide="printer" class="w-4 h-4"></i> असुली सेभ & रसिद प्रिन्ट
               </button>
@@ -2579,8 +2594,29 @@ function renderLoansModule() {
 }
 
 function prefillLoanInstallment(loanId) {
-  const ln = window.ERP_STATE.loans.find(l => l.id === loanId);
-  if (ln) document.getElementById("rep-interest").value = ln.accruedInterest || 0;
+  const st = window.ERP_STATE;
+  const ln = st.loans.find(l => l.id === loanId);
+  const infoBox = document.getElementById("loan-balance-info");
+
+  if (ln) {
+    const remPrincipal = Number(ln.principal) - Number(ln.paidPrincipal || 0);
+    const accruedInt = Number(ln.accruedInterest || 0);
+
+    // ब्याज बक्समा स्वतः पाकेको ब्याज भर्ने
+    document.getElementById("rep-interest").value = accruedInt;
+
+    // तलको लाइभ बक्समा बाँकी साँवा र ब्याज अपडेट गर्ने
+    if (infoBox) {
+      infoBox.innerHTML = `
+        <div>उठ्न बाँकी साँवा: <strong class="text-indigo-800">${fmtMoney(remPrincipal)}</strong></div>
+        <div>सञ्चित पाकेको ब्याज: <strong class="text-amber-800">${fmtMoney(accruedInt)}</strong></div>
+      `;
+    }
+  } else {
+    if (infoBox) {
+      infoBox.innerHTML = `<span>ऋण खाता फेला परेन।</span>`;
+    }
+  }
 }
 
 function disburseNewLoan(e) {
@@ -2679,6 +2715,7 @@ function printLoanReceipt(repId) {
   `;
   openPrintModal(`ऋण किस्ता रसिद - ${rp.receiptNo}`, html);
 }
+
 
 // ============================================================================
 // 11. BANK MANAGEMENT MODULE (MULTI-BANK, DEPOSIT/WITHDRAW, DATE-RANGE STATEMENT)
