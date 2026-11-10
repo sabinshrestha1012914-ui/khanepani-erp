@@ -2349,8 +2349,9 @@ function openBulkCustomerReadingSlips() {
   `;
   openPrintModal(`बल्क ग्राहक मिटर रिडिङ बिल - ${printReadingMonth}`, html);
 }
+
 // ============================================================================
-// 10. LOAN MANAGEMENT MODULE (AUTO INTEREST, CAPITALIZATION, LEDGER & INCOME)
+// 10. LOAN MANAGEMENT MODULE (AUTO INTEREST, CAPITALIZATION, LEDGER & UNIQUE ID)
 // ============================================================================
 let loanFilterCust = "ALL";
 let loanFromBS = "2083-01-01";
@@ -2364,7 +2365,6 @@ function processOverdueLoanCapitalization() {
   let anyUpdated = false;
 
   st.loans.forEach(l => {
-    // सुरुवाती लगानी मिति र रकम सुरक्षित राख्ने (स्टेटमेन्टमा सुरुको विवरण नहराओस् भन्नका लागि)
     if (!l.initialIssueDate) l.initialIssueDate = l.issueDate;
     if (!l.initialPrincipal) l.initialPrincipal = Number(l.principal);
 
@@ -2377,17 +2377,14 @@ function processOverdueLoanCapitalization() {
         if (!l.capitalizationLogs) l.capitalizationLogs = [];
 
         if (accruedInt > 0) {
-          // १. पाकेको ब्याजलाई साँवामा जोड्ने
           l.principal = Number(l.principal) + accruedInt;
 
-          // २. लेजर स्टेटमेन्टका लागि क्यापिटलाइजेसन इतिहास सेभ गर्ने
           l.capitalizationLogs.push({
             date: oldDueDate,
             amount: accruedInt,
             note: `भाखा (${oldDueDate}) नाघेकोले पाकेको ब्याज साँवामा गाभिएको (Capitalized)`
           });
 
-          // ३. संस्थाको ब्याज आम्दानी (Income) मा स्वतः देखाउने
           if (!st.incomes) st.incomes = [];
           st.incomes.push({
             id: "INC-CAP-" + Date.now() + "-" + l.id,
@@ -2397,13 +2394,11 @@ function processOverdueLoanCapitalization() {
             remarks: `ऋण नं. ${l.id} को भाखा नाघेको ब्याज साँवामा समायोजन`
           });
 
-          // ४. रिमार्कसमा स्पष्ट विवरण लेख्ने
           l.remarksHistory.push({
             date: todayBS,
             note: `भाखा (${oldDueDate}) नाघेकोले पाकेको ब्याज रु. ${accruedInt.toLocaleString()} साँवामा थपियो र ६ महिना म्याद बढाइयो।`
           });
 
-          // ५. ब्याज शून्य गर्ने (नयाँ साँवामा नयाँ ब्याज गणना सुरु हुन)
           l.accruedInterest = 0;
           l.paidInterest = 0;
         } else {
@@ -2413,7 +2408,6 @@ function processOverdueLoanCapitalization() {
           });
         }
 
-        // ६. ब्याज गणना मिति र भाखा मिति अपडेट (६ महिना / १८० दिन थप)
         l.issueDate = oldDueDate;
         l.dueDate = addDaysToBS(oldDueDate, 180);
         l.isOverdue = false;
@@ -2440,7 +2434,6 @@ function renderLoansModule() {
   const totalRemainingPrincipal = totalInvested - totalPrincipalRec;
   const totalAccruedInt = st.loans.reduce((s, l) => s + Number(l.accruedInterest || 0), 0);
 
-  // नगद असुली भएको ब्याज + साँवामा गाभिएको ब्याज दुवै जोडेर कुल ब्याज आम्दानी देखाउने
   const cashPaidInt = st.loans.reduce((s, l) => s + Number(l.paidInterest || 0), 0);
   const capitalizedIntTotal = st.loans.reduce((s, l) => {
     const capSum = (l.capitalizationLogs || []).reduce((cs, log) => cs + Number(log.amount || 0), 0);
@@ -2572,7 +2565,7 @@ function renderLoansModule() {
         </div>
       </div>
 
-      <!-- Member-wise & Date-wise Loan Statement with Remarks, Print & EDIT Option -->
+      <!-- Member-wise & Date-wise Loan Statement -->
       <div class="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
         <div class="p-4 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3">
           <h3 class="text-sm font-bold text-slate-800">मेम्बरवाइज तथा मिति अनुसार ऋण स्टेटमेन्ट (लेजर प्रिन्ट र अपडेट सहित)</h3>
@@ -2682,7 +2675,7 @@ function renderLoansModule() {
   `;
 }
 
-// 🌟 सम्पूर्ण कारोबार (सुरु लगानी, ब्याज साँवामा गाभिएको र किस्ता भुक्तानी) प्रष्ट देखिने सदस्य लेजर स्टेटमेन्ट
+// 🌟 सदस्य लेजर स्टेटमेन्ट प्रिन्ट गर्ने फंक्सन
 function openMemberLoanLedgerStatement(loanId) {
   const st = window.ERP_STATE;
   const ln = st.loans.find(l => l.id === loanId);
@@ -2699,10 +2692,8 @@ function openMemberLoanLedgerStatement(loanId) {
   const toDate = prompt("कुन मितिसम्मको स्टेटमेन्ट निकाल्ने हो? (YYYY-MM-DD):", st.activeBSDate);
   if (toDate === null) return;
 
-  // सबै प्रकारका ट्रान्जेक्सनहरू एकै ठाउँमा जम्मा गर्ने
   let allEvents = [];
 
-  // १. सुरुवाती ऋण लगानी
   allEvents.push({
     date: initDate,
     serial: bsToSerialDays(initDate),
@@ -2713,7 +2704,6 @@ function openMemberLoanLedgerStatement(loanId) {
     crInterest: 0
   });
 
-  // २. ब्याज साँवामा गाभिएका मिति र रकमहरू (Capitalization Logs)
   (ln.capitalizationLogs || []).forEach(cap => {
     allEvents.push({
       date: cap.date,
@@ -2726,7 +2716,6 @@ function openMemberLoanLedgerStatement(loanId) {
     });
   });
 
-  // ३. सदस्यले किस्ता तथा ब्याज तिरेका मिति र रकमहरू (Repayments)
   st.loanRepayments.filter(r => r.loanId === ln.id).forEach(rp => {
     allEvents.push({
       date: rp.date,
@@ -2739,10 +2728,8 @@ function openMemberLoanLedgerStatement(loanId) {
     });
   });
 
-  // मिति अनुसार क्रम मिलाउने (Chronological Sort)
   allEvents.sort((a, b) => (a.serial - b.serial) || (a.order - b.order));
 
-  // क्रमिक बाँकी साँवा (Running Balance) गणना गर्ने र मिति फिल्टर लागू गर्ने
   let runningBalance = 0;
   let rowsHtml = "";
 
@@ -2837,13 +2824,23 @@ function prefillLoanInstallment(loanId) {
   }
 }
 
+// 🌟 नयाँ ऋण लगानी गर्दा कहिल्यै ID दोहोरो नपर्ने (Unique Loan ID Generator)
 function disburseNewLoan(e) {
   e.preventDefault();
   const st = window.ERP_STATE;
   const issueDt = document.getElementById("ln-issue-date").value.trim() || st.activeBSDate;
   const prinAmt = Number(document.getElementById("ln-principal").value);
+
+  // अद्वितीय ऋण ID सिर्जना गर्ने (जस्तै: LN-010, LN-011...)
+  const nextIdNum = st.loans.length + 1;
+  const uniqueLoanId = "LN-" + String(nextIdNum).padStart(3, "0");
+  
+  // यदि यो ID पहिले नै छ भने टाइमस्ट्याम्प जोडेर पूर्ण रूपमा युनिक बनाउने
+  const exists = st.loans.some(l => l.id === uniqueLoanId);
+  const finalLoanId = exists ? "LN-" + String(Date.now()).slice(-4) : uniqueLoanId;
+
   const newLoan = {
-    id: "LN-" + String(st.loans.length + 1).padStart(3, "0"),
+    id: finalLoanId,
     customerId: document.getElementById("ln-cust").value,
     initialIssueDate: issueDt,
     initialPrincipal: prinAmt,
@@ -2860,10 +2857,11 @@ function disburseNewLoan(e) {
     isOverdue: false,
     overdueDays: 0
   };
+
   st.loans.push(newLoan);
   window.recalculateAllDynamicValues(false);
   renderCurrentModule();
-  showToast(`नयाँ ऋण खाता ${newLoan.id} स्वीकृत भयो!`);
+  showToast(`नयाँ ऋण खाता ${finalLoanId} सफलतापूर्वक स्वीकृत भयो!`);
 }
 
 function promptEditLoan(loanId) {
@@ -2927,7 +2925,7 @@ function collectLoanInstallment(e) {
     interestPaid: iPaid,
     totalPaid: total
   };
-  st.loanRepayments.push(repObj);
+  st.loanRepayments.pop ? st.loanRepayments.push(repObj) : (st.loanRepayments = [repObj]);
   window.recalculateAllDynamicValues(true);
   renderCurrentModule();
   printLoanReceipt(repObj.id);
