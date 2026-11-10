@@ -606,7 +606,11 @@ window.recalculateAllDynamicValues = function(showBanner = true) {
       return;
     }
     ln.status = "Active";
-    const grossInterest = calculateSegmentedLoanInterest(remPrincipal, ln.issueDate, activeBS);
+    
+    // 🌟 क्यापिटलाइजेसन मिति भए त्यसैलाई र नभए ऋण जारी भएको मितिलाई आधार मानेको
+    const interestStartDate = ln.lastCapitalizationDate || ln.issueDate;
+    const grossInterest = calculateSegmentedLoanInterest(remPrincipal, interestStartDate, activeBS);
+    
     ln.accruedInterest = Math.max(0, Math.round((grossInterest - Number(ln.paidInterest || 0)) * 100) / 100);
     totalAccruedInt += ln.accruedInterest;
 
