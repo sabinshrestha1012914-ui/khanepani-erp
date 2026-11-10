@@ -2351,7 +2351,7 @@ function openBulkCustomerReadingSlips() {
 }
 
 // ============================================================================
-// 10. LOAN MANAGEMENT MODULE (MANUAL CAPITALIZATION, DURATION & AUTO SPLIT)
+// 10. LOAN MANAGEMENT MODULE (COMPLETE & FIXED)
 // ============================================================================
 let loanFilterCust = "ALL";
 let loanFromBS = "2083-01-01";
@@ -2455,7 +2455,7 @@ function renderLoansModule() {
           </form>
         </div>
 
-        <!-- Installment & Interest Recovery (Interest-First Auto Split) -->
+        <!-- Installment & Interest Recovery -->
         <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs">
           <h3 class="text-sm font-bold text-slate-800 mb-3 flex items-center gap-2">
             <i data-lucide="banknote" class="w-4 h-4 text-emerald-700"></i> किस्ता तथा ब्याज असुली (Installment Recovery)
@@ -2889,7 +2889,7 @@ function openMemberLoanLedgerStatement(loanId) {
   openPrintModal(`ऋण लेजर स्टेटमेन्ट - ${c.name} (${ln.id})`, html);
 }
 
-// क्रमिक रूपमा (LN-001, LN-002...) स्वतः बन्ने र कहिल्यै दोहोरो नपर्ने युनिक सिक्वेन्सियल ID जेनेरेटर
+// नयाँ ऋण लगानी सेभ गर्ने फंक्सन
 function disburseNewLoan(e) {
   e.preventDefault();
   const st = window.ERP_STATE;
@@ -2928,7 +2928,7 @@ function disburseNewLoan(e) {
   st.loans.push(newLoan);
   window.recalculateAllDynamicValues(false);
   renderCurrentModule();
-  showToast(`नयाँ ऋण खाता ${sequentialLoanId} (${durationMonths} महिनाको लागि) सफलतापूर्वक स्वीकृत भयो!`);
+  showToast(`नयाँ ऋण खाता ${sequentialLoanId} सफलतापूर्वक स्वीकृत भयो!`);
 }
 
 function promptEditLoan(loanId) {
@@ -2981,7 +2981,6 @@ function collectLoanInstallment(e) {
   let iPaid = 0;
   let pPaid = 0;
 
-  // नियम: पहिले ब्याज, बाँकी रहे मात्र साँवा
   if (totalPaid <= accruedInt) {
     iPaid = totalPaid;
     pPaid = 0;
@@ -2992,7 +2991,6 @@ function collectLoanInstallment(e) {
     ln.accruedInterest = 0;
   }
 
-  // यदि साँवा पनि पूर्ण चुक्ता भयो भने खाता Closed गर्ने
   if (pPaid >= remPrincipal && remPrincipal > 0) {
     pPaid = remPrincipal;
     ln.status = "Closed";
