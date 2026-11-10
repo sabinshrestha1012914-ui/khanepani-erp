@@ -607,8 +607,17 @@ window.recalculateAllDynamicValues = function(showBanner = true) {
     }
     ln.status = "Active";
     
-    // 🌟 क्यापिटलाइजेसन मिति भए त्यसैलाई र नभए ऋण जारी भएको मितिलाई आधार मानेको
-    const interestStartDate = ln.lastCapitalizationDate || ln.issueDate;
+    // 🌟 सुरक्षित रूपमा ब्याज सुरु हुने मिति पत्ता लगाउने:
+    // १. lastScale/Capitalization मिति, २. capitalizationLogs को पछिल्लो मिति, ३. ऋण जारी भएको मिति (issueDate)
+    let interestStartDate = ln.issueDate;
+    if (ln.lastCapitalizationDate) {
+      interestStartDate = ln.lastCapitalizationDate;
+    } else if (Array.isArray(ln.capitalizationLogs) && ln.capitalizationLogs.length > 0) {
+      const sortedLogs = [...ln.capitalizationLogs].sort((a, b) => bsToSerialDays(b.date) - bsToSerialDays(a.date));
+      interestStartDate = sortedLogs[0].date;
+      ln.lastCapitalizationDate = interestStartDate; // Sync back
+    }
+
     const grossInterest = calculateSegmentedLoanInterest(remPrincipal, interestStartDate, activeBS);
     
     ln.accruedInterest = Math.max(0, Math.round((grossInterest - Number(ln.paidInterest || 0)) * 100) / 100);
