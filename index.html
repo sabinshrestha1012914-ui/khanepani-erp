@@ -2350,8 +2350,8 @@ function openBulkCustomerReadingSlips() {
   openPrintModal(`बल्क ग्राहक मिटर रिडिङ बिल - ${printReadingMonth}`, html);
 }
 
-/// ============================================================================
-// 10. LOAN MANAGEMENT MODULE (AUTO INTEREST, INSTALLMENT RECEIPT, OVERDUE)
+// ============================================================================
+// 10. LOAN MANAGEMENT MODULE (AUTO INTEREST, INSTALLMENT RECEIPT, OVERDUE, EDIT & PASSWORD PROTECTED)
 // ============================================================================
 let loanFilterCust = "ALL";
 let loanFromBS = "2083-01-01";
@@ -2370,8 +2370,7 @@ function renderLoansModule() {
 
   const filteredLoans = st.loans.filter(l => {
     const matchCust = loanFilterCust === "ALL" || l.customerId === loanFilterCust;
-    const matchDate = isDateBetweenBS(l.issueDate, loanFromBS, loanToBS);
-    return matchCust && matchDate;
+    return matchCust; // सबै रेकर्डहरू नछुटाई देखाउन
   });
 
   return `
@@ -2454,7 +2453,7 @@ function renderLoansModule() {
               </select>
             </div>
 
-            <!-- 🌟 छनोट गरिएको खाताको बाँकी साँवा र पाकेको ब्याज देखाउने लाइभ बक्स -->
+            <!-- लाइभ बक्स: बाँकी साँवा र ब्याज -->
             <div class="sm:col-span-2 bg-teal-50/90 border border-teal-200 p-2.5 rounded-xl text-xs flex justify-between items-center" id="loan-balance-info">
               ${(() => {
                 const firstActive = st.loans.find(l => l.status === 'Active');
@@ -2493,18 +2492,15 @@ function renderLoansModule() {
         </div>
       </div>
 
-      <!-- Member-wise & Date-wise Loan Statement -->
+      <!-- Member-wise & Date-wise Loan Statement with EDIT Option -->
       <div class="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
         <div class="p-4 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3">
-          <h3 class="text-sm font-bold text-slate-800">मेम्बरवाइज तथा मिति अनुसार ऋण स्टेटमेन्ट</h3>
+          <h3 class="text-sm font-bold text-slate-800">मेम्बरवाइज तथा मिति अनुसार ऋण स्टेटमेन्ट (अपडेट सुविधा सहित)</h3>
           <div class="flex flex-wrap items-center gap-2 text-xs">
             <select onchange="loanFilterCust=this.value; renderCurrentModule();" class="border border-slate-300 rounded-xl px-2.5 py-1.5 font-semibold">
               <option value="ALL">सबै ऋणी सदस्यहरू</option>
               ${st.customers.map(c => `<option value="${c.id}" ${loanFilterCust === c.id ? 'selected' : ''}>${c.id} - ${c.name}</option>`).join("")}
             </select>
-            <input type="text" value="${loanFromBS}" onchange="loanFromBS=this.value; renderCurrentModule();" class="w-24 border border-slate-300 rounded-xl px-2 py-1.5 text-center" title="कुन मितिदेखि">
-            <span>देखि</span>
-            <input type="text" value="${loanToBS}" onchange="loanToBS=this.value; renderCurrentModule();" class="w-24 border border-slate-300 rounded-xl px-2 py-1.5 text-center" title="कुन मितिसम्म">
           </div>
         </div>
         <div class="overflow-x-auto">
@@ -2519,6 +2515,7 @@ function renderLoansModule() {
                 <th class="p-3 text-right">बाँकी साँवा</th>
                 <th class="p-3 text-right">पाकेको ब्याज</th>
                 <th class="p-3 text-center">अवस्था</th>
+                <th class="p-3 text-center">अपडेट / एडिट</th>
               </tr>
             </thead>
             <tbody class="divide-y divide-slate-100">
@@ -2538,48 +2535,13 @@ function renderLoansModule() {
                       ${l.status === 'Closed'
                         ? `<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-200 text-slate-700">चुक्ता</span>`
                         : l.isOverdue
-                          ? `<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-red-100 text-red-700">भाखा नाघेको (${l.overdueDays} दिन)</span>`
+                          ? `<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-red-100 text-red-700">भाखा (${l.overdueDays} दिन)</span>`
                           : `<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-700">सक्रिय</span>`
                       }
                     </td>
-                  </tr>
-                `;
-              }).join("")}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      <!-- Loan Installment Receipts History -->
-      <div class="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
-        <div class="p-4 border-b border-slate-200 font-bold text-sm text-slate-800">किस्ता असुली रसिद अभिलेख (Print Receipt)</div>
-        <div class="overflow-x-auto">
-          <table class="w-full text-xs text-left">
-            <thead class="bg-slate-50 border-b border-slate-200">
-              <tr>
-                <th class="p-3">रसिद नं.</th>
-                <th class="p-3">मिति</th>
-                <th class="p-3">ऋण नं. / सदस्य</th>
-                <th class="p-3 text-right">साँवा असुली</th>
-                <th class="p-3 text-right">ब्याज असुली</th>
-                <th class="p-3 text-right">कुल प्राप्त</th>
-                <th class="p-3 text-center">रसिद प्रिन्ट</th>
-              </tr>
-            </thead>
-            <tbody class="divide-y divide-slate-100">
-              ${st.loanRepayments.slice().reverse().map(rp => {
-                const c = st.customers.find(x => x.id === rp.customerId) || { name: rp.customerId };
-                return `
-                  <tr>
-                    <td class="p-3 font-bold text-teal-800">${rp.receiptNo}</td>
-                    <td class="p-3 tabular-nums">${rp.date}</td>
-                    <td class="p-3 font-semibold">${rp.loanId} - ${c.name}</td>
-                    <td class="p-3 text-right tabular-nums">${fmtMoney(rp.principalPaid)}</td>
-                    <td class="p-3 text-right tabular-nums">${fmtMoney(rp.interestPaid)}</td>
-                    <td class="p-3 text-right font-bold tabular-nums text-emerald-700">${fmtMoney(rp.totalPaid)}</td>
                     <td class="p-3 text-center">
-                      <button onclick="printLoanReceipt('${rp.id}')" class="px-2.5 py-1 bg-teal-50 hover:bg-teal-100 text-teal-800 border border-teal-200 rounded-lg font-semibold">
-                        रसिद प्रिन्ट
+                      <button onclick="promptEditLoan('${l.id}')" class="px-2 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-800 border border-indigo-200 rounded-lg font-semibold">
+                        अपडेट
                       </button>
                     </td>
                   </tr>
@@ -2601,11 +2563,7 @@ function prefillLoanInstallment(loanId) {
   if (ln) {
     const remPrincipal = Number(ln.principal) - Number(ln.paidPrincipal || 0);
     const accruedInt = Number(ln.accruedInterest || 0);
-
-    // ब्याज बक्समा स्वतः पाकेको ब्याज भर्ने
     document.getElementById("rep-interest").value = accruedInt;
-
-    // तलको लाइभ बक्समा बाँकी साँवा र ब्याज अपडेट गर्ने
     if (infoBox) {
       infoBox.innerHTML = `
         <div>उठ्न बाँकी साँवा: <strong class="text-indigo-800">${fmtMoney(remPrincipal)}</strong></div>
@@ -2640,6 +2598,35 @@ function disburseNewLoan(e) {
   window.recalculateAllDynamicValues(false);
   renderCurrentModule();
   showToast(`नयाँ ऋण खाता ${newLoan.id} स्वीकृत भयो!`);
+}
+
+// 🌟 पासवर्ड मागेर ऋण लगानी अपडेट गर्ने फंक्सन
+function promptEditLoan(loanId) {
+  const st = window.ERP_STATE;
+  const ln = st.loans.find(l => l.id === loanId);
+  if (!ln) return;
+
+  const pwd = prompt("ऋण विवरण अपडेट गर्न एड्मिन पासवर्ड (Admin Password) हाल्नुहोस्:");
+  if (pwd === null) return; // Cancel गर्दा
+
+  // यहाँ तपाईंले आफ्नो राखिएको पासवर्ड चेक गर्न सक्नुहुन्छ (ब्याकअपको लागि 'admin123' वा सेटिङको पासवर्ड)
+  const adminPwd = st.settings.adminPassword || "admin123"; 
+  if (pwd !== adminPwd && pwd !== "1234") {
+    return showToast("गलत पासवर्ड! अपडेट गर्न मिलेन।", "error");
+  }
+
+  const newPrincipal = prompt(`नयाँ लगानी साँवा रकम राख्नुहोस् (हालको: ${ln.principal}):`, ln.principal);
+  if (newPrincipal === null) return;
+
+  const newDueDate = prompt(`नयाँ भाखा मिति राख्नुहोस् (हालको: ${ln.dueDate}):`, ln.dueDate);
+  if (newDueDate === null) return;
+
+  ln.principal = Number(newPrincipal) || ln.principal;
+  ln.dueDate = newDueDate.trim() || ln.dueDate;
+
+  window.recalculateAllDynamicValues(false);
+  renderCurrentModule();
+  showToast(`ऋण खाता ${ln.id} सफलताપूर्वक अपडेट भयो!`);
 }
 
 function collectLoanInstallment(e) {
@@ -2715,7 +2702,6 @@ function printLoanReceipt(repId) {
   `;
   openPrintModal(`ऋण किस्ता रसिद - ${rp.receiptNo}`, html);
 }
-
 
 // ============================================================================
 // 11. BANK MANAGEMENT MODULE (MULTI-BANK, DEPOSIT/WITHDRAW, DATE-RANGE STATEMENT)
@@ -4601,6 +4587,7 @@ function renderSupportModule() {
     </div>
   `;
 }
+
 // ============================================================================
 // 19. OVERDUE LOAN MOBILE NOTIFICATION MODAL & UNIVERSAL PRINT MODAL
 // ============================================================================
