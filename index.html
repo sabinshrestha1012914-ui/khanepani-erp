@@ -2351,13 +2351,12 @@ function openBulkCustomerReadingSlips() {
 }
 
 // ============================================================================
-// 10. LOAN MANAGEMENT MODULE (AUTO INTEREST, CAPITALIZATION, LEDGER & UNIQUE ID)
+// 10. LOAN MANAGEMENT MODULE (AUTO INTEREST, CAPITALIZATION, SEQUENTIAL ID)
 // ============================================================================
 let loanFilterCust = "ALL";
 let loanFromBS = "2083-01-01";
 let loanToBS = "2083-12-30";
 
-// भाखा मिति नाघेमा पाकेको ब्याज स्वतः साँवामा जोड्ने, ६ महिना म्याद थप्ने र आम्दानीमा देखाउने फंक्सन
 function processOverdueLoanCapitalization() {
   const st = window.ERP_STATE;
   if (!st || !st.loans) return;
@@ -2824,23 +2823,25 @@ function prefillLoanInstallment(loanId) {
   }
 }
 
-// 🌟 नयाँ ऋण लगानी गर्दा कहिल्यै ID दोहोरो नपर्ने (Unique Loan ID Generator)
+// 🌟 क्रमिक रूपमा (LN-001, LN-002...) स्वतः बन्ने र कहिल्यै दोहोरो नपर्ने युनिक सिक्वेन्सियल ID जेनेरेटर
 function disburseNewLoan(e) {
   e.preventDefault();
   const st = window.ERP_STATE;
   const issueDt = document.getElementById("ln-issue-date").value.trim() || st.activeBSDate;
   const prinAmt = Number(document.getElementById("ln-principal").value);
 
-  // अद्वितीय ऋण ID सिर्जना गर्ने (जस्तै: LN-010, LN-011...)
-  const nextIdNum = st.loans.length + 1;
-  const uniqueLoanId = "LN-" + String(nextIdNum).padStart(3, "0");
-  
-  // यदि यो ID पहिले नै छ भने टाइमस्ट्याम्प जोडेर पूर्ण रूपमा युनिक बनाउने
-  const exists = st.loans.some(l => l.id === uniqueLoanId);
-  const finalLoanId = exists ? "LN-" + String(Date.now()).slice(-4) : uniqueLoanId;
+  // अवस्थित ऋणहरूको संख्या हेरेर सही क्रमिक (Sequential) ID बनाउने
+  let nextIdNum = st.loans.length + 1;
+  let sequentialLoanId = "LN-" + String(nextIdNum).padStart(3, "0");
+
+  // यदि यो ID पहिले नै कुनै ऋणमा छ भने, नभेटिंदال सम्म नम्बर बढाउँदै जाने (Double Protection)
+  while (st.loans.some(l => l.id === sequentialLoanId)) {
+    nextIdNum++;
+    sequentialLoanId = "LN-" + String(nextIdNum).padStart(3, "0");
+  }
 
   const newLoan = {
-    id: finalLoanId,
+    id: sequentialLoanId,
     customerId: document.getElementById("ln-cust").value,
     initialIssueDate: issueDt,
     initialPrincipal: prinAmt,
@@ -2861,7 +2862,7 @@ function disburseNewLoan(e) {
   st.loans.push(newLoan);
   window.recalculateAllDynamicValues(false);
   renderCurrentModule();
-  showToast(`नयाँ ऋण खाता ${finalLoanId} सफलतापूर्वक स्वीकृत भयो!`);
+  showToast(`नयाँ ऋण खाता ${sequentialLoanId} सफलतापूर्वक स्वीकृत भयो!`);
 }
 
 function promptEditLoan(loanId) {
@@ -2925,7 +2926,8 @@ function collectLoanInstallment(e) {
     interestPaid: iPaid,
     totalPaid: total
   };
-  st.loanRepayments.pop ? st.loanRepayments.push(repObj) : (st.loanRepayments = [repObj]);
+  if (!st.loanRepayments) st.loanRepayments = [];
+  st.loanRepayments.push(repObj);
   window.recalculateAllDynamicValues(true);
   renderCurrentModule();
   printLoanReceipt(repObj.id);
@@ -2961,7 +2963,7 @@ function printLoanReceipt(repId) {
         <tr><td class="border border-slate-400 p-2">ब्याज भुक्तानी</td><td class="border border-slate-400 p-2 text-right font-bold">${fmtMoney(rp.interestPaid)}</td></tr>
         <tr class="bg-slate-100 font-bold"><td class="border border-slate-400 p-2">कुल प्राप्त रकम</td><td class="border border-slate-400 p-2 text-right">${fmtMoney(rp.totalPaid)}</td></tr>
       </table>
-      <div class="text-xs p-2 bg-slate-50 border rounded"><strong>रकम अक्षरमा:</strong> <u>${numberToNepaliWords(rp.totalPaid)}</u></div>
+      <div class="text-xs p-2 bg-slate-50 border rounded"><strong>रकम अक्षरमा:ག</strong> <u>${numberToNepaliWords(rp.totalPaid)}</u></div>
       <div class="flex justify-between pt-8 text-xs">
         <div>बुझाउनेको सही: _________________</div>
         <div>आधिकारिक सही: _________________</div>
