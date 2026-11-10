@@ -2351,13 +2351,11 @@ function openBulkCustomerReadingSlips() {
 }
 
 // ============================================================================
-// 10. LOAN MANAGEMENT MODULE (MANUAL INTEREST CAPITALIZATION & MONTHLY DURATION)
+// 10. LOAN MANAGEMENT MODULE (MANUAL CAPITALIZATION, DURATION & AUTO SPLIT)
 // ============================================================================
 let loanFilterCust = "ALL";
 let loanFromBS = "2083-01-01";
 let loanToBS = "2083-12-30";
-
-// स्वचालित क्यापिटलाइजेसन हटाइएको छ। अब एड्मिनले चाहेको बेला म्यानुअल रूपमा साँवामा गाभ्न सक्नेछन्।
 
 function renderLoansModule() {
   const st = window.ERP_STATE;
@@ -2427,7 +2425,7 @@ function renderLoansModule() {
             </div>
             <div>
               <label class="font-semibold text-slate-600 block mb-1">लगानी मिति (Auto BS)</label>
-              <input type="text" id="ln-issue-date" value="${st.activeBSDate}" class="w-full bg-teal-50 border border-teal-300 rounded-xl px-3 py-2 font-bold">
+              <input type="text" id="ln-issue-date" value="${st.activeBSDate}" onchange="updateDueDateByMonths(document.getElementById('ln-duration-months').value)" class="w-full bg-teal-50 border border-teal-300 rounded-xl px-3 py-2 font-bold">
             </div>
             <div>
               <label class="font-semibold text-slate-600 block mb-1">लगानी अवधि (कति महिनाको लागि?) *</label>
@@ -2436,6 +2434,7 @@ function renderLoansModule() {
                 <option value="3">३ महिना</option>
                 <option value="6" selected>६ महिना</option>
                 <option value="12">१२ महिना (१ वर्ष)</option>
+                <option value="18">१८ महिना (१.५ वर्ष)</option>
                 <option value="24">२४ महिना (२ वर्ष)</option>
                 <option value="36">३६ महिना (३ वर्ष)</option>
               </select>
@@ -2456,7 +2455,7 @@ function renderLoansModule() {
           </form>
         </div>
 
-        <!-- Installment Recovery -->
+        <!-- Installment & Interest Recovery (Interest-First Auto Split) -->
         <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs">
           <h3 class="text-sm font-bold text-slate-800 mb-3 flex items-center gap-2">
             <i data-lucide="banknote" class="w-4 h-4 text-emerald-700"></i> किस्ता तथा ब्याज असुली (Installment Recovery)
@@ -2494,14 +2493,22 @@ function renderLoansModule() {
               <label class="font-semibold text-slate-600 block mb-1">असुली मिति (Auto BS)</label>
               <input type="text" id="rep-date" value="${st.activeBSDate}" class="w-full bg-teal-50 border border-teal-300 rounded-xl px-3 py-2 font-bold">
             </div>
+
+            <div class="sm:col-span-2 bg-slate-50 p-3 rounded-xl border border-slate-200">
+              <label class="font-bold text-emerald-800 block mb-1 text-sm">जम्मा भुक्तानी रकम (रू.) *</label>
+              <input type="number" id="rep-total-paid" required min="1" step="0.01" placeholder="सदस्यले तिरेको कुल रकम यहाँ लेख्नुहोस्" oninput="calculateInstallmentSplit(this.value)" class="w-full border-2 border-emerald-500 bg-emerald-50/50 rounded-xl px-3 py-2 text-sm font-bold text-emerald-900">
+              <p class="text-[11px] text-slate-500 mt-1">नोट: यो रकमबाट पहिले पाकेको ब्याज कट्नेछ, र बाँकी रहेमा मात्र साँवामा जानेछ।</p>
+            </div>
+
             <div>
-              <label class="font-semibold text-slate-600 block mb-1">साँवा असुली रकम (रू.)</label>
-              <input type="number" id="rep-principal" value="0" min="0" step="0.01" class="w-full border border-slate-300 rounded-xl px-3 py-2 font-bold">
+              <label class="font-semibold text-slate-600 block mb-1">ब्याजमा कट्टा हुने रकम (Auto)</label>
+              <input type="text" id="rep-interest-preview" readonly value="रु. 0" class="w-full bg-amber-50 border border-amber-300 rounded-xl px-3 py-2 font-bold text-amber-800">
             </div>
             <div>
-              <label class="font-semibold text-slate-600 block mb-1">ब्याज असुली रकम (रू.)</label>
-              <input type="number" id="rep-interest" value="${st.loans.find(l => l.status === 'Active')?.accruedInterest || 0}" min="0" step="0.01" class="w-full border border-slate-300 rounded-xl px-3 py-2 font-bold text-amber-800">
+              <label class="font-semibold text-slate-600 block mb-1">साँवामा कट्टा हुने रकम (Auto)</label>
+              <input type="text" id="rep-principal-preview" readonly value="रु. 0" class="w-full bg-indigo-50 border border-indigo-300 rounded-xl px-3 py-2 font-bold text-indigo-800">
             </div>
+
             <div class="sm:col-span-2 flex justify-end pt-1">
               <button type="submit" class="w-full bg-emerald-700 hover:bg-emerald-800 text-white font-semibold px-4 py-2 rounded-xl flex items-center justify-center gap-1.5">
                 <i data-lucide="printer" class="w-4 h-4"></i> असुली सेभ & रसिद प्रिन्ट
@@ -2514,7 +2521,7 @@ function renderLoansModule() {
       <!-- Member-wise & Date-wise Loan Statement -->
       <div class="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
         <div class="p-4 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3">
-          <h3 class="text-sm font-bold text-slate-800">मेम्बरवाइज तथा मिति अनुसार ऋण स्टेटमेन्ट (म्यानुअल ब्याज क्यापिटलाइजेसन सहित)</h3>
+          <h3 class="text-sm font-bold text-slate-800">मेम्बरवाइज तथा मिति अनुसार ऋण स्टेटमेन्ट</h3>
           <div class="flex flex-wrap items-center gap-2 text-xs">
             <select onchange="loanFilterCust=this.value; renderCurrentModule();" class="border border-slate-300 rounded-xl px-2.5 py-1.5 font-semibold">
               <option value="ALL">सबै ऋणी सदस्यहरू</option>
@@ -2628,7 +2635,6 @@ function renderLoansModule() {
 function updateDueDateByMonths(months) {
   const st = window.ERP_STATE;
   const issueDate = document.getElementById("ln-issue-date").value.trim() || st.activeBSDate;
-  // एक महिनालाई ३० दिनको दरले वा दिन थप्ने फंक्सन प्रयोग गर्ने (यहाँ ६ महिनालाई १८० दिन मानेर अनुपातमा)
   const totalDays = Number(months) * 30;
   const dueInput = document.getElementById("ln-due-date");
   if (dueInput) {
@@ -2636,7 +2642,64 @@ function updateDueDateByMonths(months) {
   }
 }
 
-// 🌟 म्यानुअल रूपमा पाकेको ब्याज साँवामा जोड्ने (Capitalization) फंक्सन
+// जम्मा बुझाएको रकमबाट पहिले ब्याज र बाँकी भए साँवा छुट्याउने (Auto Split)
+function calculateInstallmentSplit(totalAmountStr) {
+  const st = window.ERP_STATE;
+  const loanId = document.getElementById("rep-loan-id").value;
+  const ln = st.loans.find(l => l.id === loanId);
+  if (!ln) return;
+
+  const totalPaid = Number(totalAmountStr) || 0;
+  const accruedInt = Number(ln.accruedInterest || 0);
+
+  let interestPart = 0;
+  let principalPart = 0;
+
+  if (totalPaid <= accruedInt) {
+    interestPart = totalPaid;
+    principalPart = 0;
+  } else {
+    interestPart = accruedInt;
+    principalPart = totalPaid - accruedInt;
+  }
+
+  const intPreview = document.getElementById("rep-interest-preview");
+  const prinPreview = document.getElementById("rep-principal-preview");
+
+  if (intPreview) intPreview.value = fmtMoney(interestPart);
+  if (prinPreview) prinPreview.value = fmtMoney(principalPart);
+}
+
+// खाता फेरबदल गर्दा प्रिभ्यु अपडेट गर्ने
+function prefillLoanInstallment(loanId) {
+  const st = window.ERP_STATE;
+  const ln = st.loans.find(l => l.id === loanId);
+  const infoBox = document.getElementById("loan-balance-info");
+
+  if (ln) {
+    const remPrincipal = Number(ln.principal) - Number(ln.paidPrincipal || 0);
+    const accruedInt = Number(ln.accruedInterest || 0);
+
+    const totalPaidInput = document.getElementById("rep-total-paid");
+    if (totalPaidInput) {
+      totalPaidInput.value = "";
+    }
+    calculateInstallmentSplit(0);
+
+    if (infoBox) {
+      infoBox.innerHTML = `
+        <div>उठ्न बाँकी साँवा: <strong class="text-indigo-800">${fmtMoney(remPrincipal)}</strong></div>
+        <div>सञ्चित पाकेको ब्याज: <strong class="text-amber-800">${fmtMoney(accruedInt)}</strong></div>
+      `;
+    }
+  } else {
+    if (infoBox) {
+      infoBox.innerHTML = `<span>ऋण खाता फेला परेन।</span>`;
+    }
+  }
+}
+
+// म्यानुअल रूपमा पाकेको ब्याज साँवामा जोड्ने (Capitalization) फंक्सन
 function promptManualCapitalization(loanId) {
   const st = window.ERP_STATE;
   const ln = st.loans.find(l => l.id === loanId);
@@ -2655,17 +2718,14 @@ function promptManualCapitalization(loanId) {
   if (!ln.remarksHistory) ln.remarksHistory = [];
   if (!ln.capitalizationLogs) ln.capitalizationLogs = [];
 
-  // साँवामा ब्याज जोड्ने
   ln.principal = Number(ln.principal) + accruedInt;
 
-  // क्यापिटलाइजेसनलगमा रेकर्ड राख्ने
   ln.capitalizationLogs.push({
     date: todayBS,
     amount: accruedInt,
     note: `म्यानुअल रूपमा पाकेको ब्याज साँवामा गाभिएको (Capitalized)`
   });
 
-  // आम्दानी खातामा प्रविष्टि थप्ने
   if (!st.incomes) st.incomes = [];
   st.incomes.push({
     id: "INC-CAP-" + Date.now() + "-" + ln.id,
@@ -2680,11 +2740,9 @@ function promptManualCapitalization(loanId) {
     note: `म्यानुअल रूपमा पाकेको ब्याज रु. ${accruedInt.toLocaleString()} साँवामा थप गरियो।`
   });
 
-  // ब्याज शून्य गर्ने
   ln.accruedInterest = 0;
   ln.paidInterest = 0;
 
-  // म्याद थप गर्ने अप्सन (चाहेमा मिति नवीकरण गर्न सकिने)
   const extendMonths = prompt("के यो ऋणको म्याद पनि थप गर्ने हो? (महिनाको संख्या लेख्नुहोस्, जस्तै: 6 वा खाली छोड्नुहोस्):", "6");
   if (extendMonths && !isNaN(extendMonths) && Number(extendMonths) > 0) {
     const addDays = Number(extendMonths) * 30;
@@ -2704,7 +2762,7 @@ function promptManualCapitalization(loanId) {
   showToast(`ऋण नं. ${ln.id} को ब्याज सफलतापूर्वक साँवामा गाभियो!`);
 }
 
-// 🌟 सदस्य लेजर स्टेटमेन्ट प्रिन्ट गर्ने फंक्सन
+// सदस्य लेजर स्टेटमेन्ट प्रिन्ट गर्ने फंक्सन
 function openMemberLoanLedgerStatement(loanId) {
   const st = window.ERP_STATE;
   const ln = st.loans.find(l => l.id === loanId);
@@ -2831,34 +2889,13 @@ function openMemberLoanLedgerStatement(loanId) {
   openPrintModal(`ऋण लेजर स्टेटमेन्ट - ${c.name} (${ln.id})`, html);
 }
 
-function prefillLoanInstallment(loanId) {
-  const st = window.ERP_STATE;
-  const ln = st.loans.find(l => l.id === loanId);
-  const infoBox = document.getElementById("loan-balance-info");
-
-  if (ln) {
-    const remPrincipal = Number(ln.principal) - Number(ln.paidPrincipal || 0);
-    const accruedInt = Number(ln.accruedInterest || 0);
-    document.getElementById("rep-interest").value = accruedInt;
-    if (infoBox) {
-      infoBox.innerHTML = `
-        <div>उठ्न बाँकी साँवा: <strong class="text-indigo-800">${fmtMoney(remPrincipal)}</strong></div>
-        <div>सञ्चित पाकेको ब्याज: <strong class="text-amber-800">${fmtMoney(accruedInt)}</strong></div>
-      `;
-    }
-  } else {
-    if (infoBox) {
-      infoBox.innerHTML = `<span>ऋण खाता फेला परेन।</span>`;
-    }
-  }
-}
-
-// नयाँ ऋण लगानी सेभ गर्ने फंक्सन
+// क्रमिक रूपमा (LN-001, LN-002...) स्वतः बन्ने र कहिल्यै दोहोरो नपर्ने युनिक सिक्वेन्सियल ID जेनेरेटर
 function disburseNewLoan(e) {
   e.preventDefault();
   const st = window.ERP_STATE;
   const issueDt = document.getElementById("ln-issue-date").value.trim() || st.activeBSDate;
   const prinAmt = Number(document.getElementById("ln-principal").value);
+  const durationMonths = Number(document.getElementById("ln-duration-months")?.value || 6);
 
   let nextIdNum = st.loans.length + 1;
   let sequentialLoanId = "LN-" + String(nextIdNum).padStart(3, "0");
@@ -2875,6 +2912,7 @@ function disburseNewLoan(e) {
     initialPrincipal: prinAmt,
     issueDate: issueDt,
     dueDate: document.getElementById("ln-due-date").value.trim(),
+    durationMonths: durationMonths,
     principal: prinAmt,
     paidPrincipal: 0,
     paidInterest: 0,
@@ -2890,7 +2928,7 @@ function disburseNewLoan(e) {
   st.loans.push(newLoan);
   window.recalculateAllDynamicValues(false);
   renderCurrentModule();
-  showToast(`नयाँ ऋण खाता ${sequentialLoanId} सफलतापूर्वक स्वीकृत भयो!`);
+  showToast(`नयाँ ऋण खाता ${sequentialLoanId} (${durationMonths} महिनाको लागि) सफलतापूर्वक स्वीकृत भयो!`);
 }
 
 function promptEditLoan(loanId) {
@@ -2926,6 +2964,7 @@ function promptEditLoan(loanId) {
   showToast(`ऋण खाता ${ln.id} सफलतापूर्वक अपडेट भयो!`);
 }
 
+// किस्ता असुली सेभ गर्ने र पहिले ब्याज अनि मात्र साँवा कट्टा गर्ने मुख्य फंक्सन
 function collectLoanInstallment(e) {
   e.preventDefault();
   const st = window.ERP_STATE;
@@ -2933,10 +2972,31 @@ function collectLoanInstallment(e) {
   const ln = st.loans.find(l => l.id === loanId);
   if (!ln) return;
 
-  const pPaid = Number(document.getElementById("rep-principal").value) || 0;
-  const iPaid = Number(document.getElementById("rep-interest").value) || 0;
-  const total = pPaid + iPaid;
-  if (total <= 0) return showToast("साँवा वा ब्याज रकम राख्नुहोस्।", "error");
+  const totalPaid = Number(document.getElementById("rep-total-paid").value) || 0;
+  if (totalPaid <= 0) return showToast("कृपया जम्मा भुक्तानी रकम राख्नुहोस्।", "error");
+
+  const accruedInt = Number(ln.accruedInterest || 0);
+  const remPrincipal = Number(ln.principal) - Number(ln.paidPrincipal || 0);
+
+  let iPaid = 0;
+  let pPaid = 0;
+
+  // नियम: पहिले ब्याज, बाँकी रहे मात्र साँवा
+  if (totalPaid <= accruedInt) {
+    iPaid = totalPaid;
+    pPaid = 0;
+    ln.accruedInterest = accruedInt - totalPaid;
+  } else {
+    iPaid = accruedInt;
+    pPaid = totalPaid - accruedInt;
+    ln.accruedInterest = 0;
+  }
+
+  // यदि साँवा पनि पूर्ण चुक्ता भयो भने खाता Closed गर्ने
+  if (pPaid >= remPrincipal && remPrincipal > 0) {
+    pPaid = remPrincipal;
+    ln.status = "Closed";
+  }
 
   const date = document.getElementById("rep-date").value.trim() || st.activeBSDate;
   const recNo = `LREC-${parseBS(date).y}-${st.settings.loanReceiptCounter++}`;
@@ -2952,14 +3012,27 @@ function collectLoanInstallment(e) {
     date,
     principalPaid: pPaid,
     interestPaid: iPaid,
-    totalPaid: total
+    totalPaid: iPaid + pPaid
   };
+
   if (!st.loanRepayments) st.loanRepayments = [];
   st.loanRepayments.push(repObj);
+
+  if (iPaid > 0) {
+    if (!st.incomes) st.incomes = [];
+    st.incomes.push({
+      id: "INC-LINT-" + Date.now(),
+      date: date,
+      category: "ऋण ब्याज आम्दानी (नगद असुली)",
+      amount: iPaid,
+      remarks: `ऋण नं. ${ln.id} को ब्याज असुली (रसिद नं: ${recNo})`
+    });
+  }
+
   window.recalculateAllDynamicValues(true);
   renderCurrentModule();
   printLoanReceipt(repObj.id);
-  showToast(`किस्ता रसिद ${recNo} सुरक्षित भयो!`);
+  showToast(`किस्ता रसिद ${recNo} सुरक्षित भयो! (ब्याज: ${fmtMoney(iPaid)}, साँवा: ${fmtMoney(pPaid)})`);
 }
 
 function printLoanReceipt(repId) {
