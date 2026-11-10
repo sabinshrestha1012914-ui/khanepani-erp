@@ -662,19 +662,37 @@ function applyGlobalDateChange() {
   const parsed = parseBS(val);
   const formatted = formatBS(parsed.y, parsed.m, parsed.d);
   document.getElementById("global-bs-date-input").value = formatted;
+  
+  // ग्लोबल मिति अपडेट गर्ने
   window.ERP_STATE.activeBSDate = formatted;
   window.ERP_STATE.autoDateMode = false;
+  
+  // सबै हिसाबकिताब र ब्याज अपडेट गर्ने
   window.recalculateAllDynamicValues(true);
+  
+  // 🌟 तुरुन्तै क्लाउडमा सेभ गर्ने ताकि अर्को डिभाइसमा पनि अटोमेटिक जाओस्
+  if (typeof window.cloudSync?.save === "function") {
+    window.cloudSync.save();
+  }
+
   renderCurrentModule();
-  showToast(`चलिरहेको मिति ${formatted} कायम गरी सम्पूर्ण हिसाब अटोमेटिक अपडेट गरियो।`, "success");
+  showToast(`चलिरहेको मिति ${formatted} कायम गरी सर्भरमा सेभ गरियो।`, "success");
 }
 
 function resetToAutoTodayBS() {
   const autoBS = getAutoTodayBS();
   document.getElementById("global-bs-date-input").value = autoBS;
+  
   window.ERP_STATE.activeBSDate = autoBS;
   window.ERP_STATE.autoDateMode = true;
+  
   window.recalculateAllDynamicValues(true);
+  
+  // 🌟 क्लाउडमा सेभ गर्ने
+  if (typeof window.cloudSync?.save === "function") {
+    window.cloudSync.save();
+  }
+
   renderCurrentModule();
   showToast(`अटोमेटिक आजको मिति (${autoBS}) सेट गरियो।`, "info");
 }
