@@ -2349,7 +2349,6 @@ function openBulkCustomerReadingSlips() {
   `;
   openPrintModal(`बल्क ग्राहक मिटर रिडिङ बिल - ${printReadingMonth}`, html);
 }
-
 // ============================================================================
 // 10. LOAN MANAGEMENT MODULE (AUTO INTEREST, CAPITALIZATION ON OVERDUE, RECEIPT, EDIT & PASSWORD)
 // ============================================================================
@@ -2357,25 +2356,24 @@ let loanFilterCust = "ALL";
 let loanFromBS = "2083-01-01";
 let loanToBS = "2083-12-30";
 
-// 🌟 भाखा मिति नाघेमा पाकेको ब्याज स्वतः साँवामा जोड्ने र ६ महिना म्याद थप्ने स्वचालित फंक्सन
+// भाखा मिति नाघेमा पाकेको ब्याज स्वतः साँवामा जोड्ने र ६ महिना म्याद थप्ने स्वचालित फंक्सन
 function processOverdueLoanCapitalization() {
   const st = window.ERP_STATE;
   if (!st || !st.loans) return;
   const todayBS = st.activeBSDate;
-
   let anyUpdated = false;
 
   st.loans.forEach(l => {
     if (l.status === 'Active' && l.dueDate) {
-      // यदि चलिरहेको मिति भाखा मिति (dueDate) भन्दा अगाडि गयो भने
-      if (compareBSDates(todayBS, l.dueDate) > 0) {
+      // मिति तुलना गर्ने (यदि चलिरहेको मिति भाखा मितिभन्दा नाघेको छ भने)
+      if (bsToSerialDays(todayBS) > bsToSerialDays(l.dueDate)) {
         const accruedInt = Number(l.accruedInterest || 0);
         const oldDueDate = l.dueDate;
 
         if (!l.remarksHistory) l.remarksHistory = [];
 
         if (accruedInt > 0) {
-          // १. पाकेको ब्याजलाई साँवामा जोड्ने (Capitalize)
+          // १. पाकेको ब्याजलाई साँवामा जोड्ने
           l.principal = Number(l.principal) + accruedInt;
 
           // २. रिमार्कसमा स्पष्ट विवरण लेख्ने
@@ -2386,6 +2384,7 @@ function processOverdueLoanCapitalization() {
 
           // ३. ब्याज शून्य गर्ने (किनकि अब साँवा भइसक्यो)
           l.accruedInterest = 0;
+          l.paidInterest = 0; // नयाँ साँवामा नयाँ ब्याज गणना सुरु हुन
         } else {
           l.remarksHistory.push({
             date: todayBS,
@@ -2393,7 +2392,8 @@ function processOverdueLoanCapitalization() {
           });
         }
 
-        // ४. भाखा मिति स्वतः ६ महिना (१८० दिन) थप गर्ने
+        // ४. लगानी मिति र भाखा मिति अपडेट (६ महिना / १८० दिन थप)
+        l.issueDate = oldDueDate;
         l.dueDate = addDaysToBS(oldDueDate, 180);
         l.isOverdue = false;
         l.overdueDays = 0;
