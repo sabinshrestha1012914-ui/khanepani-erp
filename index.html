@@ -2350,13 +2350,13 @@ function openBulkCustomerReadingSlips() {
   openPrintModal(`बल्क ग्राहक मिटर रिडिङ बिल - ${printReadingMonth}`, html);
 }
 // ============================================================================
-// 10. LOAN MANAGEMENT MODULE (AUTO INTEREST, CAPITALIZATION, STATEMENT & PRINT)
+// 10. LOAN MANAGEMENT MODULE (AUTO INTEREST, CAPITALIZATION, LEDGER & INCOME)
 // ============================================================================
 let loanFilterCust = "ALL";
 let loanFromBS = "2083-01-01";
 let loanToBS = "2083-12-30";
 
-// भाखा मिति नाघेमा पाकेको ब्याज स्वतः साँवामा जोड्ने र ६ महिना म्याद थप्ने स्वचालित फंक्सन
+// भाखा मिति नाघेमा पाकेको ब्याज स्वतः साँवामा जोड्ने, ६ महिना म्याद थप्ने र आम्दानीमा देखाउने फंक्सन
 function processOverdueLoanCapitalization() {
   const st = window.ERP_STATE;
   if (!st || !st.loans) return;
@@ -2364,19 +2364,46 @@ function processOverdueLoanCapitalization() {
   let anyUpdated = false;
 
   st.loans.forEach(l => {
+    // सुरुवाती लगानी मिति र रकम सुरक्षित राख्ने (स्टेटमेन्टमा सुरुको विवरण नहराओस् भन्नका लागि)
+    if (!l.initialIssueDate) l.initialIssueDate = l.issueDate;
+    if (!l.initialPrincipal) l.initialPrincipal = Number(l.principal);
+
     if (l.status === 'Active' && l.dueDate) {
       if (bsToSerialDays(todayBS) > bsToSerialDays(l.dueDate)) {
         const accruedInt = Number(l.accruedInterest || 0);
         const oldDueDate = l.dueDate;
 
         if (!l.remarksHistory) l.remarksHistory = [];
+        if (!l.capitalizationLogs) l.capitalizationLogs = [];
 
         if (accruedInt > 0) {
+          // १. पाकेको ब्याजलाई साँवामा जोड्ने
           l.principal = Number(l.principal) + accruedInt;
+
+          // २. लेजर स्टेटमेन्टका लागि क्यापिटलाइजेसन इतिहास सेभ गर्ने
+          l.capitalizationLogs.push({
+            date: oldDueDate,
+            amount: accruedInt,
+            note: `भाखा (${oldDueDate}) नाघेकोले पाकेको ब्याज साँवामा गाभिएको (Capitalized)`
+          });
+
+          // ३. संस्थाको ब्याज आम्दानी (Income) मा स्वतः देखाउने
+          if (!st.incomes) st.incomes = [];
+          st.incomes.push({
+            id: "INC-CAP-" + Date.now() + "-" + l.id,
+            date: oldDueDate,
+            category: "ऋण ब्याज आम्दानी (साँवामा गाभिएको)",
+            amount: accruedInt,
+            remarks: `ऋण नं. ${l.id} को भाखा नाघेको ब्याज साँवामा समायोजन`
+          });
+
+          // ४. रिमार्कसमा स्पष्ट विवरण लेख्ने
           l.remarksHistory.push({
             date: todayBS,
             note: `भाखा (${oldDueDate}) नाघेकोले पाकेको ब्याज रु. ${accruedInt.toLocaleString()} साँवामा थपियो र ६ महिना म्याद बढाइयो।`
           });
+
+          // ५. ब्याज शून्य गर्ने (नयाँ साँवामा नयाँ ब्याज गणना सुरु हुन)
           l.accruedInterest = 0;
           l.paidInterest = 0;
         } else {
@@ -2386,6 +2413,7 @@ function processOverdueLoanCapitalization() {
           });
         }
 
+        // ६. ब्याज गणना मिति र भाखा मिति अपडेट (६ महिना / १८० दिन थप)
         l.issueDate = oldDueDate;
         l.dueDate = addDaysToBS(oldDueDate, 180);
         l.isOverdue = false;
@@ -2411,7 +2439,14 @@ function renderLoansModule() {
   const totalPrincipalRec = st.loans.reduce((s, l) => s + Number(l.paidPrincipal || 0), 0);
   const totalRemainingPrincipal = totalInvested - totalPrincipalRec;
   const totalAccruedInt = st.loans.reduce((s, l) => s + Number(l.accruedInterest || 0), 0);
-  const totalPaidInt = st.loans.reduce((s, l) => s + Number(l.paidInterest || 0), 0);
+
+  // नगद असुली भएको ब्याज + साँवामा गाभिएको ब्याज दुवै जोडेर कुल ब्याज आम्दानी देखाउने
+  const cashPaidInt = st.loans.reduce((s, l) => s + Number(l.paidInterest || 0), 0);
+  const capitalizedIntTotal = st.loans.reduce((s, l) => {
+    const capSum = (l.capitalizationLogs || []).reduce((cs, log) => cs + Number(log.amount || 0), 0);
+    return s + capSum;
+  }, 0);
+  const totalInterestIncome = cashPaidInt + capitalizedIntTotal;
 
   const filteredLoans = st.loans.filter(l => {
     const matchCust = loanFilterCust === "ALL" || l.customerId === loanFilterCust;
@@ -2423,7 +2458,7 @@ function renderLoansModule() {
       <!-- Portfolio Summary Cards -->
       <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <div class="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs">
-          <div class="text-xs text-slate-500">कुल ऋण लगानी (Total Investment)</div>
+          <div class="text-xs text-slate-500">कुल ऋण लगानी (साँवा + गाभिएको ब्याज)</div>
           <div class="text-xl font-bold text-slate-900 mt-1 tabular-nums">${fmtMoney(totalInvested)}</div>
           <div class="text-[11px] text-indigo-700 mt-0.5">कुल ऋणी संख्या: ${st.loans.length} जना</div>
         </div>
@@ -2438,9 +2473,9 @@ function renderLoansModule() {
           <div class="text-[11px] text-slate-500 mt-0.5">हालको ब्याजदर: ${activeRate.annualRate}% वार्षिक</div>
         </div>
         <div class="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs">
-          <div class="text-xs text-slate-500">असुली भएको कुल ब्याज</div>
-          <div class="text-xl font-bold text-emerald-700 mt-1 tabular-nums">${fmtMoney(totalPaidInt)}</div>
-          <div class="text-[11px] text-teal-700 mt-0.5">भाखा नियम: म्याद नाघे ब्याज साँवामा गाभिने</div>
+          <div class="text-xs text-slate-500">कुल ब्याज आम्दानी (नगद + साँवामा गाभिएको)</div>
+          <div class="text-xl font-bold text-emerald-700 mt-1 tabular-nums">${fmtMoney(totalInterestIncome)}</div>
+          <div class="text-[11px] text-teal-700 mt-0.5">नगद: ${fmtMoney(cashPaidInt)} | गाभिएको: ${fmtMoney(capitalizedIntTotal)}</div>
         </div>
       </div>
 
@@ -2537,10 +2572,10 @@ function renderLoansModule() {
         </div>
       </div>
 
-      <!-- Member-wise & Date-wise Loan Statement with Remarks & EDIT Option -->
+      <!-- Member-wise & Date-wise Loan Statement with Remarks, Print & EDIT Option -->
       <div class="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
         <div class="p-4 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3">
-          <h3 class="text-sm font-bold text-slate-800">मेम्बरवाइज तथा मिति अनुसार ऋण स्टेटमेन्ट (कैफियत, प्रिन्ट र अपडेट सहित)</h3>
+          <h3 class="text-sm font-bold text-slate-800">मेम्बरवाइज तथा मिति अनुसार ऋण स्टेटमेन्ट (लेजर प्रिन्ट र अपडेट सहित)</h3>
           <div class="flex flex-wrap items-center gap-2 text-xs">
             <select onchange="loanFilterCust=this.value; renderCurrentModule();" class="border border-slate-300 rounded-xl px-2.5 py-1.5 font-semibold">
               <option value="ALL">सबै ऋणी सदस्यहरू</option>
@@ -2554,14 +2589,14 @@ function renderLoansModule() {
               <tr>
                 <th class="p-3">ऋण नं.</th>
                 <th class="p-3">सदस्यको नाम</th>
-                <th class="p-3">लगानी मिति</th>
+                <th class="p-3">सुरु लगानी मिति</th>
                 <th class="p-3">भाखा मिति</th>
                 <th class="p-3 text-right">कुल साँवा</th>
                 <th class="p-3 text-right">बाँकी साँवा</th>
                 <th class="p-3 text-right">पाकेको ब्याज</th>
                 <th class="p-3 text-left">कैफियत / रिमार्कस (Remarks)</th>
                 <th class="p-3 text-center">अवस्था</th>
-                <th class="p-3 text-center">कारбар (Action)</th>
+                <th class="p-3 text-center">कारबाही (Action)</th>
               </tr>
             </thead>
             <tbody class="divide-y divide-slate-100">
@@ -2576,7 +2611,7 @@ function renderLoansModule() {
                   <tr class="hover:bg-slate-50">
                     <td class="p-3 font-bold text-indigo-800">${l.id}</td>
                     <td class="p-3 font-semibold">${c.name} (${l.customerId})</td>
-                    <td class="p-3 tabular-nums">${l.issueDate}</td>
+                    <td class="p-3 tabular-nums">${l.initialIssueDate || l.issueDate}</td>
                     <td class="p-3 tabular-nums font-bold text-teal-800">${l.dueDate}</td>
                     <td class="p-3 text-right tabular-nums">${fmtMoney(l.principal)}</td>
                     <td class="p-3 text-right font-bold tabular-nums">${fmtMoney(rem)}</td>
@@ -2589,7 +2624,7 @@ function renderLoansModule() {
                       }
                     </td>
                     <td class="p-3 text-center space-x-1">
-                      <button onclick="openMemberLoanLedgerStatement('${l.id}')" class="px-2 py-1 bg-teal-50 hover:bg-teal-100 text-teal-800 border border-teal-200 rounded-lg font-semibold" title="मिति फिल्टर गरी लेजर स्टेटमेन्ट प्रिन्ट गर्ने">
+                      <button onclick="openMemberLoanLedgerStatement('${l.id}')" class="px-2 py-1 bg-teal-50 hover:bg-teal-100 text-teal-800 border border-teal-200 rounded-lg font-semibold">
                         स्टेटमेन्ट
                       </button>
                       <button onclick="promptEditLoan('${l.id}')" class="px-2 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-800 border border-indigo-200 rounded-lg font-semibold">
@@ -2647,7 +2682,7 @@ function renderLoansModule() {
   `;
 }
 
-// 🌟 मिति फिल्टर (Date Range Filter) सहितको सदस्य ऋण लेजर स्टेटमेन्ट प्रिन्ट गर्ने फंक्सन
+// 🌟 सम्पूर्ण कारोबार (सुरु लगानी, ब्याज साँवामा गाभिएको र किस्ता भुक्तानी) प्रष्ट देखिने सदस्य लेजर स्टेटमेन्ट
 function openMemberLoanLedgerStatement(loanId) {
   const st = window.ERP_STATE;
   const ln = st.loans.find(l => l.id === loanId);
@@ -2656,12 +2691,76 @@ function openMemberLoanLedgerStatement(loanId) {
   const c = st.customers.find(x => x.id === ln.customerId) || { name: "अज्ञात", phone: "-", address: "-" };
   const s = st.settings;
 
-  const fromDate = prompt("कुन मितिदेखिको स्टेटमेन्ट निकाल्ने हो? (YYYY-MM-DD):", ln.issueDate);
+  const initDate = ln.initialIssueDate || ln.issueDate;
+  const initPrin = Number(ln.initialPrincipal || ln.principal);
+
+  const fromDate = prompt("कुन मितिदेखिको स्टेटमेन्ट निकाल्ने हो? (YYYY-MM-DD):", initDate);
   if (fromDate === null) return;
   const toDate = prompt("कुन मितिसम्मको स्टेटमेन्ट निकाल्ने हो? (YYYY-MM-DD):", st.activeBSDate);
   if (toDate === null) return;
 
-  const repayments = st.loanRepayments.filter(r => r.loanId === ln.id && isDateBetweenBS(r.date, fromDate, toDate));
+  // सबै प्रकारका ट्रान्जेक्सनहरू एकै ठाउँमा जम्मा गर्ने
+  let allEvents = [];
+
+  // १. सुरुवाती ऋण लगानी
+  allEvents.push({
+    date: initDate,
+    serial: bsToSerialDays(initDate),
+    order: 1,
+    particulars: `सुरुवाती ऋण लगानी (${ln.purpose || 'घरायसी प्रयोजन'})`,
+    drPrincipal: initPrin,
+    crPrincipal: 0,
+    crInterest: 0
+  });
+
+  // २. ब्याज साँवामा गाभिएका मिति र रकमहरू (Capitalization Logs)
+  (ln.capitalizationLogs || []).forEach(cap => {
+    allEvents.push({
+      date: cap.date,
+      serial: bsToSerialDays(cap.date),
+      order: 2,
+      particulars: `भाखा नाघेको पाकेको ब्याज साँवामा जोडिएको (Capitalized)`,
+      drPrincipal: Number(cap.amount),
+      crPrincipal: 0,
+      crInterest: 0
+    });
+  });
+
+  // ३. सदस्यले किस्ता तथा ब्याज तिरेका मिति र रकमहरू (Repayments)
+  st.loanRepayments.filter(r => r.loanId === ln.id).forEach(rp => {
+    allEvents.push({
+      date: rp.date,
+      serial: bsToSerialDays(rp.date),
+      order: 3,
+      particulars: `किस्ता / ब्याज भुक्तानी (रसिद नं: ${rp.receiptNo})`,
+      drPrincipal: 0,
+      crPrincipal: Number(rp.principalPaid || 0),
+      crInterest: Number(rp.interestPaid || 0)
+    });
+  });
+
+  // मिति अनुसार क्रम मिलाउने (Chronological Sort)
+  allEvents.sort((a, b) => (a.serial - b.serial) || (a.order - b.order));
+
+  // क्रमिक बाँकी साँवा (Running Balance) गणना गर्ने र मिति फिल्टर लागू गर्ने
+  let runningBalance = 0;
+  let rowsHtml = "";
+
+  allEvents.forEach(ev => {
+    runningBalance = runningBalance + ev.drPrincipal - ev.crPrincipal;
+    if (isDateBetweenBS(ev.date, fromDate, toDate)) {
+      rowsHtml += `
+        <tr>
+          <td class="border border-slate-400 p-2 tabular-nums">${ev.date}</td>
+          <td class="border border-slate-400 p-2">${ev.particulars}</td>
+          <td class="border border-slate-400 p-2 text-right font-semibold">${ev.drPrincipal > 0 ? fmtMoney(ev.drPrincipal) : '-'}</td>
+          <td class="border border-slate-400 p-2 text-right font-semibold text-teal-800">${ev.crPrincipal > 0 ? fmtMoney(ev.crPrincipal) : '-'}</td>
+          <td class="border border-slate-400 p-2 text-right font-semibold text-amber-800">${ev.crInterest > 0 ? fmtMoney(ev.crInterest) : '-'}</td>
+          <td class="border border-slate-400 p-2 text-right font-bold text-indigo-900">${fmtMoney(runningBalance)}</td>
+        </tr>
+      `;
+    }
+  });
 
   const html = `
     <div class="border-2 border-slate-800 p-6 rounded-lg space-y-4 text-xs">
@@ -2680,7 +2779,7 @@ function openMemberLoanLedgerStatement(loanId) {
       <div class="grid grid-cols-2 gap-2 bg-slate-50 p-3 rounded border">
         <div><strong>सदस्यको नाम:</strong> ${c.name} (${c.id})</div>
         <div><strong>सम्पर्क नं.:</strong> ${c.phone || '-'}</div>
-        <div><strong>ऋण लगानी मिति:</strong> ${ln.issueDate}</div>
+        <div><strong>सुरु लगानी मिति:</strong> ${initDate} (रु. ${initPrin.toLocaleString()})</div>
         <div><strong>हालको भाखा मिति:</strong> ${ln.dueDate}</div>
       </div>
 
@@ -2689,37 +2788,20 @@ function openMemberLoanLedgerStatement(loanId) {
           <tr>
             <th class="border border-slate-400 p-2">मिति (BS)</th>
             <th class="border border-slate-400 p-2">कारोबार विवरण (Particulars)</th>
-            <th class="border border-slate-400 p-2 text-right">साँवा (लगानी / Dr)</th>
-            <th class="border border-slate-400 p-2 text-right">साँवा असुली (Cr)</th>
-            <th class="border border-slate-400 p-2 text-right">ब्याज असुली (Cr)</th>
+            <th class="border border-slate-400 p-2 text-right">थप साँवा (Dr)</th>
+            <th class="border border-slate-400 p-2 text-right">साँवा भुक्तानी (Cr)</th>
+            <th class="border border-slate-400 p-2 text-right">ब्याज भुक्तानी (Cr)</th>
+            <th class="border border-slate-400 p-2 text-right">बाँकी साँवा (Balance)</th>
           </tr>
         </thead>
         <tbody>
-          ${isDateBetweenBS(ln.issueDate, fromDate, toDate) ? `
-            <tr>
-              <td class="border border-slate-400 p-2">${ln.issueDate}</td>
-              <td class="border border-slate-400 p-2 font-semibold">सुरुवाती ऋण लगानी (${ln.purpose || ''})</td>
-              <td class="border border-slate-400 p-2 text-right font-bold">${fmtMoney(ln.principal)}</td>
-              <td class="border border-slate-400 p-2 text-right">रु. 0.00</td>
-              <td class="border border-slate-400 p-2 text-right">रु. 0.00</td>
-            </tr>
-          ` : ''}
-
-          ${repayments.map(rp => `
-            <tr>
-              <td class="border border-slate-400 p-2">${rp.date}</td>
-              <td class="border border-slate-400 p-2">किस्ता तथा ब्याज असुली (रसिद नं: ${rp.receiptNo})</td>
-              <td class="border border-slate-400 p-2 text-right">रु. 0.00</td>
-              <td class="border border-slate-400 p-2 text-right font-bold text-teal-800">${fmtMoney(rp.principalPaid)}</td>
-              <td class="border border-slate-400 p-2 text-right font-bold text-amber-800">${fmtMoney(rp.interestPaid)}</td>
-            </tr>
-          `).join("")}
+          ${rowsHtml || `<tr><td colspan="6" class="border border-slate-400 p-3 text-center text-slate-500">यस अवधिमा कुनै कारोबार भेटिएन।</td></tr>`}
         </tbody>
       </table>
 
-      <div class="bg-teal-50 p-3 rounded border border-teal-200 flex justify-between font-bold">
-        <span>उठ्न बाँकी कुल साँवा (Outstanding Principal):</span>
-        <span class="text-indigo-900">${fmtMoney(Number(ln.principal) - Number(ln.paidPrincipal || 0))}</span>
+      <div class="grid grid-cols-2 gap-2 bg-teal-50 p-3 rounded border border-teal-200 font-bold">
+        <div>उठ्न बाँकी कुल साँवा: <span class="text-indigo-900">${fmtMoney(Number(ln.principal) - Number(ln.paidPrincipal || 0))}</span></div>
+        <div class="text-right">हालसम्म पाकेको बाँकी ब्याज: <span class="text-amber-800">${fmtMoney(ln.accruedInterest || 0)}</span></div>
       </div>
 
       <div class="flex justify-between pt-10 text-xs">
@@ -2730,7 +2812,7 @@ function openMemberLoanLedgerStatement(loanId) {
     </div>
   `;
 
-  openPrintModal(`ऋण स्टेटमेन्ट - ${c.name} (${ln.id})`, html);
+  openPrintModal(`ऋण लेजर स्टेटमेन्ट - ${c.name} (${ln.id})`, html);
 }
 
 function prefillLoanInstallment(loanId) {
@@ -2758,17 +2840,22 @@ function prefillLoanInstallment(loanId) {
 function disburseNewLoan(e) {
   e.preventDefault();
   const st = window.ERP_STATE;
+  const issueDt = document.getElementById("ln-issue-date").value.trim() || st.activeBSDate;
+  const prinAmt = Number(document.getElementById("ln-principal").value);
   const newLoan = {
     id: "LN-" + String(st.loans.length + 1).padStart(3, "0"),
     customerId: document.getElementById("ln-cust").value,
-    issueDate: document.getElementById("ln-issue-date").value.trim() || st.activeBSDate,
+    initialIssueDate: issueDt,
+    initialPrincipal: prinAmt,
+    issueDate: issueDt,
     dueDate: document.getElementById("ln-due-date").value.trim(),
-    principal: Number(document.getElementById("ln-principal").value),
+    principal: prinAmt,
     paidPrincipal: 0,
     paidInterest: 0,
     accruedInterest: 0,
     purpose: document.getElementById("ln-purpose").value.trim() || "खानेपानी तथा घरायसी प्रयोजन",
     remarksHistory: [],
+    capitalizationLogs: [],
     status: "Active",
     isOverdue: false,
     overdueDays: 0
