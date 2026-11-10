@@ -2350,8 +2350,8 @@ function openBulkCustomerReadingSlips() {
   openPrintModal(`बल्क ग्राहक मिटर रिडिङ बिल - ${printReadingMonth}`, html);
 }
 
-// ============================================================================
-// 10. LOAN MANAGEMENT MODULE (COMPLETE & FIXED)
+/// ============================================================================
+// 10. LOAN MANAGEMENT MODULE (CORRECTED INTEREST CALCULATION AFTER CAPITALIZATION)
 // ============================================================================
 let loanFilterCust = "ALL";
 let loanFromBS = "2083-01-01";
@@ -2699,7 +2699,7 @@ function prefillLoanInstallment(loanId) {
   }
 }
 
-// म्यानुअल रूपमा पाकेको ब्याज साँवामा जोड्ने (Capitalization) फंक्सन
+// म्यानुअल रूपमा पाकेको ब्याज साँवामा जोड्ने (Capitalization) फंक्सन (नयाँ मिति ट्र्याकिङ सहित)
 function promptManualCapitalization(loanId) {
   const st = window.ERP_STATE;
   const ln = st.loans.find(l => l.id === loanId);
@@ -2719,6 +2719,9 @@ function promptManualCapitalization(loanId) {
   if (!ln.capitalizationLogs) ln.capitalizationLogs = [];
 
   ln.principal = Number(ln.principal) + accruedInt;
+
+  // अत्यन्त महत्वपूर्ण: ब्याज गाभिएको मितिलाई अन्तिम क्यापिटलाइजेसन मिति मान्ने (दोहोरो ब्याज जोिनबाट रोक्न)
+  ln.lastCapitalizationDate = todayBS;
 
   ln.capitalizationLogs.push({
     date: todayBS,
@@ -2911,6 +2914,7 @@ function disburseNewLoan(e) {
     initialIssueDate: issueDt,
     initialPrincipal: prinAmt,
     issueDate: issueDt,
+    lastCapitalizationDate: issueDt, // सुरुको मितिलाई बेस मान्ने
     dueDate: document.getElementById("ln-due-date").value.trim(),
     durationMonths: durationMonths,
     principal: prinAmt,
@@ -2964,7 +2968,7 @@ function promptEditLoan(loanId) {
   showToast(`ऋण खाता ${ln.id} सफलतापूर्वक अपडेट भयो!`);
 }
 
-// किस्ता असुली सेभ गर्ने र पहिले ब्याज अनि मात्र साँवा कट्टा गर्ने मुख्य फंक्सन
+// किस्ता असुली सेभ गर्ने फंक्सन
 function collectLoanInstallment(e) {
   e.preventDefault();
   const st = window.ERP_STATE;
