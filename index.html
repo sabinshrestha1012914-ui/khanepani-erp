@@ -286,17 +286,18 @@
 <!-- ==================== SYSTEM NOTIFICATION TOAST ==================== -->
 <div id="toast-box" class="fixed bottom-4 right-4 z-50 space-y-2 pointer-events-none"></div>
 
-<!-- ==================== FIREBASE & CORE CLOUD SYNC (FINAL MASTER OVERWRITE SYNC) ==================== -->
+<!-- ==================== FIREBASE & CORE CLOUD SYNC (SAFE MULTI-DEVICE TIMESTAMPS) ==================== -->
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
   import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-  import { getFirestore, doc, setDoc, getDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+  import { getFirestore, doc, setDoc, getDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
   window.cloudSync = {
     enabled: true,
     db: null,
+    userId: null,
     appId: 'khanepani-erp-hamro-sanstha',
-
+    isSaving: false,
     async init() {
       try {
         const cfg = {
@@ -318,33 +319,44 @@
 
         const docRef = doc(this.db, "artifacts", this.appId, "public", "data", "erp_state", "master_v1");
         
-        // क्लाउडबाट मास्टर डेटा तान्ने
-        const snap = await getDoc(docRef);
-        if (snap.exists()) {
-          const remoteData = snap.data();
-          // यदि क्लाउडमा ग्राहक वा कुनै पनि डेटा अवस्थित छ भने त्यसलाई मुख्य मान्ने
-          if (remoteData && (remoteData.customers || remoteData.loans || remoteData.payments)) {
-            window.ERP_STATE = remoteData;
+        const initialSnap = await getDoc(docRef);
+        if (initialSnap.exists()) {
+          const remoteData = initialSnap.data();
+          if (remoteData && remoteData.customers) {
+            window.ERP_STATE = Object.assign({}, window.ERP_STATE, remoteData);
             localStorage.setItem("KHANEPANI_ERP_LOCAL_BACKUP", JSON.stringify(window.ERP_STATE));
+            if (typeof renderCurrentModule === "function") renderCurrentModule();
           }
-        } else {
-          // यदि क्लाउड पूर्ण खाली छ भने लोकल डेटालाई क्लाउडमा पठाउने
-          await this.save();
         }
 
-        const dateInput = document.getElementById("global-bs-date-input");
-        if (dateInput && window.ERP_STATE.activeBSDate) {
-          dateInput.value = window.ERP_STATE.activeBSDate;
-        }
+        onSnapshot(docRef, (docSnap) => {
+          if (docSnap.exists() && !this.isSaving) {
+            const remoteData = docSnap.data();
+            if (remoteData && remoteData.customers) {
+              const localState = window.ERP_STATE || {};
+              const remoteTime = remoteData.lastModified || 0;
+              const localTime = localState.lastModified || 0;
 
-        if (typeof window.recalculateAllDynamicValues === "function") {
-          window.recalculateAllDynamicValues(false);
-        }
+              if (remoteTime >= localTime) {
+                window.ERP_STATE = Object.assign({}, window.ERP_STATE, remoteData);
+                localStorage.setItem("KHANEPANI_ERP_LOCAL_BACKUP", JSON.stringify(window.ERP_STATE));
+                
+                // 🌟 अर्को डिभाइसमा ग्लोबल मिति बक्स पनि अटोमेटिक अपडेट हुने बनाउने
+                const dateInput = document.getElementById("global-bs-date-input");
+                if (dateInput && window.ERP_STATE.activeBSDate) {
+                  dateInput.value = window.ERP_STATE.activeBSDate;
+                }
 
-        if (typeof renderCurrentModule === "function") {
-          renderCurrentModule();
-        }
-        console.log("Data synced successfully from cloud master!");
+                if (typeof renderCurrentModule === "function") {
+                  renderCurrentModule();
+                }
+                console.log("Data auto-synced safely from cloud!");
+              }
+            }
+          }
+        }, (error) => {
+          console.error("CloudSync snapshot error:", error);
+        });
 
       } catch (err) {
         console.error("CloudSync Init Error:", err);
@@ -355,18 +367,19 @@
       if (!window.ERP_STATE) return;
       window.ERP_STATE.lastModified = Date.now();
       localStorage.setItem("KHANEPANI_ERP_LOCAL_BACKUP", JSON.stringify(window.ERP_STATE));
-      
       if (!this.enabled || !this.db) return;
       try {
+        this.isSaving = true;
         const docRef = doc(this.db, "artifacts", this.appId, "public", "data", "erp_state", "master_v1");
         await setDoc(docRef, window.ERP_STATE);
         console.log("Data saved to cloud successfully!");
       } catch (err) {
         console.error("CloudSync Save Error:", err);
+      } finally {
+        setTimeout(() => { this.isSaving = false; }, 1000);
       }
     }
   };
-
   window.cloudSync.init();
 </script>
 
