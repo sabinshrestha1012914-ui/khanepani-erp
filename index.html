@@ -300,22 +300,24 @@
 
     // दुवैतिरका डेटा सुरक्षित रूपमा मर्ज गर्ने फंक्सन (डाटा उड्न नदिने)
     // सुरक्षित रूपमा Array हरूलाई मर्ज गर्ने सही फंक्सन
+    // सुरक्षित रूपमा डेटा मर्ज गर्ने सही फंक्सन (Array check सहित)
     mergeStates(local, remote) {
       if (!remote) return local;
       if (!local) return remote;
 
-      // यदि customers Array हो भने यसलाई ID को आधारमा मर्ज गर्ने
-      let mergedCustomers = [...(local.customers || [])];
-      if (Array.isArray(remote.customers)) {
-        remote.customers.forEach(rc => {
-          const idx = mergedCustomers.findIndex(lc => lc.id === rc.id);
-          if (idx >= 0) {
-            mergedCustomers[idx] = rc; // नयाँ भए अपडेट गर्ने
-          } else {
-            mergedCustomers.push(rc); // थपिने
-          }
-        });
-      }
+      // यदि local.customers Array छैन भने खाली Array बनाउने
+      let localCusts = Array.isArray(local.customers) ? local.customers : [];
+      let remoteCusts = Array.isArray(remote.customers) ? remote.customers : [];
+
+      let mergedCustomers = [...localCusts];
+      remoteCusts.forEach(rc => {
+        const idx = mergedCustomers.findIndex(lc => lc.id === rc.id);
+        if (idx >= 0) {
+          mergedCustomers[idx] = rc; // अपडेट गर्ने
+        } else {
+          mergedCustomers.push(rc); // नयाँ थप्ने
+        }
+      });
 
       return {
         ...local,
