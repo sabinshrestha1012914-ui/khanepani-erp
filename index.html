@@ -300,32 +300,45 @@
     isSaving: false,
 
     // 🌟 डाटा सुरक्षित रूपमा मर्ज गर्ने फंक्सन (कुनै पनि डिभाइसको डाटा नउड्ने गरी)
+    // डिलिट गरेको डाटा अर्को डिभाइसमा फेरि नफर्कने गरी सुरक्षित मर्ज गर्ने सही फंक्सन
     mergeStates(local, remote) {
       if (!remote) return local;
       if (!local) return remote;
 
-      let mergedCustomers = [...(Array.isArray(local.customers) ? local.customers : [])];
+      const localTime = local.lastModified || 0;
+      const remoteTime = remote.lastModified || 0;
+
+      // कुन स्टेट पछिल्लो पटक अपडेट (Latest) भएको छ त्यसलाई मुख्य आधार मान्ने
+      const primary = remoteTime >= localTime ? remote : local;
+      const secondary = remoteTime >= localTime ? local : remote;
+
+      let mergedCustomers = [...(Array.isArray(primary.customers) ? primary.customers : [])];
       
-      if (Array.isArray(remote.customers)) {
-        remote.customers.forEach(rc => {
-          const idx = mergedCustomers.findIndex(lc => lc.id === rc.id);
+      if (Array.isArray(secondary.customers)) {
+        secondary.customers.forEach(sc => {
+          const idx = mergedCustomers.findIndex(mc => mc.id === sc.id);
           if (idx >= 0) {
-            const localTime = mergedCustomers[idx].lastModified || 0;
-            const remoteTime = rc.lastModified || 0;
-            if (remoteTime >= localTime) {
-              mergedCustomers[idx] = rc;
+            // यदि दुवैतिर छ भने, जुनचाहिँ पछिल्लो पटक अपडेट भएको छ त्यसलाई राख्ने
+            const pTime = mergedCustomers[idx].lastModified || 0;
+            const sTime = sc.lastModified || 0;
+            if (sTime > pTime) {
+              mergedCustomers[idx] = sc;
             }
           } else {
-            mergedCustomers.push(rc);
+            // यदि secondary मा छ तर primary मा छैन, यसको अर्थ primary (जुन लेटेस्ट छ) ले 
+            // त्यो ग्राहकलाई जानபுझेर डिलिट (हटाएको) हो। त्यसैले त्यसलाई फेरि नथप्ने!
+            // तर यदि समयको अन्तराल धेरै कम छ (केही सेकेन्ड मात्र) भने मात्र नयाँ थपिएको मानेर राख्ने।
+            if (Math.abs(remoteTime - localTime) < 3000) {
+              mergedCustomers.push(sc);
+            }
           }
         });
       }
 
       return {
-        ...local,
-        ...remote,
+        ...primary,
         customers: mergedCustomers,
-        lastModified: Math.max(local.lastModified || 0, remote.lastModified || 0)
+        lastModified: Math.max(localTime, remoteTime)
       };
     },
 
