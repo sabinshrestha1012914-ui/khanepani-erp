@@ -286,7 +286,7 @@
 <!-- ==================== SYSTEM NOTIFICATION TOAST ==================== -->
 <div id="toast-box" class="fixed bottom-4 right-4 z-50 space-y-2 pointer-events-none"></div>
 
-<!-- ==================== FIREBASE & CORE CLOUD SYNC (SAFE MULTI-DEVICE TIMESTAMPS) ==================== -->
+<!-- ==================== FIREBASE & CORE CLOUD SYNC (FIXED MERGE LOGIC) ==================== -->
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
   import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
@@ -298,6 +298,32 @@
     userId: null,
     appId: 'khanepani-erp-hamro-sanstha',
     isSaving: false,
+
+    // दुवै तर्फका डेटा सुरक्षित रूपमा मर्ज गर्ने हेल्पर फंक्सन
+    mergeStates(local, remote) {
+      if (!remote) return local;
+      if (!local) return remote;
+
+      // यदि remote मा customers छ तर local खाली छ भने remote नै लिने
+      let mergedCustomers = { ...(local.customers || {}) };
+      if (remote.customers) {
+        for (let id in remote.customers) {
+          // यदि लोकलमा छैन वा रिमोटको डाटा पछि अपडेट भएको छ भने रिमोटको राख्ने
+          if (!mergedCustomers[id] || (remote.customers[id].lastModified || 0) >= (mergedCustomers[id].lastModified || 0)) {
+            mergedCustomers[id] = remote.customers[id];
+          }
+        }
+      }
+
+      // अन्य लिस्टहरू (जस्तै bills, readings, आदि भएमा यहाँ मर्ज गर्न सकिन्छ)
+      return {
+        ...local,
+        ...remote,
+        customers: mergedCustomers,
+        lastModified: Math.max(local.lastModified || 0, remote.lastModified || 0)
+      };
+    },
+
     async init() {
       try {
         const cfg = {
@@ -319,40 +345,40 @@
 
         const docRef = doc(this.db, "artifacts", this.appId, "public", "data", "erp_state", "master_v1");
         
+        // लोकल ब्याकअप पहिले तान्ने
+        const localBackup = localStorage.getItem("KHANEPANI_ERP_LOCAL_BACKUP");
+        if (localBackup) {
+          try { window.ERP_STATE = JSON.parse(localBackup); } catch(e) {}
+        }
+
         const initialSnap = await getDoc(docRef);
         if (initialSnap.exists()) {
           const remoteData = initialSnap.data();
-          if (remoteData && remoteData.customers) {
-            window.ERP_STATE = Object.assign({}, window.ERP_STATE, remoteData);
-            localStorage.setItem("KHANEPANI_ERP_LOCAL_BACKUP", JSON.stringify(window.ERP_STATE));
-            if (typeof renderCurrentModule === "function") renderCurrentModule();
-          }
+          // सुरक्षित रूपमा मर्ज गर्ने
+          window.ERP_STATE = this.mergeStates(window.ERP_STATE, remoteData);
+          localStorage.setItem("KHANEPANI_ERP_LOCAL_BACKUP", JSON.stringify(window.ERP_STATE));
+          
+          if (typeof renderCurrentModule === "function") renderCurrentModule();
         }
 
         onSnapshot(docRef, (docSnap) => {
           if (docSnap.exists() && !this.isSaving) {
             const remoteData = docSnap.data();
-            if (remoteData && remoteData.customers) {
-              const localState = window.ERP_STATE || {};
-              const remoteTime = remoteData.lastModified || 0;
-              const localTime = localState.lastModified || 0;
+            const localState = window.ERP_STATE || {};
 
-              if (remoteTime >= localTime) {
-                window.ERP_STATE = Object.assign({}, window.ERP_STATE, remoteData);
-                localStorage.setItem("KHANEPANI_ERP_LOCAL_BACKUP", JSON.stringify(window.ERP_STATE));
-                
-                // 🌟 अर्को डिभाइसमा ग्लोबल मिति बक्स पनि अटोमेटिक अपडेट हुने बनाउने
-                const dateInput = document.getElementById("global-bs-date-input");
-                if (dateInput && window.ERP_STATE.activeBSDate) {
-                  dateInput.value = window.ERP_STATE.activeBSDate;
-                }
-
-                if (typeof renderCurrentModule === "function") {
-                  renderCurrentModule();
-                }
-                console.log("Data auto-synced safely from cloud!");
-              }
+            // ओभरराइट गर्नुको सट्टा मर्ज गर्ने (डाटा उड्न नदिन)
+            window.ERP_STATE = this.mergeStates(localState, remoteData);
+            localStorage.setItem("KHANEPANI_ERP_LOCAL_BACKUP", JSON.stringify(window.ERP_STATE));
+            
+            const dateInput = document.getElementById("global-bs-date-input");
+            if (dateInput && window.ERP_STATE.activeBSDate) {
+              dateInput.value = window.ERP_STATE.activeBSDate;
             }
+
+            if (typeof renderCurrentModule === "function") {
+              renderCurrentModule();
+            }
+            console.log("Data auto-synced & merged safely from cloud!");
           }
         }, (error) => {
           console.error("CloudSync snapshot error:", error);
@@ -367,10 +393,19 @@
       if (!window.ERP_STATE) return;
       window.ERP_STATE.lastModified = Date.now();
       localStorage.setItem("KHANEPANI_ERP_LOCAL_BACKUP", JSON.stringify(window.ERP_STATE));
+      
       if (!this.enabled || !this.db) return;
       try {
         this.isSaving = true;
         const docRef = doc(this.db, "artifacts", this.appId, "public", "data", "erp_state", "master_v1");
+        
+        // सेभ गर्नुभन्दा ठीक अगाडि क्लाउडको लेटेस्ट डाटा तानेर मर्ज गरी पठाउने (Conflict बाट बच्न)
+        const latestSnap = await getDoc(docRef);
+        if (latestSnap.exists()) {
+          const remoteData = latestSnap.data();
+          window.ERP_STATE = this.mergeStates(window.ERP_STATE, remoteData);
+        }
+
         await setDoc(docRef, window.ERP_STATE);
         console.log("Data saved to cloud successfully!");
       } catch (err) {
@@ -382,8 +417,6 @@
   };
   window.cloudSync.init();
 </script>
-
-<script>
 
 // ============================================================================
 // 1. NEPALI BIKRAM SAMBAT (BS) DATE ENGINE & NUMBER-TO-NEPALI-WORDS CONVERTER
