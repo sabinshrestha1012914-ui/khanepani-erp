@@ -286,7 +286,7 @@
 <!-- ==================== SYSTEM NOTIFICATION TOAST ==================== -->
 <div id="toast-box" class="fixed bottom-4 right-4 z-50 space-y-2 pointer-events-none"></div>
 
-<!-- ==================== FIREBASE & CORE CLOUD SYNC (SAFE MULTI-DEVICE MERGE & DELETE FIX) ==================== -->
+<!-- ==================== FIREBASE & CORE CLOUD SYNC (SAFE MULTI-DEVICE TIMESTAMPS) ==================== -->
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
   import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
@@ -298,54 +298,6 @@
     userId: null,
     appId: 'khanepani-erp-hamro-sanstha',
     isSaving: false,
-
-    // 🌟 सुरक्षित मर्ज र डिलिट गरेको डाटा फेरि नफर्कने बनाउने फाइनल म्याट्रिक्स
-    mergeStates(local, remote) {
-      if (!remote) return local;
-      if (!local) return remote;
-
-      const localTime = local.lastModified || 0;
-      const remoteTime = remote.lastModified || 0;
-
-      // जुन डिभाइस वा क्लाउडमा पछिल्लो पटक सेभ (Latest) भएको छ, त्यसलाई प्राथमिकता दिने
-      const primary = remoteTime >= localTime ? remote : local;
-      const secondary = remoteTime >= localTime ? local : remote;
-
-      // कस्टमरहरूको एरे मर्ज गर्ने र डिलिट भएको भए फेरि नल्याउने
-      let mergedCustomers = [...(Array.isArray(primary.customers) ? primary.customers : [])];
-      if (Array.isArray(secondary.customers)) {
-        secondary.customers.forEach(sc => {
-          const idx = mergedCustomers.findIndex(mc => mc.id === sc.id);
-          if (idx >= 0) {
-            const pTime = mergedCustomers[idx].lastModified || 0;
-            const sTime = sc.lastModified || 0;
-            if (sTime > pTime) {
-              mergedCustomers[idx] = sc;
-            }
-          } else {
-            // यदि सेकन्डरीमा छ तर प्राइमरी (लेटेस्ट) मा छैन भने त्यो जानबुझेर डिलिट गरिएको हो
-            if (Math.abs(remoteTime - localTime) < 5000) {
-              mergedCustomers.push(sc);
-            }
-          }
-        });
-      }
-
-      return {
-        ...primary,
-        customers: mergedCustomers,
-        loans: primary.loans || secondary.loans || [],
-        readings: primary.readings || secondary.readings || [],
-        payments: primary.payments || secondary.payments || [],
-        expenses: primary.expenses || secondary.expenses || [],
-        incomes: primary.incomes || secondary.incomes || [],
-        staffPayroll: primary.staffPayroll || secondary.staffPayroll || [],
-        tankerSales: primary.tankerSales || secondary.tankerSales || [],
-        bankTransactions: primary.bankTransactions || secondary.bankTransactions || [],
-        lastModified: Math.max(localTime, remoteTime)
-      };
-    },
-
     async init() {
       try {
         const cfg = {
@@ -370,8 +322,8 @@
         const initialSnap = await getDoc(docRef);
         if (initialSnap.exists()) {
           const remoteData = initialSnap.data();
-          if (remoteData) {
-            window.ERP_STATE = this.mergeStates(window.ERP_STATE || {}, remoteData);
+          if (remoteData && remoteData.customers) {
+            window.ERP_STATE = Object.assign({}, window.ERP_STATE, remoteData);
             localStorage.setItem("KHANEPANI_ERP_LOCAL_BACKUP", JSON.stringify(window.ERP_STATE));
             if (typeof renderCurrentModule === "function") renderCurrentModule();
           }
@@ -380,16 +332,16 @@
         onSnapshot(docRef, (docSnap) => {
           if (docSnap.exists() && !this.isSaving) {
             const remoteData = docSnap.data();
-            if (remoteData) {
+            if (remoteData && remoteData.customers) {
               const localState = window.ERP_STATE || {};
               const remoteTime = remoteData.lastModified || 0;
               const localTime = localState.lastModified || 0;
 
-              // क्लाउडको डाटा लेटेस्ट भएमा वा फरक भएमा मर्ज गर्ने
-              if (remoteTime !== localTime) {
-                window.ERP_STATE = this.mergeStates(localState, remoteData);
+              if (remoteTime >= localTime) {
+                window.ERP_STATE = Object.assign({}, window.ERP_STATE, remoteData);
                 localStorage.setItem("KHANEPANI_ERP_LOCAL_BACKUP", JSON.stringify(window.ERP_STATE));
                 
+                // 🌟 अर्को डिभाइसमा ग्लोबल मिति बक्स पनि अटोमेटिक अपडेट हुने बनाउने
                 const dateInput = document.getElementById("global-bs-date-input");
                 if (dateInput && window.ERP_STATE.activeBSDate) {
                   dateInput.value = window.ERP_STATE.activeBSDate;
