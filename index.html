@@ -286,7 +286,7 @@
 <!-- ==================== SYSTEM NOTIFICATION TOAST ==================== -->
 <div id="toast-box" class="fixed bottom-4 right-4 z-50 space-y-2 pointer-events-none"></div>
 
-<!-- ==================== FIREBASE & CORE CLOUD SYNC (FINAL STABLE SYNC) ==================== -->
+<!-- ==================== FIREBASE & CORE CLOUD SYNC (FINAL MASTER OVERWRITE SYNC) ==================== -->
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
   import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
@@ -296,7 +296,6 @@
     enabled: true,
     db: null,
     appId: 'khanepani-erp-hamro-sanstha',
-    isSaving: false,
 
     async init() {
       try {
@@ -319,40 +318,33 @@
 
         const docRef = doc(this.db, "artifacts", this.appId, "public", "data", "erp_state", "master_v1");
         
-        // सफ्टवेयर खोल्नेबित्तिकै क्लाउडबाट लेटेस्ट डाटा तानेर ल्याउने (Pull from Cloud)
+        // क्लाउडबाट मास्टर डेटा तान्ने
         const snap = await getDoc(docRef);
         if (snap.exists()) {
           const remoteData = snap.data();
-          if (remoteData && remoteData.customers) {
-            const localState = window.ERP_STATE || {};
-            const remoteTime = remoteData.lastModified || 0;
-            const localTime = localState.lastModified || 0;
-
-            // यदि क्लाउडको डाटा नयाँ छ वा लोकलभन्दा ठूलो छ भने क्लाउडकै डाटा मान्نے
-            if (remoteTime >= localTime || !localState.customers || localState.customers.length === 0) {
-              window.ERP_STATE = remoteData;
-            } else {
-              // यदि लोकल नयाँ छ भने लोकललाई प्राथमिकता दिने
-              window.ERP_STATE = localState;
-              this.save(); // क्लाउडमा पुश गर्ने
-            }
+          // यदि क्लाउडमा ग्राहक वा कुनै पनि डेटा अवस्थित छ भने त्यसलाई मुख्य मान्ने
+          if (remoteData && (remoteData.customers || remoteData.loans || remoteData.payments)) {
+            window.ERP_STATE = remoteData;
+            localStorage.setItem("KHANEPANI_ERP_LOCAL_BACKUP", JSON.stringify(window.ERP_STATE));
           }
         } else {
-          // यदि क्लाउडमा केही छैन भने पहिलो पटकको स्टेट सेभ गर्ने
+          // यदि क्लाउड पूर्ण खाली छ भने लोकल डेटालाई क्लाउडमा पठाउने
           await this.save();
         }
 
-        localStorage.setItem("KHANEPANI_ERP_LOCAL_BACKUP", JSON.stringify(window.ERP_STATE));
-        
         const dateInput = document.getElementById("global-bs-date-input");
         if (dateInput && window.ERP_STATE.activeBSDate) {
           dateInput.value = window.ERP_STATE.activeBSDate;
         }
 
+        if (typeof window.recalculateAllDynamicValues === "function") {
+          window.recalculateAllDynamicValues(false);
+        }
+
         if (typeof renderCurrentModule === "function") {
           renderCurrentModule();
         }
-        console.log("Data synced successfully on startup!");
+        console.log("Data synced successfully from cloud master!");
 
       } catch (err) {
         console.error("CloudSync Init Error:", err);
