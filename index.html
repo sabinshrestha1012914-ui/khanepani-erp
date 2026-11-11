@@ -286,7 +286,7 @@
 <!-- ==================== SYSTEM NOTIFICATION TOAST ==================== -->
 <div id="toast-box" class="fixed bottom-4 right-4 z-50 space-y-2 pointer-events-none"></div>
 
-<!-- ==================== FIREBASE & CORE CLOUD SYNC (SAFE MULTI-DEVICE TIMESTAMPS) ==================== -->
+<!-- ==================== FIREBASE & CORE CLOUD SYNC (SAFE MULTI-DEVICE MERGE) ==================== -->
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
   import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
@@ -298,6 +298,37 @@
     userId: null,
     appId: 'khanepani-erp-hamro-sanstha',
     isSaving: false,
+
+    // 🌟 डाटा सुरक्षित रूपमा मर्ज गर्ने फंक्सन (कुनै पनि डिभाइसको डाटा नउड्ने गरी)
+    mergeStates(local, remote) {
+      if (!remote) return local;
+      if (!local) return remote;
+
+      let mergedCustomers = [...(Array.isArray(local.customers) ? local.customers : [])];
+      
+      if (Array.isArray(remote.customers)) {
+        remote.customers.forEach(rc => {
+          const idx = mergedCustomers.findIndex(lc => lc.id === rc.id);
+          if (idx >= 0) {
+            const localTime = mergedCustomers[idx].lastModified || 0;
+            const remoteTime = rc.lastModified || 0;
+            if (remoteTime >= localTime) {
+              mergedCustomers[idx] = rc;
+            }
+          } else {
+            mergedCustomers.push(rc);
+          }
+        });
+      }
+
+      return {
+        ...local,
+        ...remote,
+        customers: mergedCustomers,
+        lastModified: Math.max(local.lastModified || 0, remote.lastModified || 0)
+      };
+    },
+
     async init() {
       try {
         const cfg = {
@@ -322,8 +353,9 @@
         const initialSnap = await getDoc(docRef);
         if (initialSnap.exists()) {
           const remoteData = initialSnap.data();
-          if (remoteData && remoteData.customers) {
-            window.ERP_STATE = Object.assign({}, window.ERP_STATE, remoteData);
+          if (remoteData) {
+            // सुरक्षित मर्ज प्रयोग गर्ने
+            window.ERP_STATE = this.mergeStates(window.ERP_STATE || {}, remoteData);
             localStorage.setItem("KHANEPANI_ERP_LOCAL_BACKUP", JSON.stringify(window.ERP_STATE));
             if (typeof renderCurrentModule === "function") renderCurrentModule();
           }
@@ -332,16 +364,17 @@
         onSnapshot(docRef, (docSnap) => {
           if (docSnap.exists() && !this.isSaving) {
             const remoteData = docSnap.data();
-            if (remoteData && remoteData.customers) {
+            if (remoteData) {
               const localState = window.ERP_STATE || {};
               const remoteTime = remoteData.lastModified || 0;
               const localTime = localState.lastModified || 0;
 
+              // यदि क्लाउडको डाटा नयाँ छ वा समय अगाडि छ भने मर्ज गर्ने
               if (remoteTime >= localTime) {
-                window.ERP_STATE = Object.assign({}, window.ERP_STATE, remoteData);
+                window.ERP_STATE = this.mergeStates(localState, remoteData);
                 localStorage.setItem("KHANEPANI_ERP_LOCAL_BACKUP", JSON.stringify(window.ERP_STATE));
                 
-                // 🌟 अर्को डिभाइसमा ग्लोबल मिति बक्स पनि अटोमेटिक अपडेट हुने बनाउने
+                // अर्को डिभाइसमा ग्लोबल मिति बक्स पनि अटोमेटिक अपडेट हुने
                 const dateInput = document.getElementById("global-bs-date-input");
                 if (dateInput && window.ERP_STATE.activeBSDate) {
                   dateInput.value = window.ERP_STATE.activeBSDate;
