@@ -286,7 +286,7 @@
 <!-- ==================== SYSTEM NOTIFICATION TOAST ==================== -->
 <div id="toast-box" class="fixed bottom-4 right-4 z-50 space-y-2 pointer-events-none"></div>
 
-<!-- ==================== FIREBASE & CORE CLOUD SYNC (SAFE MULTI-DEVICE TIMESTAMPS) ==================== -->
+<!-- ==================== FIREBASE & MULTI-DEVICE REALTIME SYNC (FIXED) ==================== -->
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
   import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
@@ -295,9 +295,9 @@
   window.cloudSync = {
     enabled: true,
     db: null,
-    userId: null,
     appId: 'khanepani-erp-hamro-sanstha',
-    isSaving: false,
+    lastServerTimestamp: 0,
+    
     async init() {
       try {
         const cfg = {
@@ -319,39 +319,40 @@
 
         const docRef = doc(this.db, "artifacts", this.appId, "public", "data", "erp_state", "master_v1");
         
-        const initialSnap = await getDoc(docRef);
-        if (initialSnap.exists()) {
-          const remoteData = initialSnap.data();
-          if (remoteData && remoteData.customers) {
+        // १. जुनसुकै बेला नयाँ डिभाइस वा ट्याब खोल्दा सर्भरमा भएको सबैभन्दा ताजा डाटा पहिले तान्ने
+        const snap = await getDoc(docRef);
+        if (snap.exists()) {
+          const remoteData = snap.data();
+          if (remoteData && remoteData.lastModified) {
+            this.lastServerTimestamp = remoteData.lastModified;
             window.ERP_STATE = Object.assign({}, window.ERP_STATE, remoteData);
             localStorage.setItem("KHANEPANI_ERP_LOCAL_BACKUP", JSON.stringify(window.ERP_STATE));
             if (typeof renderCurrentModule === "function") renderCurrentModule();
+            console.log("Initial fresh data loaded from cloud successfully!");
           }
         }
 
+        // २. Realtime Listener: एउटा डिभाइसमा इन्ट्री गर्नेबित्तिकै अर्को डिभाइसमा अटोमेटिक अपडेट हुने
         onSnapshot(docRef, (docSnap) => {
-          if (docSnap.exists() && !this.isSaving) {
+          if (docSnap.exists()) {
             const remoteData = docSnap.data();
-            if (remoteData && remoteData.customers) {
-              const localState = window.ERP_STATE || {};
-              const remoteTime = remoteData.lastModified || 0;
-              const localTime = localState.lastModified || 0;
+            const remoteTime = remoteData.lastModified || 0;
 
-              if (remoteTime >= localTime) {
-                window.ERP_STATE = Object.assign({}, window.ERP_STATE, remoteData);
-                localStorage.setItem("KHANEPANI_ERP_LOCAL_BACKUP", JSON.stringify(window.ERP_STATE));
-                
-                // 🌟 अर्को डिभाइसमा ग्लोबल मिति बक्स पनि अटोमेटिक अपडेट हुने बनाउने
-                const dateInput = document.getElementById("global-bs-date-input");
-                if (dateInput && window.ERP_STATE.activeBSDate) {
-                  dateInput.value = window.ERP_STATE.activeBSDate;
-                }
-
-                if (typeof renderCurrentModule === "function") {
-                  renderCurrentModule();
-                }
-                console.log("Data auto-synced safely from cloud!");
+            // यदि सर्भरको डाटा लोकल भन्दा नयाँ छ भने मात्र स्क्रीन र डाटा अपडेट गर्ने
+            if (remoteTime > this.lastServerTimestamp) {
+              this.lastServerTimestamp = remoteTime;
+              window.ERP_STATE = Object.assign({}, window.ERP_STATE, remoteData);
+              localStorage.setItem("KHANEPANI_ERP_LOCAL_BACKUP", JSON.stringify(window.ERP_STATE));
+              
+              const dateInput = document.getElementById("global-bs-date-input");
+              if (dateInput && window.ERP_STATE.activeBSDate) {
+                dateInput.value = window.ERP_STATE.activeBSDate;
               }
+
+              if (typeof renderCurrentModule === "function") {
+                renderCurrentModule();
+              }
+              console.log("Data auto-synced safely from another device!");
             }
           }
         }, (error) => {
@@ -364,26 +365,27 @@
     },
 
     async save() {
-      if (!window.ERP_STATE) return;
-      window.ERP_STATE.lastModified = Date.now();
-      localStorage.setItem("KHANEPANI_ERP_LOCAL_BACKUP", JSON.stringify(window.ERP_STATE));
-      if (!this.enabled || !this.db) return;
+      if (!window.ERP_STATE || !this.enabled || !this.db) return;
       try {
-        this.isSaving = true;
+        const now = Date.now();
+        window.ERP_STATE.lastModified = now;
+        this.lastServerTimestamp = now;
+        
+        // लोकल ब्याकअप सेभ
+        localStorage.setItem("KHANEPANI_ERP_LOCAL_BACKUP", JSON.stringify(window.ERP_STATE));
+        
+        // सर्भरमा सेभ
         const docRef = doc(this.db, "artifacts", this.appId, "public", "data", "erp_state", "master_v1");
         await setDoc(docRef, window.ERP_STATE);
-        console.log("Data saved to cloud successfully!");
+        console.log("Data saved to cloud successfully at:", now);
       } catch (err) {
         console.error("CloudSync Save Error:", err);
-      } finally {
-        setTimeout(() => { this.isSaving = false; }, 1000);
       }
     }
   };
+
   window.cloudSync.init();
 </script>
-
-<script>
 
 // ============================================================================
 // 1. NEPALI BIKRAM SAMBAT (BS) DATE ENGINE & NUMBER-TO-NEPALI-WORDS CONVERTER
