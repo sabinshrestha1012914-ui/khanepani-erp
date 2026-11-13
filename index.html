@@ -2117,6 +2117,13 @@ let statementStartDate = "";
 let statementEndDate = "";
 
 // ============================================================================
+// MONEY ROUNDING HELPER
+// ============================================================================
+function amountRound(value) {
+  return Math.round((Number(value) || 0) * 100) / 100;
+}
+
+// ============================================================================
 // CUSTOMER-WISE TOTAL DUE CALCULATION
 // ============================================================================
 function getAmountReadingDues(r) {
@@ -2135,9 +2142,9 @@ function getAmountReadingDues(r) {
   );
 
   return {
-    baseDue: Math.round(baseDue * 100) / 100,
-    maintDue: Math.round(maintDue * 100) / 100,
-    penaltyDue: Math.round(penaltyDue * 100) / 100
+    baseDue: amountRound(baseDue),
+    maintDue: amountRound(maintDue),
+    penaltyDue: amountRound(penaltyDue)
   };
 }
 
@@ -2159,8 +2166,12 @@ function getCustomerAmountSummary(customer) {
 
   allReadings.forEach(r => {
     const d = getAmountReadingDues(r);
-    const readingDue = d.baseDue + d.maintDue + d.penaltyDue;
 
+    const readingDue = amountRound(
+      d.baseDue + d.maintDue + d.penaltyDue
+    );
+
+    // शून्य वा नगण्य बाँकी भएका महिना सूचीमा नराख्ने
     if (readingDue > 0.009) {
       readings.push(r);
       baseDue += d.baseDue;
@@ -2169,15 +2180,17 @@ function getCustomerAmountSummary(customer) {
     }
   });
 
-  const openingDue = Math.max(0, Number(customer.openingDue || 0));
+  const openingDue = amountRound(
+    Math.max(0, Number(customer.openingDue || 0))
+  );
 
-  baseDue = Math.round(baseDue * 100) / 100;
-  maintDue = Math.round(maintDue * 100) / 100;
-  penaltyDue = Math.round(penaltyDue * 100) / 100;
+  baseDue = amountRound(baseDue);
+  maintDue = amountRound(maintDue);
+  penaltyDue = amountRound(penaltyDue);
 
-  const totalDue = Math.round(
-    (openingDue + baseDue + maintDue + penaltyDue) * 100
-  ) / 100;
+  const totalDue = amountRound(
+    openingDue + baseDue + maintDue + penaltyDue
+  );
 
   const months = [
     ...new Set(readings.map(r => r.month).filter(Boolean))
@@ -2200,7 +2213,7 @@ function getCustomerAmountSummary(customer) {
 function applyCustomerPayment(cust, amount) {
   const st = window.ERP_STATE;
 
-  let remaining = Math.round(Number(amount) * 100) / 100;
+  let remaining = amountRound(amount);
 
   let openingPaid = 0;
   let billPaid = 0;
@@ -2208,18 +2221,27 @@ function applyCustomerPayment(cust, amount) {
   let penaltyPaid = 0;
 
   // 1. Opening due first
-  const openingDue = Math.max(0, Number(cust.openingDue || 0));
+  const openingDue = Math.max(
+    0,
+    Number(cust.openingDue || 0)
+  );
 
   if (openingDue > 0 && remaining > 0) {
-    openingPaid = Math.min(remaining, openingDue);
+    openingPaid = amountRound(
+      Math.min(remaining, openingDue)
+    );
 
-    cust.openingDue = Math.round(
-      (openingDue - openingPaid) * 100
-    ) / 100;
+    cust.openingDue = amountRound(
+      openingDue - openingPaid
+    );
 
-    remaining = Math.round(
-      (remaining - openingPaid) * 100
-    ) / 100;
+    remaining = amountRound(
+      remaining - openingPaid
+    );
+
+    if (cust.openingDue < 0.01) {
+      cust.openingDue = 0;
+    }
   }
 
   // 2. Oldest reading first
@@ -2227,59 +2249,78 @@ function applyCustomerPayment(cust, amount) {
     .filter(r => r.customerId === cust.id)
     .slice()
     .sort((a, b) => {
-      return (a.entryDate || "").localeCompare(b.entryDate || "");
+      return (a.entryDate || "").localeCompare(
+        b.entryDate || ""
+      );
     });
 
   customerReadings.forEach(r => {
     if (remaining <= 0.009) return;
 
-    // Penalty
-    const dues = getAmountReadingDues(r);
-    const pApply = Math.min(remaining, dues.penaltyDue);
+    // Penalty first
+    let dues = getAmountReadingDues(r);
+
+    const pApply = amountRound(
+      Math.min(remaining, dues.penaltyDue)
+    );
 
     if (pApply > 0) {
-      r.paidPenaltyAmount =
-        Number(r.paidPenaltyAmount || 0) + pApply;
+      r.paidPenaltyAmount = amountRound(
+        Number(r.paidPenaltyAmount || 0) + pApply
+      );
 
-      penaltyPaid += pApply;
-      remaining = Math.round((remaining - pApply) * 100) / 100;
+      penaltyPaid = amountRound(penaltyPaid + pApply);
+      remaining = amountRound(remaining - pApply);
     }
 
     if (remaining <= 0.009) return;
 
-    // Maintenance
-    const currentDues = getAmountReadingDues(r);
-    const mApply = Math.min(remaining, currentDues.maintDue);
+    // Maintenance second
+    dues = getAmountReadingDues(r);
+
+    const mApply = amountRound(
+      Math.min(remaining, dues.maintDue)
+    );
 
     if (mApply > 0) {
-      r.paidMaintAmount =
-        Number(r.paidMaintAmount || 0) + mApply;
+      r.paidMaintAmount = amountRound(
+        Number(r.paidMaintAmount || 0) + mApply
+      );
 
-      maintPaid += mApply;
-      remaining = Math.round((remaining - mApply) * 100) / 100;
+      maintPaid = amountRound(maintPaid + mApply);
+      remaining = amountRound(remaining - mApply);
     }
 
     if (remaining <= 0.009) return;
 
-    // Water bill
-    const latestDues = getAmountReadingDues(r);
-    const bApply = Math.min(remaining, latestDues.baseDue);
+    // Water bill last
+    dues = getAmountReadingDues(r);
+
+    const bApply = amountRound(
+      Math.min(remaining, dues.baseDue)
+    );
 
     if (bApply > 0) {
-      r.paidAmount = Number(r.paidAmount || 0) + bApply;
+      r.paidAmount = amountRound(
+        Number(r.paidAmount || 0) + bApply
+      );
 
-      billPaid += bApply;
-      remaining = Math.round((remaining - bApply) * 100) / 100;
+      billPaid = amountRound(billPaid + bApply);
+      remaining = amountRound(remaining - bApply);
     }
   });
 
-  // Extra payment is not silently allocated to a bill.
+  // Rounding difference हटाउने
+  if (remaining < 0.01) {
+    remaining = 0;
+  }
+
   return {
-    openingPaid: Math.round(openingPaid * 100) / 100,
-    billPaid: Math.round(billPaid * 100) / 100,
-    maintPaid: Math.round(maintPaid * 100) / 100,
-    penaltyPaid: Math.round(penaltyPaid * 100) / 100,
-    unallocated: Math.round(remaining * 100) / 100
+    openingPaid: amountRound(openingPaid),
+    billPaid: amountRound(billPaid),
+    maintPaid: amountRound(maintPaid),
+    penaltyPaid: amountRound(penaltyPaid),
+    unallocated: amountRound(remaining)
   };
 }
 
@@ -2288,6 +2329,7 @@ function applyCustomerPayment(cust, amount) {
 // ============================================================================
 function renderAmountEntryModule() {
   const st = window.ERP_STATE;
+
   const nextRec = `REC-${parseBS(st.activeBSDate).y}-${st.settings.receiptCounter}`;
 
   let selectedCust = st.customers.find(
@@ -2313,7 +2355,10 @@ function renderAmountEntryModule() {
   const duePen = singleSummary.penaltyDue;
   const totalDue = singleSummary.totalDue;
 
-  // Only customers with outstanding dues appear in Bulk Collection.
+  // ============================================================
+  // BULK COLLECTION:
+  // बाँकी रकम 0.009 भन्दा बढी भएका ग्राहक मात्र देखाउने
+  // ============================================================
   const bulkCustomerRows = st.customers
     .map(c => ({
       customer: c,
@@ -2630,7 +2675,9 @@ function generateCustomerDateRangeStatement() {
   statementStartDate = document.getElementById("statement-start-date").value.trim();
   statementEndDate = document.getElementById("statement-end-date").value.trim();
 
-  const cust = st.customers.find(c => c.id === selectedSingleCustId);
+  const cust = st.customers.find(
+    c => c.id === selectedSingleCustId
+  );
 
   if (!cust) {
     return showToast("कृपया वैध ग्राहक छान्नुहोस्।", "error");
@@ -2775,9 +2822,9 @@ function submitSingleAmountEntry(e) {
   const date = document.getElementById("amt-date").value.trim()
     || st.activeBSDate;
 
-  const paid = Math.round(
-    (Number(document.getElementById("amt-paid-input").value) || 0) * 100
-  ) / 100;
+  const paid = amountRound(
+    document.getElementById("amt-paid-input").value
+  );
 
   if (paid <= 0) {
     return showToast("कृपया मान्य रकम राख्नुहोस्।", "error");
@@ -2820,10 +2867,22 @@ function submitSingleAmountEntry(e) {
   st.payments.push(payObj);
 
   window.recalculateAllDynamicValues(false);
+
+  // भुक्तानीपछि बाँकी रकम पुनः जाँच
+  const updatedSummary = getCustomerAmountSummary(cust);
+
   renderCurrentModule();
 
   printWaterReceipt(payObj.id);
-  showToast(`रसिद नं. ${recNo} सुरक्षित भयो!`, "success");
+
+  if (updatedSummary.totalDue <= 0.009) {
+    showToast(
+      `रसिद नं. ${recNo} सुरक्षित भयो। ग्राहकको सबै बाँकी भुक्तानी पूरा भयो।`,
+      "success"
+    );
+  } else {
+    showToast(`रसिद नं. ${recNo} सुरक्षित भयो!`, "success");
+  }
 }
 
 // ============================================================================
@@ -2841,9 +2900,7 @@ function submitBulkAmountEntry() {
   let skipped = 0;
 
   inputs.forEach((inp, index) => {
-    const val = Math.round(
-      (Number(inp.value) || 0) * 100
-    ) / 100;
+    const val = amountRound(inp.value);
 
     if (val <= 0) return;
 
@@ -2855,9 +2912,10 @@ function submitBulkAmountEntry() {
       return;
     }
 
-    // Recalculate the current due before accepting payment.
+    // प्रत्येक ग्राहकको हालको बाँकी रकम पुनः गणना
     const summary = getCustomerAmountSummary(cust);
 
+    // पहिले नै पूरा भुक्तानी भएको ग्राहकलाई छोड्ने
     if (summary.totalDue <= 0.009) {
       skipped++;
       return;
@@ -2865,10 +2923,12 @@ function submitBulkAmountEntry() {
 
     if (val > summary.totalDue + 0.009) {
       skipped++;
+
       showToast(
         `${cust.name}: कुल बाँकी ${fmtMoney(summary.totalDue)} मात्र छ।`,
         "warning"
       );
+
       return;
     }
 
@@ -2876,6 +2936,12 @@ function submitBulkAmountEntry() {
 
     if (allocation.unallocated > 0.009) {
       skipped++;
+
+      showToast(
+        `${cust.name}: रकम बाँडफाँट हुन सकेन।`,
+        "warning"
+      );
+
       return;
     }
 
@@ -2901,14 +2967,26 @@ function submitBulkAmountEntry() {
 
   if (count > 0) {
     window.recalculateAllDynamicValues(false);
+
+    // महत्वपूर्ण:
+    // भुक्तानीपछि render गर्दा getCustomerAmountSummary()
+    // ले पुनः बाँकी रकम जाँच्छ।
+    // बाँकी 0 भएका ग्राहक Bulk सूचीबाट हट्छन्।
     renderCurrentModule();
 
     showToast(
-      `${count} जना ग्राहकको रकम सेभ भयो। प्रत्येक ग्राहकको छुट्टै रसिद तयार भयो।`,
+      `${count} जना ग्राहकको रकम सेभ भयो। पूरा भुक्तानी भएका ग्राहक Bulk सूचीबाट हटाइएका छन्। प्रत्येक ग्राहकको छुट्टै रसिद तयार भयो।`,
       "success"
     );
   } else if (skipped === 0) {
     showToast("कृपया बुझाएको रकम राख्नुहोस्।", "warning");
+  } else {
+    renderCurrentModule();
+
+    showToast(
+      "भुक्तानी गर्न मिल्ने रकम भेटिएन। बाँकी रकम जाँच गर्नुहोस्।",
+      "warning"
+    );
   }
 }
 
@@ -2924,17 +3002,20 @@ function modifyPaymentRecord(payId) {
   const p = st.payments[idx];
 
   if (p.openingPaid > 0) {
-    const cust = st.customers.find(c => c.id === p.customerId);
+    const cust = st.customers.find(
+      c => c.id === p.customerId
+    );
 
     if (cust) {
-      cust.openingDue =
-        Number(cust.openingDue || 0) + Number(p.openingPaid);
+      cust.openingDue = amountRound(
+        Number(cust.openingDue || 0) + Number(p.openingPaid)
+      );
     }
   }
 
-  let refundBill = Number(p.billPaid || 0);
-  let refundMaint = Number(p.maintPaid || 0);
-  let refundPenalty = Number(p.penaltyPaid || 0);
+  let refundBill = amountRound(p.billPaid || 0);
+  let refundMaint = amountRound(p.maintPaid || 0);
+  let refundPenalty = amountRound(p.penaltyPaid || 0);
 
   const customerReadings = st.readings
     .filter(r => r.customerId === p.customerId)
@@ -2943,25 +3024,29 @@ function modifyPaymentRecord(payId) {
 
   customerReadings.forEach(r => {
     if (refundBill > 0 && Number(r.paidAmount || 0) > 0) {
-      const rev = Math.min(refundBill, Number(r.paidAmount));
-
-      r.paidAmount = Math.max(
-        0,
-        Number(r.paidAmount || 0) - rev
+      const rev = Math.min(
+        refundBill,
+        Number(r.paidAmount)
       );
 
-      refundBill = Math.round((refundBill - rev) * 100) / 100;
+      r.paidAmount = amountRound(
+        Math.max(0, Number(r.paidAmount || 0) - rev)
+      );
+
+      refundBill = amountRound(refundBill - rev);
     }
 
     if (refundMaint > 0 && Number(r.paidMaintAmount || 0) > 0) {
-      const revM = Math.min(refundMaint, Number(r.paidMaintAmount));
-
-      r.paidMaintAmount = Math.max(
-        0,
-        Number(r.paidMaintAmount || 0) - revM
+      const revM = Math.min(
+        refundMaint,
+        Number(r.paidMaintAmount)
       );
 
-      refundMaint = Math.round((refundMaint - revM) * 100) / 100;
+      r.paidMaintAmount = amountRound(
+        Math.max(0, Number(r.paidMaintAmount || 0) - revM)
+      );
+
+      refundMaint = amountRound(refundMaint - revM);
     }
 
     if (refundPenalty > 0 && Number(r.paidPenaltyAmount || 0) > 0) {
@@ -2970,12 +3055,11 @@ function modifyPaymentRecord(payId) {
         Number(r.paidPenaltyAmount || 0)
       );
 
-      r.paidPenaltyAmount = Math.max(
-        0,
-        Number(r.paidPenaltyAmount || 0) - revP
+      r.paidPenaltyAmount = amountRound(
+        Math.max(0, Number(r.paidPenaltyAmount || 0) - revP)
       );
 
-      refundPenalty = Math.round((refundPenalty - revP) * 100) / 100;
+      refundPenalty = amountRound(refundPenalty - revP);
     }
   });
 
@@ -3002,7 +3086,9 @@ function printWaterReceipt(payId) {
 
   if (!p) return;
 
-  const c = st.customers.find(x => x.id === p.customerId) || {
+  const c = st.customers.find(
+    x => x.id === p.customerId
+  ) || {
     id: p.customerId,
     name: p.customerId,
     address: "-",
