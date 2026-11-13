@@ -1835,7 +1835,7 @@ function sendNextWhatsappNow(continueLoop = false) {
 }
 
 // ============================================================================
-// 8. AMOUNT ENTRY & PRINTABLE RECEIPT (Updated)
+// 8. AMOUNT ENTRY & PRINTABLE RECEIPT (Fully Fixed & Optimized)
 // ============================================================================
 let amountEntryMode = "single";
 let selectedSingleCustId = "";
@@ -1987,6 +1987,7 @@ function renderAmountEntryModule() {
                   const maintDue = custBills.reduce((s, r) => s + Math.max(0, Number(r.maintenanceAmount || 0) - Number(r.paidMaintAmount || 0)), 0);
                   const penDue = custBills.reduce((s, r) => s + Number(r.penaltyAmount || 0), 0);
                   const totalDue = Math.round((opDue + baseDue + maintDue + penDue) * 100) / 100;
+                  
                   if (totalDue <= 0) return '';
                   return `
                     <tr>
@@ -2002,7 +2003,7 @@ function renderAmountEntryModule() {
                       </td>
                     </tr>
                   `;
-                }).join("") || `<tr><td colspan="8" class="p-6 text-center text-slate-400">कुनै बाँकी बक्यौता नरहेको वा ग्राहक दर्ता नभएको।</td></tr>`}
+                }).join("") || `<tr><td colspan="8" class="p-6 text-center text-slate-400">कुनै बाँकी बक्यौता नरहेको वा सबै चुक्ता भइसकेको छ।</td></tr>`}
               </tbody>
             </table>
           </div>
@@ -2065,6 +2066,163 @@ function renderAmountEntryModule() {
   `;
 }
 
+function generateCustomerDateRangeStatement() {
+  const st = window.ERP_STATE;
+  statementStartDate = document.getElementById("statement-start-date").value.trim();
+  statementEndDate = document.getElementById("statement-end-date").value.trim();
+  const cust = st.customers.find(c => c.id === selectedSingleCustId);
+  if (!cust) return showToast("कृपया वैध ग्राहक छान्नुहोस्।", "error");
+
+  let filteredPayments = st.payments.filter(p => p.customerId === cust.id && isDateBetweenBS(p.date, statementStartDate || null, statementEndDate || null));
+
+  const totalOpeningPaid = filteredPayments.reduce((sum, p) => sum + Number(p.openingPaid || 0), 0);
+  const totalBillPaid = filteredPayments.reduce((sum, p) => sum + Number(p.billPaid || 0), 0);
+  const totalMaintPaid = filteredPayments.reduce((sum, p) => sum + Number(p.maintPaid || 0), 0);
+  const totalPenaltyPaid = filteredPayments.reduce((sum, p) => sum + Number(p.penaltyPaid || 0), 0);
+  const grandTotalPaid = filteredPayments.reduce((sum, p) => sum + Number(p.totalPaid || 0), 0);
+
+  const html = `
+    <div class="border-2 border-slate-800 p-6 rounded-xl space-y-4 bg-white">
+      <div class="flex items-center justify-between border-b-2 border-slate-800 pb-3">
+        <div class="flex items-center gap-3">
+          ${st.settings.logoDataUrl ? `<img src="${st.settings.logoDataUrl}" class="w-14 h-14 object-contain">` : `<div class="w-12 h-12 rounded-full bg-teal-700 text-white flex items-center justify-center font-bold text-lg">खा.पा.</div>`}
+          <div>
+            <h2 class="text-lg font-bold text-slate-900">${st.settings.committeeName}</h2>
+            <p class="text-xs text-slate-600">${st.settings.address} | फोन: ${st.settings.phone}</p>
+          </div>
+        </div>
+        <div class="text-right">
+          <span class="px-3 py-1 bg-indigo-900 text-white text-xs font-bold rounded">ग्राहक ट्रान्जेक्सन स्टेटमेन्ट</span>
+          <div class="text-xs font-semibold mt-1">अवधि: ${statementStartDate || 'सुरु देखि'} देखि ${statementEndDate || 'हालसम्म'}</div>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-2 gap-2 text-xs bg-slate-50 p-3 rounded border border-slate-300">
+        <div><strong>ग्राहक आइडी:</strong> ${cust.id}</div>
+        <div><strong>फोन नं.:</strong> ${cust.phone || '-'}</div>
+        <div><strong>ग्राहकको नाम:</strong> ${cust.name}</div>
+        <div><strong>हालको ओपनिङ बक्यौता:</strong> ${fmtMoney(cust.openingDue || 0)}</div>
+      </div>
+
+      <table class="w-full text-xs border-collapse border border-slate-400">
+        <thead>
+          <tr class="bg-slate-100">
+            <th class="border border-slate-400 p-2 text-left">रसिद नं.</th>
+            <th class="border border-slate-400 p-2 text-left">मिति (BS)</th>
+            <th class="border border-slate-400 p-2 text-right">ओपनिङ</th>
+            <th class="border border-slate-400 p-2 text-right">महसुल</th>
+            <th class="border border-slate-400 p-2 text-right">मर्मत</th>
+            <th class="border border-slate-400 p-2 text-right">जरिवाना</th>
+            <th class="border border-slate-400 p-2 text-right">कुल जम्मा</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${filteredPayments.length > 0 ? filteredPayments.map(p => `
+            <tr>
+              <td class="border border-slate-400 p-2 font-bold text-teal-800">${p.receiptNo}</td>
+              <td class="border border-slate-400 p-2">${p.date}</td>
+              <td class="border border-slate-400 p-2 text-right">${fmtMoney(p.openingPaid || 0)}</td>
+              <td class="border border-slate-400 p-2 text-right">${fmtMoney(p.billPaid || 0)}</td>
+              <td class="border border-slate-400 p-2 text-right">${fmtMoney(p.maintPaid || 0)}</td>
+              <td class="border border-slate-400 p-2 text-right">${fmtMoney(p.penaltyPaid || 0)}</td>
+              <td class="border border-slate-400 p-2 text-right font-bold">${fmtMoney(p.totalPaid || 0)}</td>
+            </tr>
+          `).join("") : `<tr><td colspan="7" class="border border-slate-400 p-4 text-center text-slate-500">तोकिएको मिति दायराभित्र कुनै पनि ट्रान्जेक्सन फेला परेन।</td></tr>`}
+          <tr class="bg-slate-100 font-bold">
+            <td colspan="2" class="border border-slate-400 p-2 text-right">कुल योग:</td>
+            <td class="border border-slate-400 p-2 text-right">${fmtMoney(totalOpeningPaid)}</td>
+            <td class="border border-slate-400 p-2 text-right">${fmtMoney(totalBillPaid)}</td>
+            <td class="border border-slate-400 p-2 text-right">${fmtMoney(totalMaintPaid)}</td>
+            <td class="border border-slate-400 p-2 text-right">${fmtMoney(totalPenaltyPaid)}</td>
+            <td class="border border-slate-400 p-2 text-right text-teal-900">${fmtMoney(grandTotalPaid)}</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div class="text-xs p-2.5 bg-slate-50 border border-slate-300 rounded">
+        <strong>अक्षरमा कुल रकम:</strong> <u>${numberToNepaliWords(grandTotalPaid)}</u>
+      </div>
+      <div class="flex justify-between items-end pt-8 text-xs">
+        <div>तयार गर्नेको सही: ______________________</div>
+        <div class="text-right">
+          <div>______________________</div>
+          <div class="font-semibold">${st.settings.authorizedPerson}</div>
+          <div class="text-[10px] text-slate-500">आधिकारिक सही / छाप</div>
+        </div>
+      </div>
+    </div>
+  `;
+  openPrintModal(`ग्राहक स्टेटमेन्ट - ${cust.name}`, html);
+}
+
+function submitSingleAmountEntry(e) {
+  e.preventDefault();
+  const st = window.ERP_STATE;
+  const cid = selectedSingleCustId;
+  const cust = st.customers.find(c => c.id === cid);
+  if (!cust) return showToast("कृपया वैध ग्राहक छान्नुहोस्।", "error");
+
+  const date = document.getElementById("amt-date").value.trim() || st.activeBSDate;
+  const paid = Number(document.getElementById("amt-paid-input").value) || 0;
+  if (paid <= 0) return showToast("कृपया मान्य रकम राख्नुहोस्।", "error");
+
+  const recNo = `REC-${parseBS(date).y}-${st.settings.receiptCounter++}`;
+  let remaining = paid;
+  let openingPaid = 0;
+  let billPaid = 0;
+  let maintPaid = 0;
+  let penaltyPaid = 0;
+
+  if (Number(cust.openingDue || 0) > 0) {
+    const opApply = Math.min(remaining, Number(cust.openingDue));
+    openingPaid = opApply;
+    cust.openingDue = Math.round((Number(cust.openingDue) - opApply) * 100) / 100;
+    remaining = Math.round((remaining - opApply) * 100) / 100;
+  }
+
+  st.readings.filter(r => r.customerId === cid && getReadingRemaining(r) > 0).forEach(r => {
+    if (remaining <= 0) return;
+
+    const pen = Number(r.penaltyAmount || 0);
+    const pApply = Math.min(remaining, pen);
+    penaltyPaid += pApply;
+    remaining = Math.round((remaining - pApply) * 100) / 100;
+
+    const maintDue = Math.max(0, Number(r.maintenanceAmount || 0) - Number(r.paidMaintAmount || 0));
+    const mApply = Math.min(remaining, maintDue);
+    r.paidMaintAmount = Number(r.paidMaintAmount || 0) + mApply;
+    maintPaid += mApply;
+    remaining = Math.round((remaining - mApply) * 100) / 100;
+
+    const baseDue = Math.max(0, (Number(r.billAmount) - Number(r.maintenanceAmount || 0)) - Number(r.paidAmount || 0));
+    const bApply = Math.min(remaining, baseDue);
+    r.paidAmount = Number(r.paidAmount || 0) + bApply;
+    billPaid += bApply;
+    remaining = Math.round((remaining - bApply) * 100) / 100;
+  });
+
+  if (remaining > 0) billPaid += remaining;
+
+  const payObj = {
+    id: "PAY-" + Date.now(),
+    receiptNo: recNo,
+    customerId: cid,
+    date,
+    month: st.activeBSDate,
+    openingPaid,
+    billPaid,
+    maintPaid,
+    penaltyPaid,
+    totalPaid: paid,
+    mode: "नगद"
+  };
+  st.payments.push(payObj);
+  window.recalculateAllDynamicValues(false);
+  renderCurrentModule();
+  printWaterReceipt(payObj.id);
+  showToast(`रसिद नं. ${recNo} सुरक्षित भयो!`, "success");
+}
+
 function submitBulkAmountEntry() {
   const st = window.ERP_STATE;
   const date = document.getElementById("bulk-amt-date").value.trim() || st.activeBSDate;
@@ -2083,7 +2241,6 @@ function submitBulkAmountEntry() {
     let maintPaid = 0;
     let penaltyPaid = 0;
 
-    // 1. Pay opening due first
     if (Number(cust.openingDue || 0) > 0) {
       const opApply = Math.min(remaining, Number(cust.openingDue));
       openingPaid = opApply;
@@ -2091,7 +2248,6 @@ function submitBulkAmountEntry() {
       remaining = Math.round((remaining - opApply) * 100) / 100;
     }
 
-    // 2. Pay readings chronologically (oldest / earliest first)
     st.readings.filter(r => r.customerId === cid && getReadingRemaining(r) > 0).forEach(r => {
       if (remaining <= 0) return;
 
@@ -2134,7 +2290,116 @@ function submitBulkAmountEntry() {
 
   window.recalculateAllDynamicValues(false);
   renderCurrentModule();
-  showToast(`${count} जना ग्राहकको बल्क अमाउन्ट इन्ट्री सुरक्षित भयो र पुरानो महिनाबाट स्वतः मिलान भयो!`, "success");
+  showToast(`${count} जना ग्राहकको बल्क अमाउन्ट इन्ट्री सुरक्षित भयो!`, "success");
+}
+
+function modifyPaymentRecord(payId) {
+  const st = window.ERP_STATE;
+  const idx = st.payments.findIndex(p => p.id === payId);
+  if (idx < 0) return;
+  const p = st.payments[idx];
+
+  // १. ओपनिङ बक्यौता फिर्ता गर्ने
+  if (Number(p.openingPaid || 0) > 0) {
+    const cust = st.customers.find(c => c.id === p.customerId);
+    if (cust) {
+      cust.openingDue = Math.round((Number(cust.openingDue || 0) + Number(p.openingPaid)) * 100) / 100;
+    }
+  }
+
+  let refundBill = Number(p.billPaid || 0);
+  let refundMaint = Number(p.maintPaid || 0);
+
+  // २. रिडिङ/बिलहरूमा गएको भुक्तानी रकम घटाएर फेरि बाँकी देखाउने (Reverse गर्ने)
+  st.readings.filter(r => r.customerId === p.customerId).reverse().forEach(r => {
+    if (refundBill > 0 && Number(r.paidAmount || 0) > 0) {
+      const rev = Math.min(refundBill, Number(r.paidAmount));
+      r.paidAmount = Math.round((Number(r.paidAmount) - rev) * 100) / 100;
+      refundBill = Math.round((refundBill - rev) * 100) / 100;
+    }
+    if (refundMaint > 0 && Number(r.paidMaintAmount || 0) > 0) {
+      const revM = Math.min(refundMaint, Number(r.paidMaintAmount));
+      r.paidMaintAmount = Math.round((Number(r.paidMaintAmount) - revM) * 100) / 100;
+      refundMaint = Math.round((refundMaint - revM) * 100) / 100;
+    }
+  });
+
+  // ३. payments सूचीबाट यो रसिद हटाउने
+  st.payments.splice(idx, 1);
+  selectedSingleCustId = p.customerId;
+  amountEntryMode = "single";
+  
+  window.recalculateAllDynamicValues(false);
+  renderCurrentModule();
+  showToast(`रसिद ${p.receiptNo} संशोधनका लागि हटाइयो। बक्यौता रकम पुन: जोडिएको छ।`, "info");
+}
+
+function printWaterReceipt(payId) {
+  const st = window.ERP_STATE;
+  const p = st.payments.find(x => x.id === payId);
+  if (!p) return;
+  const c = st.customers.find(x => x.id === p.customerId) || { id: p.customerId, name: p.customerId, address: "-", phone: "-" };
+  const s = st.settings;
+
+  const hasOpening = Number(p.openingPaid || 0) > 0;
+  const hasMaint = Number(p.maintPaid || 0) > 0;
+  let serialNo = 1;
+
+  const html = `
+    <div class="border-2 border-slate-800 p-6 rounded-lg space-y-4">
+      <div class="flex items-center justify-between border-b-2 border-slate-800 pb-3">
+        <div class="flex items-center gap-3">
+          ${s.logoDataUrl ? `<img src="${s.logoDataUrl}" class="w-14 h-14 object-contain">` : `<div class="w-12 h-12 rounded-full bg-teal-700 text-white flex items-center justify-center font-bold text-lg">खा.पा.</div>`}
+          <div>
+            <h2 class="text-lg font-bold text-slate-900">${s.committeeName}</h2>
+            <p class="text-xs text-slate-600">${s.address} | फोन: ${s.phone}</p>
+          </div>
+        </div>
+        <div class="text-right">
+          <span class="px-3 py-1 bg-slate-900 text-white text-xs font-bold rounded">खानेपानी महसुल तथा मर्मत रसिद</span>
+          <div class="text-xs font-bold mt-1">रसिद नं.: ${p.receiptNo}</div>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-2 gap-2 text-xs bg-slate-50 p-3 rounded border border-slate-300">
+        <div><strong>ग्राहक आइडी:</strong> ${c.id}</div>
+        <div><strong>फोन नं.:</strong> ${c.phone}</div>
+        <div><strong>ग्राहकको नाम:</strong> ${c.name}</div>
+        <div><strong>ठेगाना:</strong> ${c.address}</div>
+      </div>
+
+      <table class="w-full text-xs border-collapse border border-slate-400">
+        <thead>
+          <tr class="bg-slate-100">
+            <th class="border border-slate-400 p-2 text-left">क्र.सं.</th>
+            <th class="border border-slate-400 p-2 text-left">विवरण</th>
+            <th class="border border-slate-400 p-2 text-right">रकम (रू.)</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${hasOpening ? `<tr><td class="border border-slate-400 p-2">${serialNo++}</td><td class="border border-slate-400 p-2">गत वर्षको ओपनिङ बक्यौता भुक्तानी</td><td class="border border-slate-400 p-2 text-right font-semibold">${fmtMoney(p.openingPaid)}</td></tr>` : ''}
+          <tr><td class="border border-slate-400 p-2">${serialNo++}</td><td class="border border-slate-400 p-2">खानेपानी महसुल भुक्तानी</td><td class="border border-slate-400 p-2 text-right font-semibold">${fmtMoney(p.billPaid)}</td></tr>
+          ${hasMaint ? `<tr><td class="border border-slate-400 p-2">${serialNo++}</td><td class="border border-slate-400 p-2">पाइप/धारा मर्मत शुल्क (मर्मत आम्दानी)</td><td class="border border-slate-400 p-2 text-right font-semibold">${fmtMoney(p.maintPaid)}</td></tr>` : ''}
+          <tr><td class="border border-slate-400 p-2">${serialNo++}</td><td class="border border-slate-400 p-2">विलम्ब जरिवाना रकम</td><td class="border border-slate-400 p-2 text-right font-semibold">${fmtMoney(p.penaltyPaid)}</td></tr>
+          <tr class="bg-slate-100 font-bold"><td colspan="2" class="border border-slate-400 p-2 text-right">कुल जम्मा प्राप्त रकम:</td><td class="border border-slate-400 p-2 text-right text-sm">${fmtMoney(p.totalPaid)}</td></tr>
+        </tbody>
+      </table>
+
+      <div class="text-xs p-2.5 bg-slate-50 border border-slate-300 rounded">
+        <strong>रकम अक्षरमा:</strong> <u>${numberToNepaliWords(p.totalPaid)}</u>
+      </div>
+
+      <div class="flex justify-between items-end pt-8 text-xs">
+        <div>बुझाउनेको सही: ______________________</div>
+        <div class="text-right">
+          <div>______________________</div>
+          <div class="font-semibold">${s.authorizedPerson}</div>
+          <div class="text-[10px] text-slate-500">आधिकारिक हस्ताक्षर / छाप</div>
+        </div>
+      </div>
+    </div>
+  `;
+  openPrintModal(`खानेपानी महसुल तथा मर्मत रसिद - ${p.receiptNo}`, html);
 }
 
 // ============================================================================
