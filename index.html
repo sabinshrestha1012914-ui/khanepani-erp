@@ -1416,10 +1416,12 @@ function filterKYCTable(q) {
   });
 }
 
+
 // ============================================================================
 // 7. UNIT ENTRY & ANTI-BLOCK BULK WHATSAPP MODULE
 // ============================================================================
 let selectedUnitMonth = "कार्तिक";
+let unitEditingRows = new Set();
 
 function renderUnitEntryModule() {
   const st = window.ERP_STATE;
@@ -1433,28 +1435,33 @@ function renderUnitEntryModule() {
           <h3 class="text-base font-bold text-slate-800">मासिक बल्क युनिट इन्ट्री तथा मर्मत शुल्क (Bulk Reading & Maintenance)</h3>
           <p class="text-xs text-slate-500">लागू दर: न्यूनतम ${activeRule.minUnits} युनिट सम्म ${fmtMoney(activeRule.minAmount)}, अतिरिक्त रु. ${activeRule.extraRate}/युनिट</p>
         </div>
+
         <div class="flex flex-wrap items-center gap-2">
           <div>
             <label class="block text-[10px] font-semibold text-slate-500">महिना छान्नुहोस्</label>
-            <select id="unit-month-select" onchange="selectedUnitMonth = this.value; renderCurrentModule();" class="text-xs font-bold border border-slate-300 rounded-xl px-3 py-2 bg-slate-50">
+            <select id="unit-month-select" onchange="selectedUnitMonth = this.value; unitEditingRows.clear(); renderCurrentModule();" class="text-xs font-bold border border-slate-300 rounded-xl px-3 py-2 bg-slate-50">
               ${NEPALI_MONTHS.map(m => `<option value="${m}" ${m === selectedUnitMonth ? 'selected' : ''}>${m}</option>`).join("")}
             </select>
           </div>
+
           <div>
             <label class="block text-[10px] font-semibold text-slate-500">इन्ट्री मिति (Auto BS)</label>
             <input type="text" id="unit-entry-date" value="${st.activeBSDate}" class="w-28 text-xs font-bold border border-teal-300 bg-teal-50 text-teal-950 rounded-xl px-3 py-2">
           </div>
+
           <div>
             <label class="block text-[10px] font-semibold text-slate-500">ग्राहक स्टेटमेन्ट</label>
             <select id="header-customer-select" class="text-xs font-bold border border-indigo-300 rounded-xl px-3 py-2 bg-indigo-50/50 text-indigo-950">
               ${st.customers.length ? st.customers.map(c => `<option value="${c.id}">${c.id} - ${c.name}</option>`).join("") : `<option value="">-- ग्राहक छैन --</option>`}
             </select>
           </div>
+
           <div class="pt-4">
             <button onclick="openCustomerHistoryModal(document.getElementById('header-customer-select').value)" class="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold px-3 py-2 rounded-xl shadow-sm flex items-center gap-1">
               📊 स्टेटमेन्ट
             </button>
           </div>
+
           <div class="pt-4">
             <button onclick="openBulkWhatsappModal('${selectedUnitMonth}')" class="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold px-4 py-2 rounded-xl shadow-sm flex items-center gap-1.5">
               <i data-lucide="message-circle" class="w-4 h-4"></i> Bulk WhatsApp (${monthReadings.length})
@@ -1469,72 +1476,185 @@ function renderUnitEntryModule() {
             <tr>
               <th class="p-3">आइडी</th>
               <th class="p-3">ग्राहकको नाम (फोन)</th>
-              <th class="p-3 text-right">साविक अङ्क</th>
+              <th class="p-3 w-28 text-right">साविक अङ्क</th>
               <th class="p-3 w-28 text-right">हालको अङ्क *</th>
               <th class="p-3 w-28 text-right">मर्मत खर्च (रु.)</th>
               <th class="p-3 text-right">खपत युनिट</th>
               <th class="p-3 text-right">जम्मा बिल रकम</th>
-              <th class="p-3 text-center">अवस्था</th>
+              <th class="p-3 text-center">अवस्था / कार्य</th>
             </tr>
           </thead>
+
           <tbody class="divide-y divide-slate-100">
             ${st.customers.map(c => {
               const existing = monthReadings.find(r => r.customerId === c.id);
+              const isEditing = unitEditingRows.has(c.id);
               const prev = existing ? existing.prevReading : c.lastReading;
               const curr = existing ? existing.currReading : "";
               const maint = existing ? (existing.maintenanceAmount || 0) : "";
               const units = existing ? existing.units : 0;
               const bill = existing ? existing.billAmount : 0;
+
               return `
-                <tr class="hover:bg-slate-50">
+                <tr class="hover:bg-slate-50" data-customer-row="${c.id}">
                   <td class="p-3 font-bold text-teal-800">${c.id}</td>
-                  <td class="p-3 font-semibold">${c.name}<div class="text-[10px] text-slate-400">${c.phone}</div></td>
-                  <td class="p-3 text-right font-mono font-semibold" id="prev-${c.id}">${prev}</td>
-                  <td class="p-3 text-right">
-                    <input type="number" min="${prev}" value="${curr}" data-cust-id="${c.id}" data-prev="${prev}"
-                      oninput="previewRowReading(this)"
-                      class="bulk-reading-input w-24 text-right font-bold border border-slate-300 rounded-lg px-2 py-1.5 focus:ring-2 focus:ring-teal-600 outline-none">
+
+                  <td class="p-3 font-semibold">
+                    ${c.name}
+                    <div class="text-[10px] text-slate-400">${c.phone || ''}</div>
                   </td>
+
                   <td class="p-3 text-right">
-                    <input type="number" min="0" value="${maint}" data-cust-id="${c.id}" data-prev="${prev}"
+                    <input
+                      type="number"
+                      min="0"
+                      value="${prev}"
+                      data-cust-id="${c.id}"
+                      class="bulk-prev-input w-24 text-right font-bold border border-slate-300 rounded-lg px-2 py-1.5"
+                      ${existing && !isEditing ? "disabled" : ""}
                       oninput="previewRowReading(this)"
-                      class="bulk-maint-input w-24 text-right font-bold border border-amber-300 bg-amber-50/40 rounded-lg px-2 py-1.5 focus:ring-2 focus:ring-amber-600 outline-none" placeholder="0">
+                    >
                   </td>
-                  <td class="p-3 text-right font-bold tabular-nums text-slate-700" id="units-${c.id}">${units}</td>
-                  <td class="p-3 text-right font-bold tabular-nums text-teal-800" id="bill-${c.id}">${fmtMoney(bill)}</td>
+
+                  <td class="p-3 text-right">
+                    <input
+                      type="number"
+                      min="${prev}"
+                      value="${curr}"
+                      data-cust-id="${c.id}"
+                      class="bulk-reading-input w-24 text-right font-bold border border-slate-300 rounded-lg px-2 py-1.5 focus:ring-2 focus:ring-teal-600 outline-none"
+                      ${existing && !isEditing ? "disabled" : ""}
+                      oninput="previewRowReading(this)"
+                    >
+                  </td>
+
+                  <td class="p-3 text-right">
+                    <input
+                      type="number"
+                      min="0"
+                      value="${maint}"
+                      data-cust-id="${c.id}"
+                      class="bulk-maint-input w-24 text-right font-bold border border-amber-300 bg-amber-50/40 rounded-lg px-2 py-1.5 focus:ring-2 focus:ring-amber-600 outline-none"
+                      ${existing && !isEditing ? "disabled" : ""}
+                      oninput="previewRowReading(this)"
+                      placeholder="0"
+                    >
+                  </td>
+
+                  <td class="p-3 text-right font-bold tabular-nums text-slate-700" id="units-${c.id}">
+                    ${units}
+                  </td>
+
+                  <td class="p-3 text-right font-bold tabular-nums text-teal-800" id="bill-${c.id}">
+                    ${fmtMoney(bill)}
+                  </td>
+
                   <td class="p-3 text-center">
                     ${existing
-                      ? `<span class="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-teal-100 text-teal-800">सुरक्षित</span>`
-                      : `<span class="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-slate-100 text-slate-500">बाँकी</span>`
+                      ? `
+                        <div class="flex flex-col items-center gap-1">
+                          <span class="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-teal-100 text-teal-800">
+                            सुरक्षित
+                          </span>
+                          ${isEditing
+                            ? `
+                              <button
+                                onclick="cancelUnitEdit('${c.id}')"
+                                class="text-[10px] font-semibold text-red-600 hover:text-red-800">
+                                रद्द गर्नुहोस्
+                              </button>
+                            `
+                            : `
+                              <button
+                                onclick="enableUnitEdit('${c.id}')"
+                                class="bg-amber-100 hover:bg-amber-200 text-amber-800 text-[10px] font-bold px-2 py-1 rounded-lg">
+                                ✏️ सच्याउनुहोस्
+                              </button>
+                            `
+                          }
+                        </div>
+                      `
+                      : `
+                        <span class="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-slate-100 text-slate-500">
+                          नयाँ इन्ट्री
+                        </span>
+                      `
                     }
                   </td>
                 </tr>
               `;
-            }).join("") || `<tr><td colspan="8" class="p-6 text-center text-slate-400">पहिले KYC मेनुबाट ग्राहक दर्ता गर्नुहोस्।</td></tr>`}
+            }).join("") || `
+              <tr>
+                <td colspan="8" class="p-6 text-center text-slate-400">
+                  पहिले KYC मेनुबाट ग्राहक दर्ता गर्नुहोस्।
+                </td>
+              </tr>
+            `}
           </tbody>
         </table>
       </div>
 
-      <div class="flex justify-end pt-2">
+      <div class="flex flex-wrap justify-between items-center gap-2 pt-2">
+        <p class="text-[11px] text-slate-500">
+          सुरक्षित रिडिङ सच्याउन पहिले ✏️ सच्याउनुहोस् थिच्नुहोस्।
+        </p>
+
         <button onclick="saveBulkReadings()" class="bg-teal-700 hover:bg-teal-800 text-white text-xs font-semibold px-6 py-2.5 rounded-xl shadow-md flex items-center gap-2">
-          <i data-lucide="check-circle-2" class="w-4 h-4"></i> ${selectedUnitMonth} महिनाको बल्क रिडिङ र मर्मत शुल्क सेभ / अपडेट गर्नुहोस्
+          <i data-lucide="check-circle-2" class="w-4 h-4"></i>
+          ${selectedUnitMonth} महिनाको बल्क रिडिङ सेभ / अपडेट गर्नुहोस्
         </button>
       </div>
     </div>
   `;
 }
 
+// ============================================================================
+// EDIT / MODIFY SAVED UNIT ENTRY
+// ============================================================================
+function enableUnitEdit(customerId) {
+  unitEditingRows.add(customerId);
+
+  const row = document.querySelector(`[data-customer-row="${customerId}"]`);
+  if (!row) return;
+
+  row.querySelectorAll(".bulk-prev-input, .bulk-reading-input, .bulk-maint-input").forEach(input => {
+    input.disabled = false;
+    input.classList.remove("bg-slate-100");
+  });
+
+  renderCurrentModule();
+}
+
+function cancelUnitEdit(customerId) {
+  unitEditingRows.delete(customerId);
+  renderCurrentModule();
+}
+
+// ============================================================================
+// LIVE BILL PREVIEW
+// ============================================================================
 function previewRowReading(input) {
-  const cid = input.dataset.custId;
-  const prev = Number(input.dataset.prev);
   const row = input.closest("tr");
+  if (!row) return;
+
+  const cid = input.dataset.custId;
+  const prevInput = row.querySelector(".bulk-prev-input");
   const currInput = row.querySelector(".bulk-reading-input");
   const maintInput = row.querySelector(".bulk-maint-input");
 
+  const prev = Number(prevInput.value);
   const currRaw = currInput.value;
   const curr = Number(currRaw);
   const maintVal = Number(maintInput.value) || 0;
-  const entryDate = document.getElementById("unit-entry-date").value || window.ERP_STATE.activeBSDate;
+  const entryDate = document.getElementById("unit-entry-date").value.trim()
+    || window.ERP_STATE.activeBSDate;
+
+  if (prevInput.value === "" || prev < 0) {
+    prevInput.classList.add("border-red-500", "bg-red-50");
+    return;
+  } else {
+    prevInput.classList.remove("border-red-500", "bg-red-50");
+  }
 
   if (currRaw === "") {
     currInput.classList.remove("border-red-500", "bg-red-50");
@@ -1543,14 +1663,21 @@ function previewRowReading(input) {
     return;
   }
 
-  if (curr < prev) {
+  if (curr < prev || curr < 0) {
     currInput.classList.add("border-red-500", "bg-red-50");
     document.getElementById(`units-${cid}`).textContent = "अमान्य";
     document.getElementById(`bill-${cid}`).textContent = fmtMoney(0);
     return;
   }
 
+  if (maintVal < 0) {
+    maintInput.classList.add("border-red-500", "bg-red-50");
+    return;
+  }
+
   currInput.classList.remove("border-red-500", "bg-red-50");
+  maintInput.classList.remove("border-red-500", "bg-red-50");
+
   const units = curr - prev;
   const calc = calculateWaterBill(units, entryDate);
   const totalWithMaint = calc.totalBill + maintVal;
@@ -1559,39 +1686,79 @@ function previewRowReading(input) {
   document.getElementById(`bill-${cid}`).textContent = fmtMoney(totalWithMaint);
 }
 
+// ============================================================================
+// SAVE NEW READINGS / UPDATE EXISTING READINGS
+// ============================================================================
 function saveBulkReadings() {
-  const entryDate = document.getElementById("unit-entry-date").value.trim() || window.ERP_STATE.activeBSDate;
-  const rows = document.querySelectorAll("#module-container tbody tr");
+  const st = window.ERP_STATE;
+  const entryDate = document.getElementById("unit-entry-date").value.trim()
+    || st.activeBSDate;
+
   let savedCount = 0;
   let skippedInvalid = 0;
+  let skippedLocked = 0;
+
+  const rows = document.querySelectorAll("#module-container tbody tr");
 
   rows.forEach(row => {
     const currInput = row.querySelector(".bulk-reading-input");
+    const prevInput = row.querySelector(".bulk-prev-input");
     const maintInput = row.querySelector(".bulk-maint-input");
-    if (!currInput || currInput.value === "") return;
+
+    if (!currInput || !prevInput || !maintInput) return;
 
     const cid = currInput.dataset.custId;
-    const prev = Number(currInput.dataset.prev);
-    const curr = Number(currInput.value);
-    const maintVal = Number(maintInput?.value) || 0;
-    if (curr < prev) { skippedInvalid++; return; }
+    const existingIdx = st.readings.findIndex(
+      r => r.customerId === cid && r.month === selectedUnitMonth
+    );
+
+    const existing = existingIdx >= 0 ? st.readings[existingIdx] : null;
+
+    // Existing saved records can only be changed after pressing Modify.
+    if (existing && !unitEditingRows.has(cid)) return;
+
+    // Empty new entry is ignored.
+    if (!existing && currInput.value === "") return;
+
+    const prevRaw = prevInput.value;
+    const currRaw = currInput.value;
+    const prev = Number(prevRaw);
+    const curr = Number(currRaw);
+    const maintVal = Number(maintInput.value) || 0;
+
+    if (
+      prevRaw === "" ||
+      currRaw === "" ||
+      !Number.isFinite(prev) ||
+      !Number.isFinite(curr) ||
+      !Number.isFinite(maintVal) ||
+      prev < 0 ||
+      curr < prev ||
+      maintVal < 0
+    ) {
+      skippedInvalid++;
+      return;
+    }
 
     const units = curr - prev;
     const calc = calculateWaterBill(units, entryDate);
     const totalBillWithMaint = calc.totalBill + maintVal;
 
-    const existingIdx = window.ERP_STATE.readings.findIndex(r => r.customerId === cid && r.month === selectedUnitMonth);
-    if (existingIdx >= 0) {
-      const old = window.ERP_STATE.readings[existingIdx];
-      old.entryDate = entryDate;
-      old.currReading = curr;
-      old.units = units;
-      old.baseAmount = calc.baseAmount;
-      old.extraAmount = calc.extraAmount;
-      old.maintenanceAmount = maintVal;
-      old.billAmount = totalBillWithMaint;
+    if (existing) {
+      // Update existing record without creating a duplicate.
+      existing.entryDate = entryDate;
+      existing.year = parseBS(entryDate).y.toString();
+      existing.prevReading = prev;
+      existing.currReading = curr;
+      existing.units = units;
+      existing.baseAmount = calc.baseAmount;
+      existing.extraAmount = calc.extraAmount;
+      existing.maintenanceAmount = maintVal;
+      existing.billAmount = totalBillWithMaint;
+
+      // Existing payment fields are intentionally preserved.
     } else {
-      window.ERP_STATE.readings.push({
+      st.readings.push({
         id: "RD-" + Date.now() + "-" + cid,
         customerId: cid,
         month: selectedUnitMonth,
@@ -1611,22 +1778,43 @@ function saveBulkReadings() {
       });
     }
 
-    const cust = window.ERP_STATE.customers.find(c => c.id === cid);
-    if (cust && curr > cust.lastReading) cust.lastReading = curr;
+    const cust = st.customers.find(c => c.id === cid);
+    if (cust && curr > Number(cust.lastReading || 0)) {
+      cust.lastReading = curr;
+    }
+
+    unitEditingRows.delete(cid);
     savedCount++;
   });
 
-  window.recalculateAllDynamicValues(false);
-  renderCurrentModule();
+  if (savedCount > 0) {
+    window.recalculateAllDynamicValues(false);
+    renderCurrentModule();
+  }
+
   if (skippedInvalid > 0) {
-    showToast(`${savedCount} जना सुरक्षित भयो (${skippedInvalid} जनाको हालको अङ्क साविकभन्दा कम भएकाले छोडियो)।`, "warning");
+    showToast(
+      `${savedCount} वटा रिडिङ सुरक्षित/अपडेट भयो। ${skippedInvalid} वटा रिडिङमा अङ्क नमिलेकोले सेभ भएन।`,
+      "warning"
+    );
+  } else if (savedCount > 0) {
+    showToast(
+      `${selectedUnitMonth} महिनाको ${savedCount} वटा ग्राहकको रिडिङ सुरक्षित/अपडेट भयो!`
+    );
   } else {
-    showToast(`${selectedUnitMonth} महिनाको ${savedCount} जना ग्राहकको युनिट र मर्मत शुल्क सुरक्षित/अपडेट भयो!`);
+    showToast(
+      "नयाँ रिडिङ इन्ट्री गर्नुहोस् वा सुरक्षित रिडिङ सच्याउन ✏️ बटन थिच्नुहोस्।",
+      "warning"
+    );
   }
 }
 
+// ============================================================================
+// CUSTOMER HISTORY PRINT HTML
+// ============================================================================
 function buildCustomerHistoryPrintableHTML(customer, custReadings) {
   const s = window.ERP_STATE.settings;
+
   return `
     <div class="border-2 border-slate-800 p-5 rounded-lg space-y-4">
       <div class="text-center border-b-2 border-slate-800 pb-3">
@@ -1634,11 +1822,13 @@ function buildCustomerHistoryPrintableHTML(customer, custReadings) {
         <p class="text-xs text-slate-600">${s.address} | फोन: ${s.phone}</p>
         <div class="text-sm font-bold mt-1">ग्राहक रिडिङ तथा मर्मत हिस्ट्री स्टेटमेन्ट</div>
       </div>
+
       <div class="grid grid-cols-3 gap-2 text-xs bg-slate-50 p-3 rounded border border-slate-300">
         <div><strong>नाम:</strong> ${customer.name}</div>
         <div><strong>आइडी:</strong> ${customer.id}</div>
         <div><strong>फोन:</strong> ${customer.phone || '-'}</div>
       </div>
+
       <table class="w-full text-xs border-collapse border border-slate-400">
         <thead class="bg-slate-100">
           <tr>
@@ -1650,6 +1840,7 @@ function buildCustomerHistoryPrintableHTML(customer, custReadings) {
             <th class="border border-slate-400 p-2 text-center">स्थिति</th>
           </tr>
         </thead>
+
         <tbody>
           ${custReadings.length > 0 ? custReadings.map(r => `
             <tr>
@@ -1660,29 +1851,44 @@ function buildCustomerHistoryPrintableHTML(customer, custReadings) {
               <td class="border border-slate-400 p-2 text-right font-bold">${fmtMoney(r.billAmount)}</td>
               <td class="border border-slate-400 p-2 text-center">${r.status === 'Paid' ? 'चुक्ता' : 'बाँकी'}</td>
             </tr>
-          `).join("") : `<tr><td colspan="6" class="border border-slate-400 p-4 text-center">कुनै रेकर्ड फेला परेन।</td></tr>`}
+          `).join("") : `
+            <tr>
+              <td colspan="6" class="border border-slate-400 p-4 text-center">कुनै रेकर्ड फेला परेन।</td>
+            </tr>
+          `}
         </tbody>
       </table>
     </div>
   `;
 }
 
+// ============================================================================
+// CUSTOMER HISTORY MODAL
+// ============================================================================
 function openCustomerHistoryModal(customerId) {
   const st = window.ERP_STATE;
   const customer = st.customers.find(c => c.id === customerId);
-  if (!customer) return showToast("कृपया वैध ग्राहक छान्नुहोस्।", "error");
+
+  if (!customer) {
+    return showToast("कृपया वैध ग्राहक छान्नुहोस्।", "error");
+  }
 
   const custReadings = st.readings.filter(r => r.customerId === customerId);
+
   const historyHtml = `
     <div class="fixed inset-0 bg-slate-900/50 z-50 flex items-center justify-center p-4">
       <div class="bg-white rounded-2xl max-w-2xl w-full p-6 shadow-xl space-y-4 max-h-[90vh] overflow-y-auto">
+
         <div class="flex items-center justify-between border-b border-slate-200 pb-3">
           <div>
             <h3 class="text-base font-bold text-slate-800">ग्राहक रिडिङ तथा मर्मत हिस्ट्री स्टेटमेन्ट</h3>
-            <p class="text-xs text-slate-500">नाम: <b>${customer.name}</b> | आईडी: <b>${customer.id}</b> | फोन: ${customer.phone || 'उपलब्ध छैन'}</p>
+            <p class="text-xs text-slate-500">
+              नाम: <b>${customer.name}</b> | आईडी: <b>${customer.id}</b> | फोन: ${customer.phone || 'उपलब्ध छैन'}
+            </p>
           </div>
           <button onclick="closeCustomerHistoryModal()" class="text-slate-400 hover:text-slate-600 font-bold text-lg px-2">✕</button>
         </div>
+
         <div class="overflow-x-auto">
           <table class="w-full text-xs text-left border-collapse">
             <thead class="bg-slate-50 text-slate-700 font-semibold border-b border-slate-200">
@@ -1695,6 +1901,7 @@ function openCustomerHistoryModal(customerId) {
                 <th class="p-2.5 text-center">स्थिति</th>
               </tr>
             </thead>
+
             <tbody class="divide-y divide-slate-100">
               ${custReadings.length > 0 ? custReadings.map(r => `
                 <tr class="hover:bg-slate-50">
@@ -1709,10 +1916,15 @@ function openCustomerHistoryModal(customerId) {
                     </span>
                   </td>
                 </tr>
-              `).join("") : `<tr><td colspan="6" class="p-6 text-center text-slate-400">यो ग्राहकको कुनै पनि रिडिङ रेकर्ड फेला परेन।</td></tr>`}
+              `).join("") : `
+                <tr>
+                  <td colspan="6" class="p-6 text-center text-slate-400">यो ग्राहकको कुनै पनि रिडिङ रेकर्ड फेला परेन।</td>
+                </tr>
+              `}
             </tbody>
           </table>
         </div>
+
         <div class="flex justify-end gap-2 pt-3 border-t border-slate-100">
           <button onclick="printCustomerHistoryStatement('${customer.id}')" class="bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold px-4 py-2 rounded-xl flex items-center gap-1.5">
             🖨️ प्रिन्ट गर्नुहोस्
@@ -1726,21 +1938,29 @@ function openCustomerHistoryModal(customerId) {
   `;
 
   let modalContainer = document.getElementById("customer-history-modal-container");
+
   if (!modalContainer) {
     modalContainer = document.createElement("div");
     modalContainer.id = "customer-history-modal-container";
     document.body.appendChild(modalContainer);
   }
+
   modalContainer.innerHTML = historyHtml;
 }
 
 function printCustomerHistoryStatement(customerId) {
   const st = window.ERP_STATE;
   const customer = st.customers.find(c => c.id === customerId);
+
   if (!customer) return;
+
   const custReadings = st.readings.filter(r => r.customerId === customerId);
+
   closeCustomerHistoryModal();
-  openPrintModal(`ग्राहक रिडिङ हिस्ट्री - ${customer.name}`, buildCustomerHistoryPrintableHTML(customer, custReadings));
+  openPrintModal(
+    `ग्राहक रिडिङ हिस्ट्री - ${customer.name}`,
+    buildCustomerHistoryPrintableHTML(customer, custReadings)
+  );
 }
 
 function closeCustomerHistoryModal() {
@@ -1748,6 +1968,9 @@ function closeCustomerHistoryModal() {
   if (modalContainer) modalContainer.innerHTML = "";
 }
 
+// ============================================================================
+// BULK WHATSAPP QUEUE
+// ============================================================================
 let waQueue = [];
 let waIndex = 0;
 let waTimerHandle = null;
@@ -1756,32 +1979,59 @@ let waCountdown = 0;
 function openBulkWhatsappModal(month) {
   const st = window.ERP_STATE;
   const list = st.readings.filter(r => r.month === month);
-  if (!list.length) return showToast(`${month} महिनाको रिडिङ इन्ट्री भेटिएन। पहिले युनिट इन्ट्री गर्नुहोस्।`, "error");
+
+  if (!list.length) {
+    return showToast(
+      `${month} महिनाको रिडिङ इन्ट्री भेटिएन। पहिले युनिट इन्ट्री गर्नुहोस्।`,
+      "error"
+    );
+  }
 
   waQueue = list.map(r => {
-    const c = st.customers.find(x => x.id === r.customerId) || { name: r.customerId, phone: "" };
+    const c = st.customers.find(x => x.id === r.customerId)
+      || { name: r.customerId, phone: "" };
+
     const total = getReadingRemaining(r) + Number(r.penaltyAmount || 0);
-    const msg = `नमस्कार ${c.name} ज्यू (${c.id}),\n${st.settings.committeeName}\nमहिना: ${r.month}\nखपत युनिट: ${r.units} | मर्मत शुल्क: रू. ${r.maintenanceAmount || 0}\nमहसुल: रू. ${r.billAmount} | जरिवाना: रू. ${r.penaltyAmount || 0}\nजम्मा तिर्नुपर्ने रकम: रू. ${total}\nकृपया समयमै महसुल बुझाउनुहोला। धन्यवाद!`;
+
+    const msg = `नमस्कार ${c.name} ज्यू (${c.id}),
+${st.settings.committeeName}
+महिना: ${r.month}
+खपत युनिट: ${r.units} | मर्मत शुल्क: रू. ${r.maintenanceAmount || 0}
+महसुल: रू. ${r.billAmount} | जरिवाना: रू. ${r.penaltyAmount || 0}
+जम्मा तिर्नुपर्ने रकम: रू. ${total}
+कृपया समयमै महसुल बुझाउनुहोला। धन्यवाद!`;
+
     return { customer: c, msg, sent: false };
   });
+
   waIndex = 0;
   clearInterval(waTimerHandle);
+
   updateWhatsappModalUI();
+
   document.getElementById("whatsapp-modal").classList.remove("hidden");
   document.getElementById("whatsapp-modal").classList.add("flex");
 }
 
 function closeWhatsappModal() {
   clearInterval(waTimerHandle);
+
   document.getElementById("whatsapp-modal").classList.add("hidden");
   document.getElementById("whatsapp-modal").classList.remove("flex");
 }
 
 function updateWhatsappModalUI() {
-  document.getElementById("wa-progress-text").textContent = `${waIndex} / ${waQueue.length}`;
-  const pct = waQueue.length ? Math.round((waIndex / waQueue.length) * 100) : 0;
+  document.getElementById("wa-progress-text").textContent =
+    `${waIndex} / ${waQueue.length}`;
+
+  const pct = waQueue.length
+    ? Math.round((waIndex / waQueue.length) * 100)
+    : 0;
+
   document.getElementById("wa-progress-bar").style.width = pct + "%";
+
   const current = waQueue[waIndex];
+
   document.getElementById("wa-current-preview").textContent = current
     ? `पठाउन लागिएको (${current.customer.name} - ${current.customer.phone}):\n\n${current.msg}`
     : "✅ सबै ग्राहकहरूलाई सुरक्षित रूपमा व्हाट्सएप मेसेज पठाउने कार्य सम्पन्न भयो!";
@@ -1789,22 +2039,32 @@ function updateWhatsappModalUI() {
 
 function startBulkWhatsappQueue() {
   if (waIndex >= waQueue.length) return;
+
   document.getElementById("wa-start-btn").classList.add("hidden");
   document.getElementById("wa-pause-btn").classList.remove("hidden");
 
   waCountdown = Math.floor(Math.random() * 5) + 6;
-  document.getElementById("wa-timer-text").textContent = `${waCountdown} सेकेन्डमा पठाउँदै...`;
+
+  document.getElementById("wa-timer-text").textContent =
+    `${waCountdown} सेकेन्डमा पठाउँदै...`;
 
   clearInterval(waTimerHandle);
+
   waTimerHandle = setInterval(() => {
     waCountdown--;
-    if (waCountdown <= 0) sendNextWhatsappNow(true);
-    else document.getElementById("wa-timer-text").textContent = `${waCountdown} सेकेन्डमा पठाउँदै...`;
+
+    if (waCountdown <= 0) {
+      sendNextWhatsappNow(true);
+    } else {
+      document.getElementById("wa-timer-text").textContent =
+        `${waCountdown} सेकेन्डमा पठाउँदै...`;
+    }
   }, 1000);
 }
 
 function pauseBulkWhatsappQueue() {
   clearInterval(waTimerHandle);
+
   document.getElementById("wa-pause-btn").classList.add("hidden");
   document.getElementById("wa-start-btn").classList.remove("hidden");
   document.getElementById("wa-timer-text").textContent = "रोकिएको (Paused)";
@@ -1816,13 +2076,25 @@ function sendNextWhatsappNow(continueLoop = false) {
     document.getElementById("wa-timer-text").textContent = "सम्पन्न (Completed)";
     return;
   }
+
   const item = waQueue[waIndex];
   const phoneClean = (item.customer.phone || "").replace(/\D/g, "");
-  const fullPhone = phoneClean.startsWith("977") ? phoneClean : "977" + phoneClean;
-  window.open(`https://wa.me/${fullPhone}?text=${encodeURIComponent(item.msg)}`, "_blank");
+  const fullPhone = phoneClean.startsWith("977")
+    ? phoneClean
+    : "977" + phoneClean;
+
+  if (phoneClean) {
+    window.open(
+      `https://wa.me/${fullPhone}?text=${encodeURIComponent(item.msg)}`,
+      "_blank"
+    );
+  } else {
+    showToast(`${item.customer.name} को फोन नम्बर उपलब्ध छैन।`, "warning");
+  }
 
   item.sent = true;
   waIndex++;
+
   updateWhatsappModalUI();
 
   if (waIndex >= waQueue.length) {
