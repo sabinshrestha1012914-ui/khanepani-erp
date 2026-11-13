@@ -4207,6 +4207,12 @@ function generateReportHTML(tab) {
         `;
       }
 
+      // मिति अनुसार रिडिङ क्रम मिलाउने
+      rds.sort((a, b) => String(a.entryDate || "").localeCompare(String(b.entryDate || "")));
+
+      // एउटै रसिद दोहोरिएर अर्को महिनामा नदेखियोस्
+      const usedPayIds = new Set();
+
       rds.forEach((r) => {
         const units = Number(r.units || 0);
         const maint = Number(r.maintenanceAmount || 0);
@@ -4220,30 +4226,43 @@ function generateReportHTML(tab) {
         const extraAmt = r.extraAmount !== undefined ? Number(r.extraAmount) : (extraUnits * extraRate);
 
         const totalRowAmt = billOnly + maint + pen;
-        const upperRowTotalDue = runningDue + totalRowAmt;
 
-        // यस रिडिङकै BS वर्ष-महिनासँग मिल्ने सबै भुक्तानी जोड्ने
+        // रिडिङ भएको BS वर्ष-महिना
         const readingYearMonth = String(r.entryDate || "").slice(0, 7);
-        const matchingPays = payments.filter(p => {
-          const paymentYearMonth = String(p.date || "").slice(0, 7);
-          return (
-            (p.month !== undefined && p.month !== null && String(p.month) === String(r.month)) ||
-            (readingYearMonth && paymentYearMonth === readingYearMonth)
-          );
-        });
-        const paymentTotal = matchingPays.reduce(
-          (sum, p) => sum + Number(p.totalPaid || 0), 0
-        );
-        const paidM = paymentTotal > 0 ? paymentTotal : getReadingPaidTotal(r);
-        const receiptNos = [...new Set(matchingPays.map(p => p.receiptNo).filter(Boolean))].join(", ");
+        const readingMonthName = String(r.month || "").trim();
 
-        runningDue = upperRowTotalDue - paidM;
+        // यस महिनासँग सम्बन्धित प्रत्येक भुक्तानी छुट्टाछुट्टै निकाल्ने।
+        // Bulk payment मा p.month प्रायः महिनाको नाम हुन्छ;
+        // Single payment मा p.month मिति हुन सक्छ, त्यस अवस्थामा वास्तविक p.date प्रयोग हुन्छ।
+        const matchingPays = payments
+          .filter(p => {
+            if (p.id !== undefined && usedPayIds.has(p.id)) return false;
+
+            const pMonth = String(p.month || "").trim();
+            const pDateMonth = String(p.date || "").slice(0, 7);
+
+            const pMonthIsDate = /^\d{4}-\d{2}-\d{2}/.test(pMonth);
+            const monthNameMatch = pMonth && !pMonthIsDate &&
+              pMonth === readingMonthName;
+            const paymentDateMatch = readingYearMonth &&
+              pDateMonth === readingYearMonth;
+
+            return monthNameMatch || paymentDateMatch;
+          })
+          .sort((a, b) => String(a.date || "").localeCompare(String(b.date || "")));
+
+        matchingPays.forEach(p => {
+          if (p.id !== undefined) usedPayIds.add(p.id);
+        });
+
+        // Reading Row: यस महिनाको बिल पहिले बाँकीमा जोड्ने
+        runningDue += totalRowAmt;
+
         tUnits += units;
         tBillOnly += billOnly;
         tMaint += maint;
         tPen += pen;
         tTotalAmt += totalRowAmt;
-        tPaid += paidM;
 
         rows += `
           <tr class="bg-white">
@@ -4258,11 +4277,38 @@ function generateReportHTML(tab) {
             <td class="border border-slate-400 p-2 text-right tabular-nums text-amber-800">${fmtMoney(maint)}</td>
             <td class="border border-slate-400 p-2 text-right tabular-nums text-red-700">${fmtMoney(pen)}</td>
             <td class="border border-slate-400 p-2 text-right tabular-nums font-bold text-slate-900">${fmtMoney(totalRowAmt)}</td>
-            <td class="border border-slate-400 p-2 text-right tabular-nums text-emerald-700 font-bold">${paidM > 0 ? fmtMoney(paidM) : '-'}</td>
+            <td class="border border-slate-400 p-2 text-right tabular-nums">-</td>
             <td class="border border-slate-400 p-2 text-right tabular-nums text-rose-700 font-bold">${fmtMoney(runningDue)}</td>
-            <td class="border border-slate-400 p-2 text-center font-bold text-indigo-900">${receiptNos || '-'}</td>
+            <td class="border border-slate-400 p-2 text-center">-</td>
           </tr>
         `;
+
+        // जति पटक भुक्तानी भएको छ, त्यति नै छुट्टाछुट्टै मिति/रकम/रसिद Row
+        matchingPays.forEach(pay => {
+          const thisPaid = Number(pay.totalPaid || 0);
+          if (thisPaid <= 0) return;
+
+          runningDue = Math.max(0, Math.round((runningDue - thisPaid) * 100) / 100);
+          tPaid += thisPaid;
+
+          rows += `
+            <tr class="bg-emerald-50">
+              <td class="border border-slate-400 p-2 text-center">-</td>
+              <td colspan="10" class="border border-slate-400 p-2">
+                भुक्तानी मिति: <strong>${pay.date || '-'}</strong>
+              </td>
+              <td class="border border-slate-400 p-2 text-right font-bold text-emerald-700">
+                ${fmtMoney(thisPaid)}
+              </td>
+              <td class="border border-slate-400 p-2 text-right font-bold text-rose-700">
+                ${fmtMoney(runningDue)}
+              </td>
+              <td class="border border-slate-400 p-2 text-center font-bold text-indigo-900">
+                ${pay.receiptNo || '-'}
+              </td>
+            </tr>
+          `;
+        });
       });
 
       return `
