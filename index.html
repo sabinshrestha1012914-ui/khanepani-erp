@@ -2107,6 +2107,7 @@ function sendNextWhatsappNow(continueLoop = false) {
 }
 
 
+
 // ============================================================================
 // 8. AMOUNT ENTRY & PRINTABLE RECEIPT
 // ============================================================================
@@ -2119,56 +2120,68 @@ let statementEndDate = "";
 // CUSTOMER-WISE TOTAL DUE CALCULATION
 // ============================================================================
 function getAmountReadingDues(r) {
-  const bill = Number(r.billAmount || 0);
-  const maint = Number(r.maintenanceAmount || 0);
+  const bill = Math.max(0, Number(r.billAmount || 0));
+  const maint = Math.max(0, Number(r.maintenanceAmount || 0));
 
-  const baseDue = Math.max(
-    0,
-    (bill - maint) - Number(r.paidAmount || 0)
-  );
+  const paidBill = Math.max(0, Number(r.paidAmount || 0));
+  const paidMaint = Math.max(0, Number(r.paidMaintAmount || 0));
+  const paidPenalty = Math.max(0, Number(r.paidPenaltyAmount || 0));
 
-  const maintDue = Math.max(
-    0,
-    maint - Number(r.paidMaintAmount || 0)
-  );
-
+  const baseDue = Math.max(0, (bill - maint) - paidBill);
+  const maintDue = Math.max(0, maint - paidMaint);
   const penaltyDue = Math.max(
     0,
-    Number(r.penaltyAmount || 0) - Number(r.paidPenaltyAmount || 0)
+    Number(r.penaltyAmount || 0) - paidPenalty
   );
 
-  return { baseDue, maintDue, penaltyDue };
+  return {
+    baseDue: Math.round(baseDue * 100) / 100,
+    maintDue: Math.round(maintDue * 100) / 100,
+    penaltyDue: Math.round(penaltyDue * 100) / 100
+  };
 }
 
+// ============================================================================
+// CUSTOMER-WISE TOTAL DUE SUMMARY
+// ============================================================================
 function getCustomerAmountSummary(customer) {
   const st = window.ERP_STATE;
 
-  const readings = st.readings.filter(r => {
-    if (r.customerId !== customer.id) return false;
-    const d = getAmountReadingDues(r);
-    return d.baseDue + d.maintDue + d.penaltyDue > 0.009;
-  });
-
-  const openingDue = Math.max(0, Number(customer.openingDue || 0));
+  const allReadings = st.readings.filter(
+    r => r.customerId === customer.id
+  );
 
   let baseDue = 0;
   let maintDue = 0;
   let penaltyDue = 0;
 
-  readings.forEach(r => {
+  const readings = [];
+
+  allReadings.forEach(r => {
     const d = getAmountReadingDues(r);
-    baseDue += d.baseDue;
-    maintDue += d.maintDue;
-    penaltyDue += d.penaltyDue;
+    const readingDue = d.baseDue + d.maintDue + d.penaltyDue;
+
+    if (readingDue > 0.009) {
+      readings.push(r);
+      baseDue += d.baseDue;
+      maintDue += d.maintDue;
+      penaltyDue += d.penaltyDue;
+    }
   });
+
+  const openingDue = Math.max(0, Number(customer.openingDue || 0));
+
+  baseDue = Math.round(baseDue * 100) / 100;
+  maintDue = Math.round(maintDue * 100) / 100;
+  penaltyDue = Math.round(penaltyDue * 100) / 100;
 
   const totalDue = Math.round(
     (openingDue + baseDue + maintDue + penaltyDue) * 100
   ) / 100;
 
-  const months = [...new Set(
-    readings.map(r => r.month).filter(Boolean)
-  )];
+  const months = [
+    ...new Set(readings.map(r => r.month).filter(Boolean))
+  ];
 
   return {
     readings,
@@ -2214,17 +2227,14 @@ function applyCustomerPayment(cust, amount) {
     .filter(r => r.customerId === cust.id)
     .slice()
     .sort((a, b) => {
-      const da = a.entryDate || "";
-      const db = b.entryDate || "";
-      return da.localeCompare(db);
+      return (a.entryDate || "").localeCompare(b.entryDate || "");
     });
 
   customerReadings.forEach(r => {
     if (remaining <= 0.009) return;
 
-    const dues = getAmountReadingDues(r);
-
     // Penalty
+    const dues = getAmountReadingDues(r);
     const pApply = Math.min(remaining, dues.penaltyDue);
 
     if (pApply > 0) {
@@ -2232,9 +2242,7 @@ function applyCustomerPayment(cust, amount) {
         Number(r.paidPenaltyAmount || 0) + pApply;
 
       penaltyPaid += pApply;
-      remaining = Math.round(
-        (remaining - pApply) * 100
-      ) / 100;
+      remaining = Math.round((remaining - pApply) * 100) / 100;
     }
 
     if (remaining <= 0.009) return;
@@ -2248,9 +2256,7 @@ function applyCustomerPayment(cust, amount) {
         Number(r.paidMaintAmount || 0) + mApply;
 
       maintPaid += mApply;
-      remaining = Math.round(
-        (remaining - mApply) * 100
-      ) / 100;
+      remaining = Math.round((remaining - mApply) * 100) / 100;
     }
 
     if (remaining <= 0.009) return;
@@ -2260,27 +2266,20 @@ function applyCustomerPayment(cust, amount) {
     const bApply = Math.min(remaining, latestDues.baseDue);
 
     if (bApply > 0) {
-      r.paidAmount =
-        Number(r.paidAmount || 0) + bApply;
+      r.paidAmount = Number(r.paidAmount || 0) + bApply;
 
       billPaid += bApply;
-      remaining = Math.round(
-        (remaining - bApply) * 100
-      ) / 100;
+      remaining = Math.round((remaining - bApply) * 100) / 100;
     }
   });
 
-  // Extra payment, if any, is recorded as bill payment.
-  if (remaining > 0.009) {
-    billPaid += remaining;
-    remaining = 0;
-  }
-
+  // Extra payment is not silently allocated to a bill.
   return {
     openingPaid: Math.round(openingPaid * 100) / 100,
     billPaid: Math.round(billPaid * 100) / 100,
     maintPaid: Math.round(maintPaid * 100) / 100,
-    penaltyPaid: Math.round(penaltyPaid * 100) / 100
+    penaltyPaid: Math.round(penaltyPaid * 100) / 100,
+    unallocated: Math.round(remaining * 100) / 100
   };
 }
 
@@ -2312,17 +2311,15 @@ function renderAmountEntryModule() {
   const dueBase = singleSummary.baseDue;
   const dueMaint = singleSummary.maintDue;
   const duePen = singleSummary.penaltyDue;
-
   const totalDue = singleSummary.totalDue;
 
-  // Customer-wise total due list.
-  // One customer = one row, not one row per month.
+  // Only customers with outstanding dues appear in Bulk Collection.
   const bulkCustomerRows = st.customers
     .map(c => ({
       customer: c,
       summary: getCustomerAmountSummary(c)
     }))
-    .filter(x => x.summary.totalDue > 0.009);
+    .filter(item => item.summary.totalDue > 0.009);
 
   return `
     <div class="space-y-6">
@@ -2361,29 +2358,22 @@ function renderAmountEntryModule() {
             class="grid grid-cols-1 sm:grid-cols-3 gap-4 text-xs">
 
             <div>
-              <label class="font-semibold text-slate-600 block mb-1">
-                रसिद नं. (Auto)
-              </label>
+              <label class="font-semibold text-slate-600 block mb-1">रसिद नं. (Auto)</label>
               <input type="text" id="amt-rec-no" value="${nextRec}" readonly
                 class="w-full bg-slate-100 border border-slate-300 rounded-xl px-3 py-2 font-bold text-teal-800">
             </div>
 
             <div>
-              <label class="font-semibold text-slate-600 block mb-1">
-                रसिद मिति (Auto BS)
-              </label>
+              <label class="font-semibold text-slate-600 block mb-1">रसिद मिति (Auto BS)</label>
               <input type="text" id="amt-date" value="${st.activeBSDate}"
                 class="w-full bg-teal-50 border border-teal-300 rounded-xl px-3 py-2 font-bold">
             </div>
 
             <div>
-              <label class="font-semibold text-slate-600 block mb-1">
-                ग्राहक छान्नुहोस् *
-              </label>
+              <label class="font-semibold text-slate-600 block mb-1">ग्राहक छान्नुहोस् *</label>
               <select id="amt-cust-select"
                 onchange="selectedSingleCustId=this.value; renderCurrentModule();"
                 class="w-full border border-slate-300 rounded-xl px-3 py-2 font-semibold cursor-pointer">
-
                 ${st.customers.length
                   ? st.customers.map(c => `
                     <option value="${c.id}" ${c.id === selectedSingleCustId ? 'selected' : ''}>
@@ -2396,48 +2386,32 @@ function renderAmountEntryModule() {
             </div>
 
             <div class="bg-amber-50 p-3 rounded-xl border border-amber-200">
-              <span class="text-amber-800 block">
-                गत वर्षको ओपनिङ बक्यौता:
-              </span>
-              <strong class="text-sm text-amber-900 tabular-nums">
-                ${fmtMoney(custOpeningDue)}
-              </strong>
+              <span class="text-amber-800 block">गत वर्षको ओपनिङ बक्यौता:</span>
+              <strong class="text-sm text-amber-900 tabular-nums">${fmtMoney(custOpeningDue)}</strong>
             </div>
 
             <div class="bg-slate-50 p-3 rounded-xl border border-slate-200">
               <span class="text-slate-500 block">बाँकी महसुल रकम:</span>
-              <strong class="text-sm text-slate-900 tabular-nums">
-                ${fmtMoney(dueBase)}
-              </strong>
+              <strong class="text-sm text-slate-900 tabular-nums">${fmtMoney(dueBase)}</strong>
             </div>
 
             <div class="bg-amber-100/60 p-3 rounded-xl border border-amber-300">
               <span class="text-amber-900 block">बाँकी मर्मत शुल्क:</span>
-              <strong class="text-sm text-amber-950 tabular-nums">
-                ${fmtMoney(dueMaint)}
-              </strong>
+              <strong class="text-sm text-amber-950 tabular-nums">${fmtMoney(dueMaint)}</strong>
             </div>
 
             <div class="bg-red-50 p-3 rounded-xl border border-red-200">
               <span class="text-red-600 block">लाग्ने जरिवाना:</span>
-              <strong class="text-sm text-red-700 tabular-nums">
-                ${fmtMoney(duePen)}
-              </strong>
+              <strong class="text-sm text-red-700 tabular-nums">${fmtMoney(duePen)}</strong>
             </div>
 
             <div class="sm:col-span-2 bg-teal-50 p-3.5 rounded-xl border border-teal-200 flex justify-between items-center">
-              <span class="text-teal-800 font-bold text-sm">
-                कुल तिर्नुपर्ने जम्मा रकम:
-              </span>
-              <strong class="text-lg text-teal-900 tabular-nums">
-                ${fmtMoney(totalDue)}
-              </strong>
+              <span class="text-teal-800 font-bold text-sm">कुल तिर्नुपर्ने जम्मा रकम:</span>
+              <strong class="text-lg text-teal-900 tabular-nums">${fmtMoney(totalDue)}</strong>
             </div>
 
             <div>
-              <label class="font-semibold text-slate-600 block mb-1">
-                बुझाएको कुल रकम (रू.) *
-              </label>
+              <label class="font-semibold text-slate-600 block mb-1">बुझाएको कुल रकम (रू.) *</label>
               <input type="number" id="amt-paid-input"
                 value="${totalDue}" min="0.01" step="0.01" required
                 oninput="document.getElementById('amt-words-preview').textContent = numberToNepaliWords(this.value)"
@@ -2445,12 +2419,8 @@ function renderAmountEntryModule() {
             </div>
 
             <div class="sm:col-span-3 flex flex-col justify-center bg-amber-50/70 border border-amber-200 rounded-xl px-3 py-2">
-              <span class="text-[10px] font-semibold text-amber-800">
-                रकम अक्षरमा (रसिदमा प्रिन्ट हुने):
-              </span>
-              <strong id="amt-words-preview" class="text-xs text-slate-900">
-                ${numberToNepaliWords(totalDue)}
-              </strong>
+              <span class="text-[10px] font-semibold text-amber-800">रकम अक्षरमा (रसिदमा प्रिन्ट हुने):</span>
+              <strong id="amt-words-preview" class="text-xs text-slate-900">${numberToNepaliWords(totalDue)}</strong>
             </div>
 
             <div class="sm:col-span-3 flex justify-end gap-2 pt-2">
@@ -2464,11 +2434,8 @@ function renderAmountEntryModule() {
 
           <div class="border-t border-slate-200 pt-5 mt-5 space-y-3">
             <div class="flex flex-wrap items-center justify-between gap-3 bg-indigo-50/60 p-4 rounded-xl border border-indigo-100">
-
               <div>
-                <h4 class="text-sm font-bold text-indigo-950">
-                  📊 ग्राहकको मिति अनुसारको फुल ट्रान्जेक्सन हिस्ट्री स्टेटमेन्ट
-                </h4>
+                <h4 class="text-sm font-bold text-indigo-950">📊 ग्राहकको मिति अनुसारको फुल ट्रान्जेक्सन हिस्ट्री स्टेटमेन्ट</h4>
                 <p class="text-[11px] text-indigo-700">
                   छानिएको ग्राहक (${selectedCust.name || '-'} - ${selectedCust.id || '-'}) को भुक्तानी रेकर्ड
                 </p>
@@ -2476,26 +2443,21 @@ function renderAmountEntryModule() {
 
               <div class="flex flex-wrap items-center gap-2">
                 <div>
-                  <label class="block text-[10px] font-semibold text-slate-600">
-                    सुरु मिति (BS)
-                  </label>
+                  <label class="block text-[10px] font-semibold text-slate-600">सुरु मिति (BS)</label>
                   <input type="text" id="statement-start-date"
                     value="${statementStartDate}" placeholder="YYYY-MM-DD"
                     class="text-xs border border-indigo-300 rounded-lg px-2.5 py-1.5 bg-white">
                 </div>
 
                 <div>
-                  <label class="block text-[10px] font-semibold text-slate-600">
-                    अन्त्य मिति (BS)
-                  </label>
+                  <label class="block text-[10px] font-semibold text-slate-600">अन्त्य मिति (BS)</label>
                   <input type="text" id="statement-end-date"
                     value="${statementEndDate}" placeholder="YYYY-MM-DD"
                     class="text-xs border border-indigo-300 rounded-lg px-2.5 py-1.5 bg-white">
                 </div>
 
                 <div class="pt-4">
-                  <button type="button"
-                    onclick="generateCustomerDateRangeStatement()"
+                  <button type="button" onclick="generateCustomerDateRangeStatement()"
                     class="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold px-4 py-1.5 rounded-lg shadow-sm cursor-pointer">
                     स्टेटमेन्ट हेर्नुहोस्
                   </button>
@@ -2508,12 +2470,9 @@ function renderAmountEntryModule() {
       ` : `
 
         <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-4">
-
           <div class="flex flex-wrap items-center justify-between gap-3">
             <div>
-              <h3 class="text-base font-bold text-slate-800">
-                बल्क अमाउन्ट इन्ट्री (ग्राहकको सबै महिनाको कुल बाँकी)
-              </h3>
+              <h3 class="text-base font-bold text-slate-800">बल्क अमाउन्ट इन्ट्री (ग्राहकको सबै महिनाको कुल बाँकी)</h3>
               <p class="text-[11px] text-slate-500 mt-1">
                 एउटै ग्राहकको सबै महिनाको बाँकी रकम जोडेर एउटै पटक भुक्तानी गर्नुहोस्।
               </p>
@@ -2541,51 +2500,30 @@ function renderAmountEntryModule() {
               </thead>
 
               <tbody class="divide-y divide-slate-100">
-
                 ${bulkCustomerRows.map(item => {
                   const c = item.customer;
                   const d = item.summary;
 
                   return `
                     <tr class="hover:bg-slate-50">
-                      <td class="p-3 font-bold text-teal-800">
-                        ${c.id}
-                      </td>
+                      <td class="p-3 font-bold text-teal-800">${c.id}</td>
 
                       <td class="p-3 font-semibold">
                         ${c.name}
-                        <div class="text-[10px] text-slate-400">
-                          ${c.phone || ''}
-                        </div>
+                        <div class="text-[10px] text-slate-400">${c.phone || ''}</div>
                       </td>
 
-                      <td class="p-3 text-slate-600">
-                        ${d.months.join(", ") || '-'}
-                      </td>
+                      <td class="p-3 text-slate-600">${d.months.join(", ") || '-'}</td>
 
-                      <td class="p-3 text-right tabular-nums text-amber-700">
-                        ${fmtMoney(d.openingDue)}
-                      </td>
+                      <td class="p-3 text-right tabular-nums text-amber-700">${fmtMoney(d.openingDue)}</td>
+                      <td class="p-3 text-right tabular-nums">${fmtMoney(d.baseDue)}</td>
+                      <td class="p-3 text-right tabular-nums text-amber-800">${fmtMoney(d.maintDue)}</td>
+                      <td class="p-3 text-right tabular-nums text-red-600">${fmtMoney(d.penaltyDue)}</td>
 
-                      <td class="p-3 text-right tabular-nums">
-                        ${fmtMoney(d.baseDue)}
-                      </td>
-
-                      <td class="p-3 text-right tabular-nums text-amber-800">
-                        ${fmtMoney(d.maintDue)}
-                      </td>
-
-                      <td class="p-3 text-right tabular-nums text-red-600">
-                        ${fmtMoney(d.penaltyDue)}
-                      </td>
-
-                      <td class="p-3 text-right font-bold tabular-nums text-teal-800">
-                        ${fmtMoney(d.totalDue)}
-                      </td>
+                      <td class="p-3 text-right font-bold tabular-nums text-teal-800">${fmtMoney(d.totalDue)}</td>
 
                       <td class="p-3 text-right">
-                        <input
-                          type="number"
+                        <input type="number"
                           data-cust-id="${c.id}"
                           data-total-due="${d.totalDue}"
                           placeholder="0"
@@ -2598,19 +2536,18 @@ function renderAmountEntryModule() {
                   `;
                 }).join("") || `
                   <tr>
-                    <td colspan="9" class="p-6 text-center text-slate-400">
-                      कुनै ग्राहकको बाँकी रकम छैन।
+                    <td colspan="9" class="p-6 text-center text-emerald-700 font-semibold">
+                      सबै ग्राहकको भुक्तानी पूरा भएको छ। कुनै बाँकी रकम छैन।
                     </td>
                   </tr>
                 `}
-
               </tbody>
             </table>
           </div>
 
           <div class="flex flex-wrap justify-between items-center gap-3 border-t border-slate-100 pt-3">
             <p class="text-[11px] text-slate-500">
-              रकम तिरेपछि ग्राहकको सबै महिनाको बाँकी क्रमशः मिलान हुनेछ।
+              बाँकी रकम भएका ग्राहकलाई मात्र भुक्तानी गर्न सकिन्छ।
             </p>
 
             <button onclick="submitBulkAmountEntry()"
@@ -2651,35 +2588,14 @@ function renderAmountEntryModule() {
 
                 return `
                   <tr class="hover:bg-slate-50">
-                    <td class="p-3 font-bold text-teal-800">
-                      ${p.receiptNo}
-                    </td>
-
+                    <td class="p-3 font-bold text-teal-800">${p.receiptNo}</td>
                     <td class="p-3 tabular-nums">${p.date}</td>
-
-                    <td class="p-3 font-semibold">
-                      ${c.name} (${p.customerId})
-                    </td>
-
-                    <td class="p-3 text-right tabular-nums text-amber-700">
-                      ${fmtMoney(p.openingPaid || 0)}
-                    </td>
-
-                    <td class="p-3 text-right tabular-nums">
-                      ${fmtMoney(p.billPaid || 0)}
-                    </td>
-
-                    <td class="p-3 text-right tabular-nums text-amber-800">
-                      ${fmtMoney(p.maintPaid || 0)}
-                    </td>
-
-                    <td class="p-3 text-right tabular-nums text-red-600">
-                      ${fmtMoney(p.penaltyPaid || 0)}
-                    </td>
-
-                    <td class="p-3 text-right font-bold tabular-nums text-emerald-700">
-                      ${fmtMoney(p.totalPaid)}
-                    </td>
+                    <td class="p-3 font-semibold">${c.name} (${p.customerId})</td>
+                    <td class="p-3 text-right tabular-nums text-amber-700">${fmtMoney(p.openingPaid || 0)}</td>
+                    <td class="p-3 text-right tabular-nums">${fmtMoney(p.billPaid || 0)}</td>
+                    <td class="p-3 text-right tabular-nums text-amber-800">${fmtMoney(p.maintPaid || 0)}</td>
+                    <td class="p-3 text-right tabular-nums text-red-600">${fmtMoney(p.penaltyPaid || 0)}</td>
+                    <td class="p-3 text-right font-bold tabular-nums text-emerald-700">${fmtMoney(p.totalPaid)}</td>
 
                     <td class="p-3 text-center">
                       <div class="flex items-center justify-center gap-1.5">
@@ -2751,21 +2667,15 @@ function generateCustomerDateRangeStatement() {
 
   const html = `
     <div class="border-2 border-slate-800 p-6 rounded-xl space-y-4 bg-white">
-
       <div class="flex items-center justify-between border-b-2 border-slate-800 pb-3">
         <div class="flex items-center gap-3">
           ${st.settings.logoDataUrl
             ? `<img src="${st.settings.logoDataUrl}" class="w-14 h-14 object-contain">`
             : `<div class="w-12 h-12 rounded-full bg-teal-700 text-white flex items-center justify-center font-bold text-lg">खा.पा.</div>`
           }
-
           <div>
-            <h2 class="text-lg font-bold text-slate-900">
-              ${st.settings.committeeName}
-            </h2>
-            <p class="text-xs text-slate-600">
-              ${st.settings.address} | फोन: ${st.settings.phone}
-            </p>
+            <h2 class="text-lg font-bold text-slate-900">${st.settings.committeeName}</h2>
+            <p class="text-xs text-slate-600">${st.settings.address} | फोन: ${st.settings.phone}</p>
           </div>
         </div>
 
@@ -2865,9 +2775,9 @@ function submitSingleAmountEntry(e) {
   const date = document.getElementById("amt-date").value.trim()
     || st.activeBSDate;
 
-  const paid = Number(
-    document.getElementById("amt-paid-input").value
-  ) || 0;
+  const paid = Math.round(
+    (Number(document.getElementById("amt-paid-input").value) || 0) * 100
+  ) / 100;
 
   if (paid <= 0) {
     return showToast("कृपया मान्य रकम राख्नुहोस्।", "error");
@@ -2883,6 +2793,13 @@ function submitSingleAmountEntry(e) {
   }
 
   const allocation = applyCustomerPayment(cust, paid);
+
+  if (allocation.unallocated > 0.009) {
+    return showToast(
+      "भुक्तानी रकम बाँकी रकमभन्दा बढी भयो। कृपया रकम जाँच गर्नुहोस्।",
+      "warning"
+    );
+  }
 
   const recNo = `REC-${parseBS(date).y}-${st.settings.receiptCounter++}`;
 
@@ -2906,12 +2823,11 @@ function submitSingleAmountEntry(e) {
   renderCurrentModule();
 
   printWaterReceipt(payObj.id);
-
   showToast(`रसिद नं. ${recNo} सुरक्षित भयो!`, "success");
 }
 
 // ============================================================================
-// BULK AMOUNT ENTRY - ONE CUSTOMER, ONE TOTAL PAYMENT, ONE RECEIPT
+// BULK AMOUNT ENTRY
 // ============================================================================
 function submitBulkAmountEntry() {
   const st = window.ERP_STATE;
@@ -2925,7 +2841,9 @@ function submitBulkAmountEntry() {
   let skipped = 0;
 
   inputs.forEach((inp, index) => {
-    const val = Math.round((Number(inp.value) || 0) * 100) / 100;
+    const val = Math.round(
+      (Number(inp.value) || 0) * 100
+    ) / 100;
 
     if (val <= 0) return;
 
@@ -2937,8 +2855,13 @@ function submitBulkAmountEntry() {
       return;
     }
 
-    // Recalculate current total before accepting payment.
+    // Recalculate the current due before accepting payment.
     const summary = getCustomerAmountSummary(cust);
+
+    if (summary.totalDue <= 0.009) {
+      skipped++;
+      return;
+    }
 
     if (val > summary.totalDue + 0.009) {
       skipped++;
@@ -2950,6 +2873,11 @@ function submitBulkAmountEntry() {
     }
 
     const allocation = applyCustomerPayment(cust, val);
+
+    if (allocation.unallocated > 0.009) {
+      skipped++;
+      return;
+    }
 
     const recNo = `REC-${parseBS(date).y}-${st.settings.receiptCounter++}`;
 
@@ -2976,7 +2904,7 @@ function submitBulkAmountEntry() {
     renderCurrentModule();
 
     showToast(
-      `${count} जना ग्राहकको कुल रकम एकमुष्ट सेभ भयो। प्रत्येक ग्राहकको एउटै रसिद तयार भयो।`,
+      `${count} जना ग्राहकको रकम सेभ भयो। प्रत्येक ग्राहकको छुट्टै रसिद तयार भयो।`,
       "success"
     );
   } else if (skipped === 0) {
@@ -3017,7 +2945,11 @@ function modifyPaymentRecord(payId) {
     if (refundBill > 0 && Number(r.paidAmount || 0) > 0) {
       const rev = Math.min(refundBill, Number(r.paidAmount));
 
-      r.paidAmount = Math.max(0, Number(r.paidAmount || 0) - rev);
+      r.paidAmount = Math.max(
+        0,
+        Number(r.paidAmount || 0) - rev
+      );
+
       refundBill = Math.round((refundBill - rev) * 100) / 100;
     }
 
@@ -3081,11 +3013,12 @@ function printWaterReceipt(payId) {
 
   const hasOpening = Number(p.openingPaid || 0) > 0;
   const hasMaint = Number(p.maintPaid || 0) > 0;
+  const hasPenalty = Number(p.penaltyPaid || 0) > 0;
+
   let serialNo = 1;
 
   const html = `
     <div class="border-2 border-slate-800 p-6 rounded-lg space-y-4">
-
       <div class="flex items-center justify-between border-b-2 border-slate-800 pb-3">
         <div class="flex items-center gap-3">
           ${s.logoDataUrl
@@ -3094,12 +3027,8 @@ function printWaterReceipt(payId) {
           }
 
           <div>
-            <h2 class="text-lg font-bold text-slate-900">
-              ${s.committeeName}
-            </h2>
-            <p class="text-xs text-slate-600">
-              ${s.address} | फोन: ${s.phone}
-            </p>
+            <h2 class="text-lg font-bold text-slate-900">${s.committeeName}</h2>
+            <p class="text-xs text-slate-600">${s.address} | फोन: ${s.phone}</p>
           </div>
         </div>
 
@@ -3107,9 +3036,7 @@ function printWaterReceipt(payId) {
           <span class="px-3 py-1 bg-slate-900 text-white text-xs font-bold rounded">
             खानेपानी महसुल तथा मर्मत रसिद
           </span>
-          <div class="text-xs font-bold mt-1">
-            रसिद नं.: ${p.receiptNo}
-          </div>
+          <div class="text-xs font-bold mt-1">रसिद नं.: ${p.receiptNo}</div>
           <div class="text-xs">मिति (BS): ${p.date}</div>
         </div>
       </div>
@@ -3153,19 +3080,19 @@ function printWaterReceipt(payId) {
             </tr>
           ` : ''}
 
-          <tr>
-            <td class="border border-slate-400 p-2">${serialNo++}</td>
-            <td class="border border-slate-400 p-2">विलम्ब जरिवाना रकम</td>
-            <td class="border border-slate-400 p-2 text-right font-semibold">${fmtMoney(p.penaltyPaid)}</td>
-          </tr>
+          ${hasPenalty ? `
+            <tr>
+              <td class="border border-slate-400 p-2">${serialNo++}</td>
+              <td class="border border-slate-400 p-2">विलम्ब जरिवाना रकम</td>
+              <td class="border border-slate-400 p-2 text-right font-semibold">${fmtMoney(p.penaltyPaid)}</td>
+            </tr>
+          ` : ''}
 
           <tr class="bg-slate-100 font-bold">
             <td colspan="2" class="border border-slate-400 p-2 text-right">
               कुल जम्मा प्राप्त रकम:
             </td>
-            <td class="border border-slate-400 p-2 text-right text-sm">
-              ${fmtMoney(p.totalPaid)}
-            </td>
+            <td class="border border-slate-400 p-2 text-right text-sm">${fmtMoney(p.totalPaid)}</td>
           </tr>
         </tbody>
       </table>
@@ -3177,13 +3104,10 @@ function printWaterReceipt(payId) {
 
       <div class="flex justify-between items-end pt-8 text-xs">
         <div>बुझाउनेको सही: ______________________</div>
-
         <div class="text-right">
           <div>______________________</div>
           <div class="font-semibold">${s.authorizedPerson}</div>
-          <div class="text-[10px] text-slate-500">
-            आधिकारिक हस्ताक्षर / छाप
-          </div>
+          <div class="text-[10px] text-slate-500">आधिकारिक हस्ताक्षर / छाप</div>
         </div>
       </div>
     </div>
@@ -3194,7 +3118,6 @@ function printWaterReceipt(payId) {
     html
   );
 }
-
 
 // ============================================================================
 // 9. METER READING SHEETS & BULK READING BILLS PRINT MODULE
