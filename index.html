@@ -290,7 +290,7 @@
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
   import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-  import { getFirestore, doc, getDoc, onSnapshot, runTransaction } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+  import { getFirestore, doc, setDoc, getDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
   window.cloudSync = {
     enabled: true,
@@ -298,60 +298,6 @@
     userId: null,
     appId: 'khanepani-erp-hamro-sanstha',
     isSaving: false,
-    isApplyingRemote: false,
-    saveQueue: Promise.resolve(),
-    docRef: null,
-
-    // Merge arrays by unique record ID so one device cannot replace another device's entries.
-    mergeState(localValue, remoteValue, preferRemote = false, arrayName = "") {
-      if (Array.isArray(localValue) || Array.isArray(remoteValue)) {
-        const a = Array.isArray(localValue) ? localValue : [];
-        const b = Array.isArray(remoteValue) ? remoteValue : [];
-        const keyOf = (item) => {
-          if (item && typeof item === "object") {
-            if (item.id != null) return "id:" + item.id;
-            if (arrayName === "readings" && item.customerId && item.month) return "reading:" + item.customerId + ":" + item.month;
-            if (item.receiptNo) return "receipt:" + item.receiptNo;
-          }
-          return "json:" + JSON.stringify(item);
-        };
-        const first = preferRemote ? a : b;
-        const second = preferRemote ? b : a;
-        const map = new Map();
-        for (const item of first) map.set(keyOf(item), item);
-        for (const item of second) {
-          const key = keyOf(item);
-          if (map.has(key) && item && map.get(key) && typeof item === "object" && typeof map.get(key) === "object") {
-            map.set(key, this.mergeState(map.get(key), item, preferRemote, ""));
-          } else map.set(key, item);
-        }
-        return Array.from(map.values());
-      }
-      if (localValue && remoteValue && typeof localValue === "object" && typeof remoteValue === "object") {
-        const out = {};
-        const keys = new Set([...Object.keys(localValue), ...Object.keys(remoteValue)]);
-        for (const key of keys) {
-          if (key === "lastModified") out[key] = Math.max(Number(localValue[key] || 0), Number(remoteValue[key] || 0));
-          else if (Array.isArray(localValue[key]) || Array.isArray(remoteValue[key])) out[key] = this.mergeState(localValue[key], remoteValue[key], preferRemote, key);
-          else if (localValue[key] && remoteValue[key] && typeof localValue[key] === "object" && typeof remoteValue[key] === "object") out[key] = this.mergeState(localValue[key], remoteValue[key], preferRemote, key);
-          else out[key] = preferRemote
-            ? (remoteValue[key] !== undefined ? remoteValue[key] : localValue[key])
-            : (localValue[key] !== undefined ? localValue[key] : remoteValue[key]);
-        }
-        // Cloud array merge is additive; tombstones ensure deleted DEMO rows stay deleted across devices.
-        const deletedDemoIds = new Set(Array.isArray(out._deletedDemoIds) ? out._deletedDemoIds : []);
-        if (deletedDemoIds.size) {
-          for (const key of Object.keys(out)) {
-            if (Array.isArray(out[key]) && key !== "_deletedDemoIds") {
-              out[key] = out[key].filter(row => !(row && row.id && deletedDemoIds.has(String(row.id))));
-            }
-          }
-        }
-        return out;
-      }
-      return preferRemote ? (remoteValue !== undefined ? remoteValue : localValue) : (localValue !== undefined ? localValue : remoteValue);
-    },
-
     async init() {
       try {
         const cfg = {
@@ -363,78 +309,78 @@
           messagingSenderId: "862126304543",
           appId: "1:862126304543:web:1decd760850960953b142a"
         };
+
         const app = initializeApp(cfg);
         const auth = getAuth(app);
         this.db = getFirestore(app);
-        await signInAnonymously(auth);
-        this.docRef = doc(this.db, "artifacts", this.appId, "public", "data", "erp_state", "master_v1");
 
-        const initialSnap = await getDoc(this.docRef);
+        await signInAnonymously(auth);
+        console.log("CloudSync Authenticated Successfully!");
+
+        const docRef = doc(this.db, "artifacts", this.appId, "public", "data", "erp_state", "master_v1");
+        
+        const initialSnap = await getDoc(docRef);
         if (initialSnap.exists()) {
-          // Keep local-only records while loading the latest cloud state.
-          window.ERP_STATE = this.mergeState(window.ERP_STATE || {}, initialSnap.data() || {}, true);
-          localStorage.setItem("KHANEPANI_ERP_LOCAL_BACKUP", JSON.stringify(window.ERP_STATE));
-          if (typeof renderCurrentModule === "function") renderCurrentModule();
+          const remoteData = initialSnap.data();
+          if (remoteData && remoteData.customers) {
+            window.ERP_STATE = Object.assign({}, window.ERP_STATE, remoteData);
+            localStorage.setItem("KHANEPANI_ERP_LOCAL_BACKUP", JSON.stringify(window.ERP_STATE));
+            if (typeof renderCurrentModule === "function") renderCurrentModule();
+          }
         }
 
-        onSnapshot(this.docRef, (docSnap) => {
-          if (!docSnap.exists() || this.isSaving) return;
-          this.isApplyingRemote = true;
-          window.ERP_STATE = this.mergeState(window.ERP_STATE || {}, docSnap.data() || {}, true);
-          localStorage.setItem("KHANEPANI_ERP_LOCAL_BACKUP", JSON.stringify(window.ERP_STATE));
-          const dateInput = document.getElementById("global-bs-date-input");
-          if (dateInput && window.ERP_STATE.activeBSDate) dateInput.value = window.ERP_STATE.activeBSDate;
-          if (typeof renderCurrentModule === "function") renderCurrentModule();
-          this.isApplyingRemote = false;
-          console.log("Cloud data merged from another device.");
-        }, (error) => console.error("CloudSync snapshot error:", error));
-        console.log("CloudSync ready.");
+        onSnapshot(docRef, (docSnap) => {
+          if (docSnap.exists() && !this.isSaving) {
+            const remoteData = docSnap.data();
+            if (remoteData && remoteData.customers) {
+              const localState = window.ERP_STATE || {};
+              const remoteTime = remoteData.lastModified || 0;
+              const localTime = localState.lastModified || 0;
+
+              if (remoteTime >= localTime) {
+                window.ERP_STATE = Object.assign({}, window.ERP_STATE, remoteData);
+                localStorage.setItem("KHANEPANI_ERP_LOCAL_BACKUP", JSON.stringify(window.ERP_STATE));
+                
+                // 🌟 अर्को डिभाइसमा ग्लोबल मिति बक्स पनि अटोमेटिक अपडेट हुने बनाउने
+                const dateInput = document.getElementById("global-bs-date-input");
+                if (dateInput && window.ERP_STATE.activeBSDate) {
+                  dateInput.value = window.ERP_STATE.activeBSDate;
+                }
+
+                if (typeof renderCurrentModule === "function") {
+                  renderCurrentModule();
+                }
+                console.log("Data auto-synced safely from cloud!");
+              }
+            }
+          }
+        }, (error) => {
+          console.error("CloudSync snapshot error:", error);
+        });
+
       } catch (err) {
         console.error("CloudSync Init Error:", err);
       }
     },
 
     async save() {
-      if (!window.ERP_STATE || this.isApplyingRemote) return;
+      if (!window.ERP_STATE) return;
       window.ERP_STATE.lastModified = Date.now();
+      localStorage.setItem("KHANEPANI_ERP_LOCAL_BACKUP", JSON.stringify(window.ERP_STATE));
+      if (!this.enabled || !this.db) return;
       try {
-        localStorage.setItem("KHANEPANI_ERP_LOCAL_BACKUP", JSON.stringify(window.ERP_STATE));
-      } catch (storageError) {
-        console.error("Local backup failed:", storageError);
-        if (typeof showToast === "function") showToast("स्थानीय ब्याकअप सेभ भएन। ब्राउजरको स्टोरेज खाली गर्नुहोस् वा ब्याकअप डाउनलोड गर्नुहोस्।", "error");
-      }
-      if (!this.enabled) return;
-      const task = async () => {
-        if (this.ready) await this.ready;
-        if (!this.db || !this.docRef) {
-          console.warn("Cloud save skipped: Firebase is not ready; local backup remains saved.");
-          return;
-        }
         this.isSaving = true;
-        try {
-          await runTransaction(this.db, async (transaction) => {
-            const snap = await transaction.get(this.docRef);
-            const remote = snap.exists() ? (snap.data() || {}) : {};
-            // Read latest server version inside transaction, then merge local entries into it.
-            const merged = this.mergeState(window.ERP_STATE || {}, remote, false);
-            merged.lastModified = Date.now();
-            transaction.set(this.docRef, merged);
-            window.ERP_STATE = merged;
-            localStorage.setItem("KHANEPANI_ERP_LOCAL_BACKUP", JSON.stringify(merged));
-          });
-          console.log("Cloud data saved and merged successfully.");
-        } catch (err) {
-          console.error("CloudSync Save Error:", err);
-          if (typeof showToast === "function") showToast("क्लाउडमा सेभ भएन। इन्टरनेट जाँच्नुहोस्; स्थानीय ब्याकअप सुरक्षित छ।", "error");
-        } finally {
-          this.isSaving = false;
-        }
-      };
-      this.saveQueue = this.saveQueue.then(task, task);
-      return this.saveQueue;
+        const docRef = doc(this.db, "artifacts", this.appId, "public", "data", "erp_state", "master_v1");
+        await setDoc(docRef, window.ERP_STATE);
+        console.log("Data saved to cloud successfully!");
+      } catch (err) {
+        console.error("CloudSync Save Error:", err);
+      } finally {
+        setTimeout(() => { this.isSaving = false; }, 1000);
+      }
     }
   };
-  window.cloudSync.ready = window.cloudSync.init();
+  window.cloudSync.init();
 </script>
 
 <script>
@@ -455,76 +401,64 @@ function getAutoTodayBS() {
 }
 
 function parseBS(bsStr) {
-  const clean = String(bsStr || "2083-07-22").trim().replace(/\//g, "-");
+  const clean = (bsStr || "2083-07-22").trim().replace(/\//g, "-");
   const parts = clean.split("-").map(n => parseInt(n, 10));
-  if (parts.length !== 3 || parts.some(n => !Number.isFinite(n))) return { y: 2083, m: 7, d: 22 };
-  const y = Math.min(2200, Math.max(1900, parts[0]));
-  const m = Math.min(12, Math.max(1, parts[1]));
-  const maxDay = typeof getBSMonthDays === "function" ? getBSMonthDays(y, m) : 32;
-  const d = Math.min(maxDay, Math.max(1, parts[2]));
-  return { y, m, d };
+  if (parts.length !== 3 || parts.some(isNaN)) return { y: 2083, m: 7, d: 22 };
+  return { y: parts[0], m: Math.min(12, Math.max(1, parts[1])), d: Math.min(32, Math.max(1, parts[2])) };
 }
 
 function formatBS(y, m, d) {
   return `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
 }
 
-// Bikram Sambat date arithmetic uses the editable year/month day table.
-// This avoids the old fixed-30-day assumption, which caused wrong due dates,
-// penalties and date-range reports for 29/31/32-day Nepali months.
-let __bsCalendarCacheSignature = "";
-let __bsCalendarYearStarts = new Map();
 function getBSMonthDays(year, month) {
-  const calendar = window.ERP_STATE?.settings?.bsCalendar || (typeof DEFAULT_BS_CALENDAR !== "undefined" ? DEFAULT_BS_CALENDAR : {});
-  const row = calendar[year] || calendar[String(year)];
-  const value = Array.isArray(row) ? Number(row[month - 1]) : 30;
-  return Number.isFinite(value) && value >= 28 && value <= 32 ? value : 30;
+  const stCal = window.ERP_STATE?.settings?.bsCalendar;
+  const cal = stCal || (typeof DEFAULT_BS_CALENDAR !== "undefined" ? DEFAULT_BS_CALENDAR : null);
+  const days = cal?.[year]?.[month - 1];
+  return Number.isInteger(Number(days)) && Number(days) >= 28 && Number(days) <= 32 ? Number(days) : 30;
 }
-function getBSYearStart(year) {
-  const calendar = window.ERP_STATE?.settings?.bsCalendar || (typeof DEFAULT_BS_CALENDAR !== "undefined" ? DEFAULT_BS_CALENDAR : {});
-  const signature = JSON.stringify(calendar);
-  if (signature !== __bsCalendarCacheSignature) {
-    __bsCalendarCacheSignature = signature;
-    __bsCalendarYearStarts = new Map([[0, 0]]);
-  }
-  if (__bsCalendarYearStarts.has(year)) return __bsCalendarYearStarts.get(year);
-  // Cache a compact prefix table. Calendar edits automatically invalidate it.
-  let start = 0;
-  if (year > 0) {
-    for (let y = 0; y < year; y++) {
-      let days = 0;
-      for (let m = 1; m <= 12; m++) days += getBSMonthDays(y, m);
-      start += days;
-    }
-  } else {
-    for (let y = year; y < 0; y++) {
-      let days = 0;
-      for (let m = 1; m <= 12; m++) days += getBSMonthDays(y, m);
-      start -= days;
-    }
-  }
-  __bsCalendarYearStarts.set(year, start);
-  return start;
+
+function isValidBSDate(bsStr) {
+  const raw = String(bsStr || "").trim().replace(/\//g, "-");
+  if (!/^\d{4}-\d{1,2}-\d{1,2}$/.test(raw)) return false;
+  const { y, m, d } = parseBS(raw);
+  return y >= 1 && m >= 1 && m <= 12 && d >= 1 && d <= getBSMonthDays(y, m);
 }
+
+const BS_SERIAL_CACHE = new Map();
 function bsToSerialDays(bsStr) {
   const { y, m, d } = parseBS(bsStr);
-  let serial = getBSYearStart(y);
-  for (let month = 1; month < m; month++) serial += getBSMonthDays(y, month);
-  return serial + Math.min(d, getBSMonthDays(y, m)) - 1;
+  const cacheKey = formatBS(y, m, d);
+  if (BS_SERIAL_CACHE.has(cacheKey)) return BS_SERIAL_CACHE.get(cacheKey);
+  let total = 0;
+  if (y >= 1) {
+    for (let yr = 1; yr < y; yr++) for (let mo = 1; mo <= 12; mo++) total += getBSMonthDays(yr, mo);
+  } else {
+    for (let yr = y; yr < 1; yr++) for (let mo = 1; mo <= 12; mo++) total -= getBSMonthDays(yr, mo);
+  }
+  for (let mo = 1; mo < m; mo++) total += getBSMonthDays(y, mo);
+  const serial = total + d;
+  BS_SERIAL_CACHE.set(cacheKey, serial);
+  return serial;
 }
+
 function diffDaysBS(fromBS, toBS) {
   return bsToSerialDays(toBS) - bsToSerialDays(fromBS);
 }
+
 function addDaysToBS(bsStr, daysToAdd) {
-  let serial = bsToSerialDays(bsStr) + Math.trunc(Number(daysToAdd) || 0);
-  let year = parseBS(bsStr).y;
-  while (serial < getBSYearStart(year)) year--;
-  while (serial >= getBSYearStart(year + 1)) year++;
-  let month = 1;
-  while (month < 12 && serial >= getBSYearStart(year) + Array.from({length: month}, (_, i) => getBSMonthDays(year, i + 1)).reduce((a, b) => a + b, 0)) month++;
-  let monthStart = getBSYearStart(year);
-  for (let m = 1; m < month; m++) monthStart += getBSMonthDays(year, m);
-  return formatBS(year, month, serial - monthStart + 1);
+  let { y, m, d } = parseBS(bsStr);
+  let remaining = Math.trunc(Number(daysToAdd) || 0);
+  while (remaining > 0) {
+    const left = getBSMonthDays(y, m) - d;
+    if (remaining <= left) { d += remaining; remaining = 0; }
+    else { remaining -= left + 1; d = 1; m++; if (m > 12) { m = 1; y++; } }
+  }
+  while (remaining < 0) {
+    if (-remaining < d) { d += remaining; remaining = 0; }
+    else { remaining += d; m--; if (m < 1) { m = 12; y--; } d = getBSMonthDays(y, m); }
+  }
+  return formatBS(y, m, d);
 }
 
 function isDateBetweenBS(targetBS, fromBS, toBS) {
@@ -568,8 +502,8 @@ function numberToNepaliWords(num) {
   num %= 1000;
 
   if (crore > 0) words += threeDigit(crore) + " करोड ";
-  if (lakh > 0) words += threeDigit(lakh) + " लाख ";
-  if (thousand > 0) words += threeDigit(thousand) + " हजार ";
+  if (lakh > 0) words += twoDigit(lakh) + " लाख ";
+  if (thousand > 0) words += twoDigit(thousand) + " हजार ";
   if (num > 0) words += threeDigit(num);
 
   return words.trim() + " रुपैयाँ मात्र";
@@ -637,26 +571,6 @@ if (savedLocalData) {
   window.ERP_STATE = JSON.parse(JSON.stringify(INITIAL_STATE));
 }
 
-// पुरानो/आंशिक ब्याकअप खोल्दा आवश्यक सूची वा सेटिङ हराएको भए सुरक्षित रूपमा पूर्वनिर्धारित मान थप्ने।
-// पहिलेबाट भएको वास्तविक डाटा भने जस्ताको तस्तै राखिन्छ।
-(function normalizeERPState() {
-  const saved = window.ERP_STATE && typeof window.ERP_STATE === "object" ? window.ERP_STATE : {};
-  const base = JSON.parse(JSON.stringify(INITIAL_STATE));
-  window.ERP_STATE = {
-    ...base,
-    ...saved,
-    auth: { ...base.auth, ...(saved.auth && typeof saved.auth === "object" ? saved.auth : {}) },
-    settings: { ...base.settings, ...(saved.settings && typeof saved.settings === "object" ? saved.settings : {}) }
-  };
-  ["tariffRules", "penaltyRules", "loanRateRules", "tankerRateRules"].forEach(key => {
-    if (!Array.isArray(window.ERP_STATE.settings[key])) window.ERP_STATE.settings[key] = base.settings[key];
-  });
-  Object.keys(base).forEach(key => {
-    if (Array.isArray(base[key]) && !Array.isArray(window.ERP_STATE[key])) window.ERP_STATE[key] = [];
-  });
-  if (!Array.isArray(window.ERP_STATE._deletedDemoIds)) window.ERP_STATE._deletedDemoIds = [];
-})();
-
 // ============================================================================
 // 3. CORE DYNAMIC RECALCULATION ENGINE
 // ============================================================================
@@ -693,31 +607,18 @@ function calculateWaterBill(units, billDateBS) {
 }
 
 function calculateSegmentedLoanInterest(principal, fromBS, toBS) {
-  const amount = Math.max(0, Number(principal) || 0);
+  const totalDays = Math.max(0, diffDaysBS(fromBS, toBS));
+  if (totalDays === 0 || principal <= 0) return 0;
+
+  const rules = [...(window.ERP_STATE.settings.loanRateRules || [])].sort((a, b) => bsToSerialDays(a.fromDate) - bsToSerialDays(b.fromDate));
+  let totalInterest = 0;
   const startSerial = bsToSerialDays(fromBS);
   const endSerial = bsToSerialDays(toBS);
-  if (endSerial <= startSerial || amount <= 0) return 0;
 
-  // Rate changes are applied by date segment, not by iterating every single day.
-  // This is materially faster when many loans and long date ranges are present.
-  const rules = [...(window.ERP_STATE.settings.loanRateRules || [])]
-    .filter(r => r && r.fromDate && r.toDate)
-    .map(r => ({ ...r, _from: bsToSerialDays(r.fromDate), _to: bsToSerialDays(r.toDate) }))
-    .sort((a, b) => a._from - b._from);
-  const cuts = new Set([startSerial, endSerial]);
-  for (const rule of rules) {
-    if (rule._from > startSerial && rule._from < endSerial) cuts.add(rule._from);
-    const afterRule = rule._to + 1;
-    if (afterRule > startSerial && afterRule < endSerial) cuts.add(afterRule);
-  }
-  const boundaries = [...cuts].sort((a, b) => a - b);
-  let totalInterest = 0;
-  for (let i = 0; i < boundaries.length - 1; i++) {
-    const segmentStart = boundaries[i];
-    const segmentDays = boundaries[i + 1] - segmentStart;
-    const matched = rules.find(r => segmentStart >= r._from && segmentStart <= r._to) || rules[rules.length - 1];
+  for (let s = startSerial; s < endSerial; s++) {
+    const matched = rules.find(r => s >= bsToSerialDays(r.fromDate) && s <= bsToSerialDays(r.toDate)) || rules[rules.length - 1];
     const rate = matched ? Number(matched.annualRate) : 12;
-    if (Number.isFinite(rate)) totalInterest += (amount * rate * segmentDays) / (100 * 365);
+    totalInterest += (principal * rate) / (100 * 365);
   }
   return Math.round(totalInterest * 100) / 100;
 }
@@ -800,6 +701,7 @@ window.recalculateAllDynamicValues = function(showBanner = true) {
 
 function applyGlobalDateChange() {
   const val = document.getElementById("global-bs-date-input").value.trim();
+  if (!isValidBSDate(val)) return showToast("नेपाली मिति गलत छ। पात्रोअनुसार सही YYYY-MM-DD मिति राख्नुहोस्।", "error");
   const parsed = parseBS(val);
   const formatted = formatBS(parsed.y, parsed.m, parsed.d);
   document.getElementById("global-bs-date-input").value = formatted;
@@ -1554,7 +1456,8 @@ function previewRowReading(input) {
 
 function saveBulkReadings() {
   const entryDate = document.getElementById("unit-entry-date").value.trim() || window.ERP_STATE.activeBSDate;
-  const rows = document.querySelectorAll("tbody tr");
+  if (!isValidBSDate(entryDate)) return showToast("रिडिङ मिति गलत छ। सही नेपाली मिति राख्नुहोस्।", "error");
+  const rows = [...document.querySelectorAll("#module-container .bulk-reading-input")].map(el => el.closest("tr")).filter(Boolean);
   let savedCount = 0;
 
   rows.forEach(row => {
@@ -1573,7 +1476,8 @@ function saveBulkReadings() {
     // कुल बिलमा महसुल + मर्मत शुल्क जोडिने
     const totalBillWithMaint = calc.totalBill + maintVal;
 
-    const existingIdx = window.ERP_STATE.readings.findIndex(r => r.customerId === cid && r.month === selectedUnitMonth);
+    const entryYear = parseBS(entryDate).y.toString();
+    const existingIdx = window.ERP_STATE.readings.findIndex(r => r.customerId === cid && r.month === selectedUnitMonth && String(r.year || parseBS(r.entryDate || entryDate).y) === entryYear);
 
     if (existingIdx >= 0) {
       const old = window.ERP_STATE.readings[existingIdx];
@@ -1589,7 +1493,7 @@ function saveBulkReadings() {
         id: "RD-" + Date.now() + "-" + cid,
         customerId: cid,
         month: selectedUnitMonth,
-        year: parseBS(entryDate).y.toString(),
+        year: entryYear,
         entryDate,
         prevReading: prev,
         currReading: curr,
@@ -1610,6 +1514,7 @@ function saveBulkReadings() {
   });
 
   window.recalculateAllDynamicValues(false);
+  window.cloudSync?.save();
   renderCurrentModule();
   showToast(`${selectedUnitMonth} महिनाको ${savedCount} जना ग्राहकको युनिट र मर्मत शुल्क सुरक्षित/अपडेट भयो!`);
 }
@@ -4467,7 +4372,7 @@ function generateReportHTML(tab) {
 
   const incByCat = {};
   INCOME_CATEGORIES.forEach(c => incByCat[c] = 0);
-  st.incomes.filter(i => isDateBetweenBS(i.date, repFromBS, repToBS)).forEach(i => incByCat[i.category] = (incByCat[i.category] || 0) + Number(i.amount));
+  st.incomes.filter(i => isDateBetweenBS(i.date, repFromBS, repToBS) && i.category !== "ऋण ब्याज आम्दानी (नगद असुली)").forEach(i => incByCat[i.category] = (incByCat[i.category] || 0) + Number(i.amount));
   incByCat["मर्मत आम्दानी"] = (incByCat["मर्मत आम्दानी"] || 0) + receiptMaintInc;
 
   const expByCat = {};
@@ -4517,10 +4422,14 @@ function generateReportHTML(tab) {
   }, 0);
   const loanReceivable = st.loans.reduce((s, l) => s + Math.max(0, l.principal - (l.paidPrincipal || 0)), 0);
   const waterReceivable = st.readings.reduce((s, r) => s + Math.max(0, r.billAmount - (Number(r.paidAmount || 0) + Number(r.paidMaintAmount || 0))) + (r.penaltyAmount || 0), 0);
-  const cashInHand = Math.max(0, 85000 + netSurplus);
-  const fixedAssets = 650000;
+  // प्रतिवेदनमा अनुमानित/हार्डकोड गरिएको नगद वा सम्पत्ति नराख्ने।
+  // नगद यहाँ सेट गरिएको प्रारम्भिक मौज्दात मात्र हो; हालको नगद कारोबारको छुट्टै Cash Book आवश्यक छ।
+  const cashInHand = Number(s.openingCash || 0);
+  const fixedAssets = Number(s.fixedAssets || 0);
   const totalAssets = bankTotal + cashInHand + loanReceivable + waterReceivable + fixedAssets;
-  const reserveFund = totalAssets - netSurplus;
+  const reserveFund = Number(s.openingFund || 0);
+  const balanceSheetLiabilities = reserveFund + netSurplus;
+  const balanceDifference = totalAssets - balanceSheetLiabilities;
 
   if (tab === "trial-balance") {
     const tbRows = [
@@ -4531,7 +4440,8 @@ function generateReportHTML(tab) {
       { name: "स्थिर सम्पत्ति - पाइपलाइन/ट्याङ्की", dr: fixedAssets, cr: 0 },
       { name: "कुल सञ्चालन तथा प्रशासनिक खर्च", dr: totalExpense, cr: 0 },
       { name: "कुल संकलित आम्दानी (Revenue)", dr: 0, cr: totalIncome },
-      { name: "संस्थागत जगेडा कोष तथा पुँजी (Reserve Fund)", dr: 0, cr: reserveFund }
+      { name: "चालु वर्षको खुद बचत (Net Surplus)", dr: 0, cr: netSurplus },
+      { name: "सुरुवाती कोष / पुँजी (Opening Fund)", dr: 0, cr: reserveFund }
     ];
     const sumDr = tbRows.reduce((s, r) => s + r.dr, 0);
     const sumCr = tbRows.reduce((s, r) => s + r.cr, 0);
@@ -4576,7 +4486,7 @@ function generateReportHTML(tab) {
             <tr><td class="border border-slate-300 p-2">संस्थागत जगेडा कोष (General Reserve)</td><td class="border border-slate-300 p-2 text-right">${fmtMoney(reserveFund)}</td></tr>
             <tr><td class="border border-slate-300 p-2">चालु वर्षको खुद बचत (Net Surplus)</td><td class="border border-slate-300 p-2 text-right">${fmtMoney(netSurplus)}</td></tr>
           </tbody>
-          <tfoot><tr class="bg-slate-100 font-bold"><td class="border border-slate-300 p-2">कुल दायित्व</td><td class="border border-slate-300 p-2 text-right">${fmtMoney(totalAssets)}</td></tr></tfoot>
+          <tfoot><tr class="bg-slate-100 font-bold"><td class="border border-slate-300 p-2">कोष तथा खुद बचतको जम्मा</td><td class="border border-slate-300 p-2 text-right">${fmtMoney(balanceSheetLiabilities)}</td></tr></tfoot>
         </table>
 
         <table class="w-full border-collapse border border-slate-300">
@@ -4591,11 +4501,13 @@ function generateReportHTML(tab) {
           <tfoot><tr class="bg-slate-100 font-bold"><td class="border border-slate-300 p-2">कुल सम्पत्ति</td><td class="border border-slate-300 p-2 text-right">${fmtMoney(totalAssets)}</td></tr></tfoot>
         </table>
       </div>
+      <p class="mt-3 text-xs ${Math.abs(balanceDifference) < 0.01 ? 'text-emerald-700' : 'text-rose-700'}">वासलात जाँच: सम्पत्ति र कोष/दायित्वबीचको फरक ${fmtMoney(balanceDifference)}। फरक शून्य नभएसम्म वासलात मिलेको मान्नु हुँदैन। नगद मौज्दातमा अहिले प्रारम्भिक नगद मात्र समावेश छ।</p>
     `;
   }
 
   return `
     ${header("नगद प्रवाह विवरण (Cash Flow Statement)")}
+    <p class="mb-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900">यो हालको सञ्चालन सारांश हो, पूर्ण नगद प्रवाह विवरण होइन। कारोबारमा नगद/बैंक छुट्याउने र बैंक ट्रान्सफर/ऋण वितरणको दोहोरो प्रभाव मिलाउने Cash Book/ledger जोड्न बाँकी छ।</p>
     <table class="w-full text-xs border-collapse border border-slate-300">
       <thead class="bg-slate-100">
         <tr><th class="border border-slate-300 p-2 text-left">नगद प्रवाह शीर्षक</th><th class="border border-slate-300 p-2 text-right">रकम (रू.)</th></tr>
@@ -4847,6 +4759,14 @@ function renderSettingsModule() {
             <label class="font-semibold text-slate-600 block mb-1">बैंक ओपनिङ ब्यालेन्स (कुल बैंक)</label>
             <input type="number" id="set-open-bank" value="${s.openingBank || 0}" class="w-full border border-slate-300 rounded-xl px-3 py-2 font-bold text-cyan-800" placeholder="बैंक खाताहरूको जम्मा ओपनिङ">
           </div>
+          <div>
+            <label class="font-semibold text-slate-600 block mb-1">स्थिर सम्पत्ति (प्रारम्भिक मूल्य)</label>
+            <input type="number" id="set-fixed-assets" value="${s.fixedAssets || 0}" min="0" class="w-full border border-slate-300 rounded-xl px-3 py-2 font-bold text-indigo-800">
+          </div>
+          <div>
+            <label class="font-semibold text-slate-600 block mb-1">सुरुवाती कोष / पुँजी</label>
+            <input type="number" id="set-opening-fund" value="${s.openingFund || 0}" min="0" class="w-full border border-slate-300 rounded-xl px-3 py-2 font-bold text-slate-800">
+          </div>
           <div class="sm:col-span-2 md:col-span-4 flex justify-end pt-2">
             <button type="submit" class="bg-teal-700 hover:bg-teal-800 text-white font-semibold px-5 py-2.5 rounded-xl flex items-center gap-2 cursor-pointer">
               <i data-lucide="save" class="w-4 h-4"></i> ओपनिङ ब्यालेन्स सुरक्षित गर्नुहोस्
@@ -5025,6 +4945,8 @@ function updateBSCalendarDay(year, monthIndex, val) {
       st.settings.bsCalendar[year] = [31, 31, 32, 31, 31, 30, 30, 29, 30, 29, 30, 30];
     }
     st.settings.bsCalendar[year][monthIndex] = num;
+    BS_SERIAL_CACHE.clear();
+    window.cloudSync?.save();
     window.recalculateAllDynamicValues?.(true);
     showToast(`${year} सालको महिना दिन अपडेट भयो!`);
   } else {
@@ -5044,6 +4966,8 @@ function addNewCalendarYear() {
     return showToast("यो साल पहिल्यै लिस्टमा छ!", "error");
   }
   st.settings.bsCalendar[yr] = [31, 31, 32, 31, 31, 30, 30, 29, 30, 29, 30, 30];
+  BS_SERIAL_CACHE.clear();
+  window.cloudSync?.save();
   renderCurrentModule();
   showToast(`${yr} साल पात्रोमा थपियो!`);
 }
@@ -5068,6 +4992,8 @@ function saveOpeningBalances(e) {
   s.openingDues = Number(document.getElementById("set-open-dues").value) || 0;
   s.openingLoan = Number(document.getElementById("set-open-loan").value) || 0;
   s.openingBank = Number(document.getElementById("set-open-bank").value) || 0;
+  s.fixedAssets = Number(document.getElementById("set-fixed-assets").value) || 0;
+  s.openingFund = Number(document.getElementById("set-opening-fund").value) || 0;
 
   window.recalculateAllDynamicValues(true);
   window.cloudSync?.save();
@@ -5089,20 +5015,23 @@ function handleLogoUpload(e) {
 
 function updateSettingRule(arrName, idx, key, val) {
   window.ERP_STATE.settings[arrName][idx][key] = val;
+  BS_SERIAL_CACHE.clear();
   window.recalculateAllDynamicValues(true);
+  window.cloudSync?.save();
   showToast("दररेट नियम अपडेट भई सम्पूर्ण प्रणाली पुन: गणना गरियो!");
 }
 
 function addRuleRow(arrName) {
   const st = window.ERP_STATE;
   const templates = {
-    tariffRules: { id: "TR-" + Date.now(), fromDate: st.activeBSDate, toDate: "2085-12-30", minUnits: 10, minAmount: 250, extraRate: 30 },
+    tariffRules: { id: "TR-" + Date.now(), fromDate: st.activeBSDate, toDate: "2085-12-30", minUnits: 6, minAmount: 250, extraRate: 140 },
     penaltyRules: { id: "PR-" + Date.now(), fromDate: st.activeBSDate, toDate: "2085-12-30", graceDays: 15, penaltyPercent: 12 },
     loanRateRules: { id: "LR-" + Date.now(), fromDate: st.activeBSDate, toDate: "2085-12-30", annualRate: 15 },
     tankerRateRules: { id: "TK-" + Date.now(), customerName: "नयाँ ग्राहकको नाम", fromDate: st.activeBSDate, toDate: "2085-12-30", ratePerLiter: 0.55, wagePerLiter: 0.14 }
   };
   st.settings[arrName].push(templates[arrName]);
   window.recalculateAllDynamicValues(false);
+  window.cloudSync?.save();
   renderCurrentModule();
 }
 
@@ -5110,6 +5039,7 @@ function deleteSettingRule(arrName, idx) {
   if (window.ERP_STATE.settings[arrName].length <= 1) return showToast("कम्तिमा एउटा नियम रहनुपर्छ।", "error");
   window.ERP_STATE.settings[arrName].splice(idx, 1);
   window.recalculateAllDynamicValues(false);
+  window.cloudSync?.save();
   renderCurrentModule();
 }
 
@@ -5183,7 +5113,7 @@ function renderSupportModule() {
 
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
             <label class="flex items-center gap-2 cursor-pointer"><input type="checkbox" class="del-mod-cb" value="customers" checked> <span>ग्राहक विवरण (Customer KYC)</span></label>
-            <label class="flex items-center gap-2 cursor-pointer"><input type="checkbox" class="del-mod-cb" value="bankAccounts" checked> <span>बैंक खाता सूची (मिति भएको खाता मात्र)</span></label>
+            <label class="flex items-center gap-2 cursor-pointer"><input type="checkbox" class="del-mod-cb" value="bankAccounts" checked> <span>बैंक खाता सूची (Bank Accounts)</span></label>
             <label class="flex items-center gap-2 cursor-pointer"><input type="checkbox" class="del-mod-cb" value="readings" checked> <span>मिटर रिडिङ (Readings)</span></label>
             <label class="flex items-center gap-2 cursor-pointer"><input type="checkbox" class="del-mod-cb" value="payments" checked> <span>महसुल असुली रसिद (Payments)</span></label>
             <label class="flex items-center gap-2 cursor-pointer"><input type="checkbox" class="del-mod-cb" value="loans" checked> <span>ऋण लगानी तथा किस्ता (Loans)</span></label>
@@ -5207,14 +5137,9 @@ function renderSupportModule() {
         </h3>
         <p class="text-xs text-slate-600">सफ्टवेयर परीक्षण गर्दा बनेका सबै डेमो ग्राहक, बिल, रसिद र कारोबारहरू एकैपटक खाली गर्नुहोस् (सेटिङ र समिति विवरण सुरक्षित रहनेछ)।</p>
         
-        <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
-          <button onclick="insertDemoRecords()" class="w-full bg-teal-700 hover:bg-teal-800 text-white text-xs font-semibold py-3 rounded-xl flex items-center justify-center gap-2 shadow-xs cursor-pointer">
-            <i data-lucide="flask-conical" class="w-4 h-4"></i> सबै मोड्युलमा डेमो डाटा राख्नुहोस्
-          </button>
-          <button onclick="executeClearDemoRecords()" class="w-full bg-amber-600 hover:bg-amber-700 text-white text-xs font-semibold py-3 rounded-xl flex items-center justify-center gap-2 shadow-xs cursor-pointer">
-            <i data-lucide="trash-2" class="w-4 h-4"></i> डेमो रेकर्डहरू मात्र हटाउनुहोस्
-          </button>
-        </div>
+        <button onclick="executeClearDemoRecords()" class="w-full bg-amber-600 hover:bg-amber-700 text-white text-xs font-semibold py-3 rounded-xl flex items-center justify-center gap-2 shadow-xs cursor-pointer">
+          <i data-lucide="trash-2" class="w-4 h-4"></i> सबै डेमो रेकर्डहरू तुरुन्त क्लिन गर्नुहोस्
+        </button>
       </div>
 
       <!-- Live Code / JSON State Patcher -->
@@ -5367,14 +5292,7 @@ function executeDateRangeRecordDeletion() {
     st.customers = st.customers.filter(c => !isDateBetweenBS(c.regDate || st.activeBSDate, fromBS, toBS));
   }
   if (selectedModules.includes("bankAccounts")) {
-    // बैंक खाता मास्टर रेकर्ड हो; मिति-आधारित कारोबार डिलिट गर्दा सबै खाता खाली गर्नु हुँदैन।
-    // दर्ता/सिर्जना मिति भएको खाता मात्र दायराभित्र परे हटाइन्छ।
-    const beforeAccounts = st.bankAccounts.length;
-    st.bankAccounts = st.bankAccounts.filter(a => !a.createdDate && !a.regDate ? true : !isDateBetweenBS(a.createdDate || a.regDate, fromBS, toBS));
-    if (beforeAccounts !== st.bankAccounts.length) {
-      const validBankIds = new Set(st.bankAccounts.map(a => String(a.id)));
-      st.bankTransactions = st.bankTransactions.filter(t => !t.bankId || validBankIds.has(String(t.bankId)));
-    }
+    st.bankAccounts = [];
   }
   if (selectedModules.includes("readings")) {
     st.readings = st.readings.filter(r => !isDateBetweenBS(r.entryDate, fromBS, toBS));
@@ -5407,72 +5325,32 @@ function executeDateRangeRecordDeletion() {
   showToast(`मिति ${fromBS} देखि ${toBS} सम्मका छानिएका रेकर्डहरू सफलतापूर्वक डिलिट गरियो!`, "success");
 }
 
-// डेमो रेकर्डहरूलाई छुट्टै चिन्ह लगाइन्छ; वास्तविक रेकर्डलाई कहिल्यै नछुने।
-function insertDemoRecords() {
-  const st = window.ERP_STATE;
-  const hasDemo = Object.keys(st).some(k => Array.isArray(st[k]) && st[k].some(x => x && x._demo === true));
-  if (hasDemo) {
-    showToast("डेमो डाटा पहिल्यै राखिएको छ। दोहोरिन नदिन पहिले डेमो हटाउनुहोस्।", "info");
+// ४. सबै डेमो डाटा क्लिन गर्ने (पासवर्ड सुरक्षा र बैंक खाता खाली गर्ने सुविधा सहित)
+function executeClearDemoRecords() {
+  // पासवर्ड प्रमाणीकरण जाँच
+  if (!verifyAdminPasswordBeforeDelete()) return;
+
+  if (!confirm("चेतावनी: पासवर्ड प्रमाणित भयो। के तपाईं बैंक खाता सहित सबै डेमो रेकर्डहरू पूर्ण रूपमा खाली गर्न चाहनुहुन्छ?")) {
     return;
   }
-  if (!confirm("परीक्षणका लागि DEMO चिन्ह भएका नमुना ग्राहक र कारोबारहरू थप्ने? वास्तविक डाटा सुरक्षित रहनेछ।")) return;
-  const date = st.activeBSDate || "2083-07-22";
-  const demoRun = Date.now();
-  const demo = (obj) => ({ ...obj, _demo: true });
 
-  st.customers.push(
-    demo({ id:`DEMO-${demoRun}-001`, name:"डेमो ग्राहक राम", fatherName:"डेमो पिता", grandfatherName:"डेमो हजुरबुबा", dob:"", phone:"9800000001", address:"डेमो टोल", citizenshipNo:`DEMO-CIT-${demoRun}-001`, citizenshipDate:"", kittaNo:`DEMO-${demoRun}-1`, regDate:date, lastReading:125, openingDue:0 }),
-    demo({ id:`DEMO-${demoRun}-002`, name:"डेमो ग्राहक सीता", fatherName:"डेमो पिता", grandfatherName:"डेमो हजुरबुबा", dob:"", phone:"9800000002", address:"डेमो बजार", citizenshipNo:`DEMO-CIT-${demoRun}-002`, citizenshipDate:"", kittaNo:`DEMO-${demoRun}-2`, regDate:date, lastReading:88, openingDue:0 })
-  );
-  const bill1 = calculateWaterBill(5, date).totalBill;
-  const bill2 = calculateWaterBill(8, date).totalBill;
-  st.readings.push(
-    demo({ id:`DEMO-RD-${demoRun}-001`, customerId:`DEMO-${demoRun}-001`, month:"कार्तिक", year:String(parseBS(date).y), entryDate:date, prevReading:120, currReading:125, units:5, baseAmount:bill1, extraAmount:0, maintenanceAmount:0, billAmount:bill1, penaltyAmount:0, paidAmount:0, status:"Unpaid" }),
-    demo({ id:`DEMO-RD-${demoRun}-002`, customerId:`DEMO-${demoRun}-002`, month:"कार्तिक", year:String(parseBS(date).y), entryDate:date, prevReading:80, currReading:88, units:8, baseAmount:250, extraAmount:280, maintenanceAmount:0, billAmount:bill2, penaltyAmount:0, paidAmount:0, status:"Unpaid" })
-  );
-  st.payments.push(demo({ id:`DEMO-PAY-${demoRun}-001`, receiptNo:`DEMO-REC-${demoRun}-001`, customerId:`DEMO-${demoRun}-001`, date, month:date, openingPaid:0, billPaid:bill1, maintPaid:0, penaltyPaid:0, totalPaid:bill1, mode:"नगद" }));
-  st.readings[st.readings.length-2].paidAmount = bill1;
-  st.bankAccounts.push(demo({ id:`DEMO-BNK-${demoRun}-001`, bankName:"डेमो बैंक लिमिटेड", accountNo:`DEMO-ACCOUNT-${demoRun}-001`, openingBalance:10000 }));
-  st.bankTransactions.push(demo({ id:`DEMO-BTX-${demoRun}-001`, bankId:`DEMO-BNK-${demoRun}-001`, date, type:"Deposit", amount:2500, remarks:"डेमो बैंक जम्मा" }));
-  st.incomes.push(demo({ id:`DEMO-INC-${demoRun}-001`, date, category:"मर्मत आम्दानी", customerId:`DEMO-${demoRun}-002`, amount:500, remarks:"डेमो मर्मत आम्दानी" }), demo({ id:`DEMO-INC-${demoRun}-002`, date, category:"अन्य आम्दानी", customerId:"", amount:1000, remarks:"डेमो अन्य आम्दानी" }));
-  st.expenses.push(demo({ id:`DEMO-EXP-${demoRun}-001`, date, category:"मर्मत खर्च", amount:750, remarks:"डेमो मर्मत खर्च" }));
-  st.loans.push(demo({ id:`DEMO-LOAN-${demoRun}-001`, customerId:`DEMO-${demoRun}-001`, initialIssueDate:date, initialPrincipal:5000, issueDate:date, lastCapitalizationDate:date, dueDate:addDaysToBS(date,180), durationMonths:6, principal:5000, paidPrincipal:0, paidInterest:0, accruedInterest:0, purpose:"डेमो परीक्षण ऋण", remarksHistory:[], capitalizationLogs:[], status:"Active", isOverdue:false, overdueDays:0 }));
-  st.loanRepayments.push(demo({ id:`DEMO-LRP-${demoRun}-001`, receiptNo:`DEMO-LREC-${demoRun}-001`, loanId:`DEMO-LOAN-${demoRun}-001`, customerId:`DEMO-${demoRun}-001`, date, principalPaid:500, interestPaid:0, totalPaid:500 }));
-  st.loans[st.loans.length-1].paidPrincipal = 500;
-  st.staffList.push(demo({ id:`DEMO-STF-${demoRun}-001`, name:"डेमो कर्मचारी", phone:"9800000003", address:"डेमो टोल", position:"कार्यालय सहयोगी", joiningDate:date, salary:15000 }));
-  st.staffPayroll.push(demo({ id:`DEMO-PAYR-${demoRun}-001`, staffId:`DEMO-STF-${demoRun}-001`, month:"कार्तिक", date, salary:15000, allowance:1000, dress:0, festival:0, tds:0, amount:16000, remarks:"डेमो तलब" }));
-  st.tankerSales.push(demo({ id:`DEMO-TKS-${demoRun}-001`, date, month:"कार्तिक", buyerName:"डेमो ग्राहक", driverId:"", liters:1000, ratePerLiter:0.5, saleAmount:500, wagePerLiter:0.12, wageAmount:120 }));
-  window.recalculateAllDynamicValues(false);
-  window.cloudSync?.save();
-  renderCurrentModule();
-  showToast("सबै मुख्य मोड्युलमा DEMO नमुना डाटा थपियो।", "success");
-}
-
-// पासवर्ड प्रमाणीकरणपछि DEMO चिन्ह भएका रेकर्ड मात्र हटाउने।
-function executeClearDemoRecords() {
-  if (!verifyAdminPasswordBeforeDelete()) return;
-  if (!confirm("के DEMO चिन्ह भएका नमुना रेकर्डहरू मात्र हटाउने? वास्तविक ग्राहक र कारोबार सुरक्षित रहनेछन्।")) return;
   const st = window.ERP_STATE;
-  let removed = 0;
-  if (!Array.isArray(st._deletedDemoIds)) st._deletedDemoIds = [];
-  // कुनै पनि मोड्युलमा रहेको DEMO रेकर्ड हट्छ; _demo नभएको वास्तविक रेकर्ड छोइँदैन।
-  Object.keys(st).forEach(key => {
-    if (!Array.isArray(st[key])) return;
-    const before = st[key].length;
-    st[key].forEach(row => {
-      if (row && row._demo === true && row.id != null && !st._deletedDemoIds.includes(String(row.id))) {
-        st._deletedDemoIds.push(String(row.id));
-      }
-    });
-    st[key] = st[key].filter(row => !(row && row._demo === true));
-    removed += before - st[key].length;
-  });
-  window.recalculateAllDynamicValues(true);
-  window.cloudSync?.save();
-  renderCurrentModule();
-  showToast(`${removed} वटा DEMO रेकर्ड हटाइयो। वास्तविक डाटा सुरक्षित छ।`, "success");
-}
+  st.customers = [];
+  st.bankAccounts = [];
+  st.readings = [];
+  st.payments = [];
+  st.loans = [];
+  st.loanRepayments = [];
+  st.bankTransactions = [];
+  st.incomes = [];
+  st.expenses = [];
+  st.staffPayroll = [];
+  st.tankerSales = [];
 
+  window.recalculateAllDynamicValues(true);
+  renderCurrentModule();
+  showToast("बैंक खाता सहित सबै डेमो रेकर्डहरू सफलतापूर्वक क्लिन गरियो!", "success");
+}
 </script>
 </body>
 </html>
