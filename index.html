@@ -823,11 +823,19 @@ document.getElementById("login-form").addEventListener("submit", async function(
   } finally { submit.disabled = false; submit.classList.remove("opacity-60"); }
 });
 
-function logoutApp() {
-  window.ERP_STATE.auth.loggedIn = false;
-  document.getElementById("app-shell").classList.add("hidden");
-  document.getElementById("login-screen").classList.remove("hidden");
-  window.cloudSync?.logout();
+async function logoutApp() {
+  try {
+    await window.cloudSync.logout();
+    window.ERP_STATE.auth = { loggedIn: false };
+    document.getElementById("app-shell").classList.add("hidden");
+    document.getElementById("login-screen").classList.remove("hidden");
+    document.getElementById("login-pass").value = "";
+    document.getElementById("login-user").value = "";
+    setCloudBadge(false, "लगइन आवश्यक");
+  } catch (e) {
+    console.error("Logout failed:", e);
+    showToast("Logout हुन सकेन। फेरि प्रयास गर्नुहोस्।", "error");
+  }
 }
 
 function toggleSidebar() {
