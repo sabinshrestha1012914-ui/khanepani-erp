@@ -1,0 +1,32 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isActiveAdmin() {
+      return signedIn()
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin'
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.active == true;
+    }
+
+    // A signed-in user may read only their own role profile.
+    // Client-side writes to role profiles are never allowed.
+    match /users/{uid} {
+      allow get: if signedIn() && request.auth.uid == uid;
+      allow list, create, update, delete: if false;
+    }
+
+    // Existing ERP master document; keep its path to preserve legacy records.
+    match /artifacts/khanepani-erp-hamro-sanstha/public/data/erp_state/master_v1 {
+      allow read, write: if isActiveAdmin();
+    }
+
+    // Default deny for every other document.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
