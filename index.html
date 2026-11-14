@@ -663,6 +663,7 @@ const INITIAL_STATE = {
     logoDataUrl: "",
     receiptCounter: 1001,
     loanReceiptCounter: 501,
+    tankerReceiptCounter: 1,
     openingDate: "2083-04-01",
     openingCash: 0,
     openingDues: 0,
@@ -697,6 +698,7 @@ const INITIAL_STATE = {
   staffList: [],
   staffPayroll: [],
   tankerSales: [],
+  tankerPayments: [],
   accountingVouchers: [],
   accountingVoucherCounter: 1
 };
@@ -1181,6 +1183,7 @@ function renderDashboard() {
   const accBalances = typeof getAccountBalances === "function" ? getAccountBalances(accJournal, null, null) : {};
   const cashAcctBal = accBalances["1001"] ? (Number(accBalances["1001"].debit || 0) - Number(accBalances["1001"].credit || 0)) : Number(s.openingCash || 0);
   const bankAcctBal = accBalances["1002"] ? (Number(accBalances["1002"].debit || 0) - Number(accBalances["1002"].credit || 0)) : Number(s.openingBank || 0);
+  const tankerCreditBal = accBalances["1102"] ? Math.max(0, Number(accBalances["1102"].debit || 0) - Number(accBalances["1102"].credit || 0)) : 0;
   const totalLoanPrincipalOut = accBalances["1201"] ? (Number(accBalances["1201"].debit || 0) - Number(accBalances["1201"].credit || 0)) : Number(s.openingLoan || 0);
   const openingCapitalBal = accBalances["3001"] ? (Number(accBalances["3001"].credit || 0) - Number(accBalances["3001"].debit || 0)) : 0;
 
@@ -1264,6 +1267,7 @@ function renderDashboard() {
         <span>स्थिर सम्पत्ति (1501): <strong class="text-slate-900">${fmtMoney(s.fixedAssets || 0)}</strong></span>
         <span>सुरु नगद (1001): <strong class="text-teal-800">${fmtMoney(s.openingCash || 0)}</strong></span>
         <span>प्रारम्भिक पुँजी कोष (3001): <strong class="text-indigo-800">${fmtMoney(openingCapitalBal)}</strong></span>
+        ${tankerCreditBal > 0 ? `<span>ट्याङ्कर उधारो बाँकी (1102): <strong class="text-rose-700">${fmtMoney(tankerCreditBal)}</strong></span>` : ''}
       </div>
       <button onclick="switchModule('accounting')" class="text-teal-700 hover:text-teal-900 font-semibold underline cursor-pointer">खातावही / वासलात हेर्नुहोस् →</button>
     </div>
@@ -4872,15 +4876,65 @@ function deleteStaffPayrollEntry(payId) {
 }
 
 // ============================================================================
-// 14. TANKER / VEHICLE WATER SALES MODULE
+// 14. TANKER / VEHICLE WATER SALES MODULE (CASH & CREDIT + RECOVERY)
 // ============================================================================
 let tankerFilterBuyer = "ALL";
 let tankerFilterMonth = "ALL";
+let tankerFilterType = "ALL";
+let selectedTankerPayBuyer = "";
+let selectedTankerPayTarget = "FIFO";
+
+function getTankerSalePaidAmount(t) {
+  const st = window.ERP_STATE;
+  const total = Math.max(0, Number(t?.saleAmount || 0));
+  const sType = String(t?.saleType || "Cash");
+  if (sType !== "Credit") return total;
+  const payments = Array.isArray(st?.tankerPayments) ? st.tankerPayments : [];
+  let paidFromLedger = 0;
+  let hasLedger = false;
+  payments.forEach(p => {
+    if (Array.isArray(p.allocations)) {
+      p.allocations.forEach(a => {
+        if (String(a.tankerSaleId) === String(t.id)) {
+          hasLedger = true;
+          paidFromLedger += Number(a.amount || 0);
+        }
+      });
+    } else if (String(p.tankerSaleId || "") === String(t.id)) {
+      hasLedger = true;
+      paidFromLedger += Number(p.amount || 0);
+    }
+  });
+  const rawPaid = hasLedger ? paidFromLedger : Number(t?.paidAmount || 0);
+  return Math.min(total, Math.round(Math.max(0, rawPaid) * 100) / 100);
+}
+
+function getTankerSaleDueAmount(t) {
+  return Math.max(0, Math.round((Number(t?.saleAmount || 0) - getTankerSalePaidAmount(t)) * 100) / 100);
+}
+
+function getTankerCreditBuyersSummary() {
+  const st = window.ERP_STATE;
+  const map = new Map();
+  (st.tankerSales || []).forEach(t => {
+    const due = getTankerSaleDueAmount(t);
+    if (due <= 0) return;
+    const key = String(t.buyerName || "").trim();
+    if (!map.has(key)) map.set(key, { buyerName: key, due: 0, count: 0, sales: [] });
+    const entry = map.get(key);
+    entry.due = Math.round((entry.due + due) * 100) / 100;
+    entry.count++;
+    entry.sales.push(t);
+  });
+  return [...map.values()];
+}
 
 function renderTankerModule() {
   const st = window.ERP_STATE;
+  if (!Array.isArray(st.tankerPayments)) st.tankerPayments = [];
   const buyerOptions = [...new Set(st.settings.tankerRateRules.map(r => r.customerName).filter(n => !n.includes("Default")))];
-  const initRule = getActiveTankerRateRule("होटल हिमालयन भ्यू", st.activeBSDate);
+  const defaultBuyer = buyerOptions[0] || "होटल हिमालयन भ्यू";
+  const initRule = getActiveTankerRateRule(defaultBuyer, st.activeBSDate);
   const initLiters = 10000;
   const initSale = Math.round(initLiters * Number(initRule.ratePerLiter) * 100) / 100;
   const initWage = Math.round(initLiters * Number(initRule.wagePerLiter) * 100) / 100;
@@ -4888,67 +4942,184 @@ function renderTankerModule() {
   const filtered = st.tankerSales.filter(t => {
     const mBuyer = tankerFilterBuyer === "ALL" || t.buyerName === tankerFilterBuyer;
     const mMonth = tankerFilterMonth === "ALL" || t.month === tankerFilterMonth;
-    return mBuyer && mMonth;
+    const sType = String(t.saleType || "Cash");
+    const due = getTankerSaleDueAmount(t);
+    const mType = tankerFilterType === "ALL"
+      || (tankerFilterType === "CASH" && sType === "Cash")
+      || (tankerFilterType === "BANK" && sType === "Bank")
+      || (tankerFilterType === "CREDIT_ALL" && sType === "Credit")
+      || (tankerFilterType === "CREDIT_DUE" && due > 0);
+    return mBuyer && mMonth && mType;
   });
 
   const sumLiters = filtered.reduce((s, t) => s + Number(t.liters), 0);
   const sumSales = filtered.reduce((s, t) => s + Number(t.saleAmount), 0);
+  const sumPaid = filtered.reduce((s, t) => s + getTankerSalePaidAmount(t), 0);
+  const sumDue = filtered.reduce((s, t) => s + getTankerSaleDueAmount(t), 0);
   const sumWages = filtered.reduce((s, t) => s + Number(t.wageAmount), 0);
+
+  const creditBuyers = getTankerCreditBuyersSummary();
+  if (!creditBuyers.some(b => b.buyerName === selectedTankerPayBuyer)) {
+    selectedTankerPayBuyer = creditBuyers[0]?.buyerName || "";
+    selectedTankerPayTarget = "FIFO";
+  }
+  const activeCreditBuyer = creditBuyers.find(b => b.buyerName === selectedTankerPayBuyer) || null;
+  let defaultPayAmt = activeCreditBuyer ? activeCreditBuyer.due : 0;
+  if (activeCreditBuyer && selectedTankerPayTarget !== "FIFO") {
+    const specificSale = activeCreditBuyer.sales.find(s => s.id === selectedTankerPayTarget);
+    if (specificSale) defaultPayAmt = getTankerSaleDueAmount(specificSale);
+    else selectedTankerPayTarget = "FIFO";
+  }
+  const nextTkRec = `TKR-${parseBS(st.activeBSDate).y}-${String(st.settings.tankerReceiptCounter || 1).padStart(4, "0")}`;
 
   return `
     <div class="space-y-6">
-      <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
-        <div class="flex items-center justify-between mb-4">
-          <h3 class="text-base font-bold text-slate-800">गाडी / ट्याङ्करमा पानी बिक्री इन्ट्री</h3>
-          <button onclick="switchModule('settings')" class="text-xs text-teal-700 font-semibold hover:underline">व्यक्ति/मिति अनुसार दर सेटिङ →</button>
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div class="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
+          <div class="text-xs text-slate-500">जम्मा ट्याङ्कर पानी बिक्री</div>
+          <div class="text-xl font-bold text-slate-900 mt-1 tabular-nums">${fmtMoney(sumSales)}</div>
+          <div class="text-[11px] text-teal-700 mt-0.5">कुल लिटर: ${sumLiters.toLocaleString()} लि.</div>
         </div>
-        <form onsubmit="addTankerSaleEntry(event)" class="grid grid-cols-1 sm:grid-cols-4 gap-3 text-xs">
-          <div>
-            <label class="font-semibold text-slate-600 block mb-1">खरिदकर्ता व्यक्ति / संस्था *</label>
-            <input type="text" list="tanker-buyers-list" id="tk-buyer" value="होटल हिमालयन भ्यू" oninput="recalcTankerFormPreview()" required class="w-full border border-slate-300 rounded-xl px-3 py-2 font-semibold">
-            <datalist id="tanker-buyers-list">${buyerOptions.map(b => `<option value="${b}">`).join("")}</datalist>
+        <div class="bg-white p-4 rounded-2xl border border-emerald-200 shadow-sm">
+          <div class="text-xs text-slate-500">नगद / बैंक प्राप्त रकम</div>
+          <div class="text-xl font-bold text-emerald-700 mt-1 tabular-nums">${fmtMoney(sumPaid)}</div>
+          <div class="text-[11px] text-slate-500 mt-0.5">तुरुन्त बिक्री र उधारो असुली सहित</div>
+        </div>
+        <div class="bg-white p-4 rounded-2xl border border-rose-200 shadow-sm">
+          <div class="text-xs text-slate-500">उठ्न बाँकी उधारो (Credit Due)</div>
+          <div class="text-xl font-bold text-rose-700 mt-1 tabular-nums">${fmtMoney(sumDue)}</div>
+          <div class="text-[11px] text-slate-500 mt-0.5">${creditBuyers.length} जना खरिदकर्ताबाट असुल हुन बाँकी</div>
+        </div>
+        <div class="bg-white p-4 rounded-2xl border border-amber-200 shadow-sm">
+          <div class="text-xs text-slate-500">कुल चालक ज्याला खर्च</div>
+          <div class="text-xl font-bold text-amber-700 mt-1 tabular-nums">${fmtMoney(sumWages)}</div>
+          <div class="text-[11px] text-slate-500 mt-0.5">नगद खर्च (5020) मा पोस्ट</div>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div class="lg:col-span-2 bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
+          <div class="flex items-center justify-between mb-4">
+            <h3 class="text-base font-bold text-slate-800">गाडी / ट्याङ्करमा पानी बिक्री इन्ट्री</h3>
+            <button onclick="switchModule('settings')" class="text-xs text-teal-700 font-semibold hover:underline">व्यक्ति/मिति अनुसार दर सेटिङ →</button>
           </div>
-          <div>
-            <label class="font-semibold text-slate-600 block mb-1">बिक्री मिति (Auto BS)</label>
-            <input type="text" id="tk-date" value="${st.activeBSDate}" oninput="recalcTankerFormPreview()" class="w-full bg-teal-50 border border-teal-300 rounded-xl px-3 py-2 font-bold">
+          <form onsubmit="addTankerSaleEntry(event)" class="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+            <div>
+              <label class="font-semibold text-slate-600 block mb-1">खरिदकर्ता व्यक्ति / संस्था *</label>
+              <input type="text" list="tanker-buyers-list" id="tk-buyer" value="${defaultBuyer}" oninput="recalcTankerFormPreview()" required class="w-full border border-slate-300 rounded-xl px-3 py-2 font-semibold">
+              <datalist id="tanker-buyers-list">${buyerOptions.map(b => `<option value="${b}">`).join("")}</datalist>
+            </div>
+            <div>
+              <label class="font-semibold text-slate-600 block mb-1">बिक्री मिति (Auto BS)</label>
+              <input type="text" id="tk-date" value="${st.activeBSDate}" oninput="recalcTankerFormPreview()" class="w-full bg-teal-50 border border-teal-300 rounded-xl px-3 py-2 font-bold">
+            </div>
+            <div>
+              <label class="font-semibold text-slate-600 block mb-1">महिना</label>
+              <select id="tk-month" class="w-full border border-slate-300 rounded-xl px-3 py-2">
+                ${NEPALI_MONTHS.map(m => `<option value="${m}" ${m === 'कार्तिक' ? 'selected' : ''}>${m}</option>`).join("")}
+              </select>
+            </div>
+            <div>
+              <label class="font-semibold text-slate-600 block mb-1">चालक / कर्मचारी</label>
+              <select id="tk-driver" class="w-full border border-slate-300 rounded-xl px-3 py-2">
+                ${st.staffList.map(s => `<option value="${s.id}">${s.name}</option>`).join("")}
+              </select>
+            </div>
+            <div>
+              <label class="font-semibold text-slate-600 block mb-1">बिक्री प्रकार (नगद / उधारो) *</label>
+              <select id="tk-sale-type" class="w-full border-2 border-teal-500 bg-teal-50/40 rounded-xl px-3 py-2 font-bold text-slate-900">
+                <option value="Cash">नगद बिक्री (Cash)</option>
+                <option value="Credit">उधारो बिक्री (Credit / पछि तिर्ने)</option>
+                <option value="Bank">बैंक / QR बिक्री (Bank)</option>
+              </select>
+            </div>
+            <div>
+              <label class="font-semibold text-slate-600 block mb-1">बिक्री गरेको पानी (लिटरमा) *</label>
+              <input type="number" id="tk-liters" value="10000" min="100" oninput="recalcTankerFormPreview()" required class="w-full border border-slate-300 rounded-xl px-3 py-2 font-bold text-base">
+            </div>
+            <div class="bg-slate-50 p-2.5 rounded-xl border border-slate-200">
+              <span class="text-[10px] text-slate-500 block">अटोमेटिक बिक्री दर / कुल रकम:</span>
+              <strong id="tk-sale-preview" class="text-teal-800">${fmtMoney(initSale)} (रू. ${initRule.ratePerLiter}/लि.)</strong>
+            </div>
+            <div class="bg-amber-50 p-2.5 rounded-xl border border-amber-200">
+              <span class="text-[10px] text-amber-800 block">अटोमेटिक चालक ज्याला:</span>
+              <strong id="tk-wage-preview" class="text-amber-900">${fmtMoney(initWage)} (रू. ${initRule.wagePerLiter}/लि.)</strong>
+            </div>
+            <div class="flex items-end">
+              <button type="submit" class="w-full bg-teal-700 hover:bg-teal-800 text-white font-semibold py-2.5 rounded-xl cursor-pointer">बिक्री सेभ गर्नुहोस्</button>
+            </div>
+          </form>
+        </div>
+
+        <div class="bg-white p-5 rounded-2xl border border-rose-200 shadow-sm">
+          <div class="flex items-center justify-between mb-3">
+            <h3 class="text-sm font-bold text-rose-900 flex items-center gap-1.5">
+              <i data-lucide="banknote" class="w-4 h-4 text-rose-700"></i> उधारो रकम असुली (Credit Recovery)
+            </h3>
+            <span class="text-[10px] font-bold px-2 py-0.5 rounded bg-slate-100 text-slate-700">${nextTkRec}</span>
           </div>
-          <div>
-            <label class="font-semibold text-slate-600 block mb-1">महिना</label>
-            <select id="tk-month" class="w-full border border-slate-300 rounded-xl px-3 py-2">
-              ${NEPALI_MONTHS.map(m => `<option value="${m}" ${m === 'कार्तिक' ? 'selected' : ''}>${m}</option>`).join("")}
-            </select>
-          </div>
-          <div>
-            <label class="font-semibold text-slate-600 block mb-1">चालक / कर्मचारी</label>
-            <select id="tk-driver" class="w-full border border-slate-300 rounded-xl px-3 py-2">
-              ${st.staffList.map(s => `<option value="${s.id}">${s.name}</option>`).join("")}
-            </select>
-          </div>
-          <div>
-            <label class="font-semibold text-slate-600 block mb-1">बिक्री गरेको पानी (लिटरमा) *</label>
-            <input type="number" id="tk-liters" value="10000" min="100" oninput="recalcTankerFormPreview()" required class="w-full border border-slate-300 rounded-xl px-3 py-2 font-bold text-base">
-          </div>
-          <div class="bg-slate-50 p-2.5 rounded-xl border border-slate-200">
-            <span class="text-[10px] text-slate-500 block">अटोमेटिक बिक्री दर / कुल रकम:</span>
-            <strong id="tk-sale-preview" class="text-teal-800">${fmtMoney(initSale)} (रू. ${initRule.ratePerLiter}/लि.)</strong>
-          </div>
-          <div class="bg-amber-50 p-2.5 rounded-xl border border-amber-200">
-            <span class="text-[10px] text-amber-800 block">अटोमेटिक चालक ज्याला:</span>
-            <strong id="tk-wage-preview" class="text-amber-900">${fmtMoney(initWage)} (रू. ${initRule.wagePerLiter}/लि.)</strong>
-          </div>
-          <div class="flex items-end">
-            <button type="submit" class="w-full bg-teal-700 hover:bg-teal-800 text-white font-semibold py-2.5 rounded-xl">बिक्री सेभ गर्नुहोस्</button>
-          </div>
-        </form>
+          ${creditBuyers.length === 0 ? `
+            <div class="p-6 text-center bg-emerald-50 border border-emerald-200 rounded-xl text-xs text-emerald-800">
+              हाल ट्याङ्कर पानी बिक्रीमा कुनै पनि उधारो रकम उठ्न बाँकी छैन।
+            </div>
+          ` : `
+            <form onsubmit="collectTankerCreditPayment(event)" class="space-y-2.5 text-xs">
+              <div>
+                <label class="font-semibold text-slate-600 block mb-1">खरिदकर्ता छान्नुहोस् *</label>
+                <select id="tk-pay-buyer" onchange="selectedTankerPayBuyer=this.value; selectedTankerPayTarget='FIFO'; renderCurrentModule();" class="w-full border border-slate-300 rounded-xl px-3 py-2 font-bold">
+                  ${creditBuyers.map(b => `<option value="${b.buyerName}" ${b.buyerName === selectedTankerPayBuyer ? 'selected' : ''}>${b.buyerName} (बाँकी: ${fmtMoney(b.due)})</option>`).join("")}
+                </select>
+              </div>
+              <div>
+                <label class="font-semibold text-slate-600 block mb-1">कुन उधारो बिल असुल गर्ने?</label>
+                <select id="tk-pay-target" onchange="selectedTankerPayTarget=this.value; renderCurrentModule();" class="w-full border border-slate-300 rounded-xl px-3 py-2 font-semibold">
+                  <option value="FIFO" ${selectedTankerPayTarget === 'FIFO' ? 'selected' : ''}>सबै बाँकी बिल (एकमुष्ट / क्रमैसँग — ${fmtMoney(activeCreditBuyer?.due || 0)})</option>
+                  ${(activeCreditBuyer?.sales || []).map(s => `<option value="${s.id}" ${selectedTankerPayTarget === s.id ? 'selected' : ''}>${s.date} (${s.month}) - ${Number(s.liters).toLocaleString()} लि. | बाँकी: ${fmtMoney(getTankerSaleDueAmount(s))}</option>`).join("")}
+                </select>
+              </div>
+              <div class="grid grid-cols-2 gap-2">
+                <div>
+                  <label class="font-semibold text-slate-600 block mb-1">असुली मिति (BS)</label>
+                  <input type="text" id="tk-pay-date" value="${st.activeBSDate}" required class="w-full bg-teal-50 border border-teal-300 rounded-xl px-3 py-2 font-bold">
+                </div>
+                <div>
+                  <label class="font-semibold text-slate-600 block mb-1">माध्यम</label>
+                  <select id="tk-pay-mode" class="w-full border border-slate-300 rounded-xl px-3 py-2 font-semibold">
+                    <option value="Cash">नगद (Cash)</option>
+                    <option value="Bank">बैंक / QR (Bank)</option>
+                  </select>
+                </div>
+              </div>
+              <div>
+                <label class="font-semibold text-slate-600 block mb-1">प्राप्त रकम (रू.) *</label>
+                <input type="number" id="tk-pay-amount" value="${defaultPayAmt}" min="0.01" max="${defaultPayAmt}" step="0.01" required class="w-full border-2 border-emerald-500 bg-emerald-50/50 rounded-xl px-3 py-2 font-bold text-emerald-900">
+              </div>
+              <div>
+                <label class="font-semibold text-slate-600 block mb-1">कैफियत</label>
+                <input type="text" id="tk-pay-remarks" placeholder="महिनाको अन्त्य एकमुष्ट / आंशिक भुक्तानी" class="w-full border border-slate-300 rounded-xl px-3 py-2">
+              </div>
+              <button type="submit" class="w-full bg-emerald-700 hover:bg-emerald-800 text-white font-semibold py-2.5 rounded-xl flex items-center justify-center gap-1.5 cursor-pointer">
+                <i data-lucide="printer" class="w-4 h-4"></i> उधारो असुली सेभ & रसिद
+              </button>
+            </form>
+          `}
+        </div>
       </div>
 
       <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
         <div class="p-4 border-b border-slate-200 flex flex-wrap items-center justify-between gap-2">
           <div>
             <h3 class="text-sm font-bold text-slate-800">गाडीमा पानी बिक्री स्टेटमेन्ट</h3>
-            <p class="text-[11px] text-slate-600">जम्मा लिटर: <strong>${sumLiters.toLocaleString()}</strong> | बिक्री रकम: <strong class="text-emerald-700">${fmtMoney(sumSales)}</strong> | चालक ज्याला: <strong class="text-amber-700">${fmtMoney(sumWages)}</strong></p>
+            <p class="text-[11px] text-slate-600">जम्मा लिटर: <strong>${sumLiters.toLocaleString()}</strong> | बिक्री: <strong class="text-slate-900">${fmtMoney(sumSales)}</strong> | प्राप्त: <strong class="text-emerald-700">${fmtMoney(sumPaid)}</strong> | बाँकी उधारो: <strong class="text-rose-700">${fmtMoney(sumDue)}</strong> | ज्याला: <strong class="text-amber-700">${fmtMoney(sumWages)}</strong></p>
           </div>
-          <div class="flex gap-2 text-xs">
+          <div class="flex flex-wrap gap-2 text-xs">
+            <select onchange="tankerFilterType=this.value; renderCurrentModule();" class="border border-slate-300 rounded-xl px-2.5 py-1.5 font-semibold">
+              <option value="ALL" ${tankerFilterType === 'ALL' ? 'selected' : ''}>सबै (नगद र उधारो)</option>
+              <option value="CREDIT_DUE" ${tankerFilterType === 'CREDIT_DUE' ? 'selected' : ''}>बाँकी उधारो मात्र</option>
+              <option value="CREDIT_ALL" ${tankerFilterType === 'CREDIT_ALL' ? 'selected' : ''}>सबै उधारो बिक्री</option>
+              <option value="CASH" ${tankerFilterType === 'CASH' ? 'selected' : ''}>नगद मात्र</option>
+              <option value="BANK" ${tankerFilterType === 'BANK' ? 'selected' : ''}>बैंक मात्र</option>
+            </select>
             <select onchange="tankerFilterBuyer=this.value; renderCurrentModule();" class="border border-slate-300 rounded-xl px-2.5 py-1.5 font-semibold">
               <option value="ALL">सबै खरिदकर्ता</option>
               ${[...new Set(st.tankerSales.map(t => t.buyerName))].map(b => `<option value="${b}" ${tankerFilterBuyer === b ? 'selected' : ''}>${b}</option>`).join("")}
@@ -4969,13 +5140,27 @@ function renderTankerModule() {
                 <th class="p-3">चालक</th>
                 <th class="p-3 text-right">लिटर</th>
                 <th class="p-3 text-right">दर</th>
-                <th class="p-3 text-right">कुल बिक्री रकम</th>
+                <th class="p-3 text-center">प्रकार</th>
+                <th class="p-3 text-right">कुल बिक्री</th>
+                <th class="p-3 text-right">प्राप्त रकम</th>
+                <th class="p-3 text-right">बाँकी उधारो</th>
                 <th class="p-3 text-right">ज्याला रकम</th>
+                <th class="p-3 text-center">कारबाही</th>
               </tr>
             </thead>
             <tbody class="divide-y divide-slate-100">
               ${filtered.slice().reverse().map(t => {
                 const drv = st.staffList.find(s => s.id === t.driverId) || { name: t.driverId || '-' };
+                const sType = String(t.saleType || "Cash");
+                const paid = getTankerSalePaidAmount(t);
+                const due = getTankerSaleDueAmount(t);
+                const typeBadge = sType === "Credit"
+                  ? (due > 0
+                    ? `<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-100 text-rose-800">${paid > 0 ? 'आंशिक उधारो' : 'उधारो'}</span>`
+                    : `<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800">उधारो चुक्ता</span>`)
+                  : (sType === "Bank"
+                    ? `<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-cyan-100 text-cyan-800">बैंक/QR</span>`
+                    : `<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-teal-100 text-teal-800">नगद</span>`);
                 return `
                   <tr>
                     <td class="p-3 tabular-nums">${t.date}</td>
@@ -4984,11 +5169,53 @@ function renderTankerModule() {
                     <td class="p-3">${drv.name}</td>
                     <td class="p-3 text-right font-bold tabular-nums">${Number(t.liters).toLocaleString()}</td>
                     <td class="p-3 text-right tabular-nums">रू. ${t.ratePerLiter}</td>
-                    <td class="p-3 text-right font-bold text-emerald-700 tabular-nums">${fmtMoney(t.saleAmount)}</td>
+                    <td class="p-3 text-center">${typeBadge}</td>
+                    <td class="p-3 text-right font-bold text-slate-900 tabular-nums">${fmtMoney(t.saleAmount)}</td>
+                    <td class="p-3 text-right font-bold text-emerald-700 tabular-nums">${fmtMoney(paid)}</td>
+                    <td class="p-3 text-right font-bold ${due > 0 ? 'text-rose-700' : 'text-slate-400'} tabular-nums">${fmtMoney(due)}</td>
                     <td class="p-3 text-right font-bold text-amber-700 tabular-nums">${fmtMoney(t.wageAmount)}</td>
+                    <td class="p-3 text-center space-x-1 whitespace-nowrap">
+                      ${due > 0 ? `<button onclick="prefillTankerCreditRecovery('${t.id}')" class="px-2 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 rounded-lg font-semibold cursor-pointer">असुली</button>` : ''}
+                      <button onclick="deleteTankerSaleEntry('${t.id}')" class="px-2 py-1 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-lg font-semibold cursor-pointer">हटाउनुहोस्</button>
+                    </td>
                   </tr>
                 `;
-              }).join("")}
+              }).join("") || `<tr><td colspan="12" class="p-6 text-center text-slate-400">कुनै ट्याङ्कर बिक्री अभिलेख छैन।</td></tr>`}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+        <div class="p-4 border-b border-slate-200 font-bold text-sm text-slate-800">ट्याङ्कर उधारो असुली रसिद अभिलेख (Credit Payments Log)</div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-xs text-left">
+            <thead class="bg-slate-50 border-b border-slate-200">
+              <tr>
+                <th class="p-3">रसिद नं.</th>
+                <th class="p-3">मिति (BS)</th>
+                <th class="p-3">खरिदकर्ता</th>
+                <th class="p-3">माध्यम</th>
+                <th class="p-3">कैफियत</th>
+                <th class="p-3 text-right">प्राप्त रकम</th>
+                <th class="p-3 text-center">कारबाही</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-100">
+              ${st.tankerPayments.slice().reverse().map(p => `
+                <tr>
+                  <td class="p-3 font-bold text-teal-800">${p.receiptNo}</td>
+                  <td class="p-3 tabular-nums">${p.date}</td>
+                  <td class="p-3 font-semibold">${p.buyerName}</td>
+                  <td class="p-3">${p.mode === 'Bank' ? 'बैंक / QR' : 'नगद'}</td>
+                  <td class="p-3 text-slate-600">${p.remarks || '-'}</td>
+                  <td class="p-3 text-right font-bold text-emerald-700 tabular-nums">${fmtMoney(p.amount)}</td>
+                  <td class="p-3 text-center space-x-1 whitespace-nowrap">
+                    <button onclick="printTankerPaymentReceipt('${p.id}')" class="px-2 py-1 bg-teal-50 hover:bg-teal-100 text-teal-800 border border-teal-200 rounded-lg font-semibold cursor-pointer">रसिद प्रिन्ट</button>
+                    <button onclick="deleteTankerPaymentEntry('${p.id}')" class="px-2 py-1 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-lg font-semibold cursor-pointer">हटाउनुहोस्</button>
+                  </td>
+                </tr>
+              `).join("") || `<tr><td colspan="7" class="p-4 text-center text-slate-400">कुनै उधारो असुली रसिद अभिलेख छैन।</td></tr>`}
             </tbody>
           </table>
         </div>
@@ -5008,12 +5235,24 @@ function recalcTankerFormPreview() {
   document.getElementById("tk-wage-preview").textContent = `${fmtMoney(wage)} (रू. ${rule.wagePerLiter}/लि.)`;
 }
 
+function prefillTankerCreditRecovery(saleId) {
+  const sale = (window.ERP_STATE.tankerSales || []).find(t => t.id === saleId);
+  if (!sale) return;
+  selectedTankerPayBuyer = sale.buyerName;
+  selectedTankerPayTarget = sale.id;
+  renderCurrentModule();
+  document.getElementById("tk-pay-amount")?.focus();
+}
+
 function addTankerSaleEntry(e) {
   e.preventDefault();
   const buyer = document.getElementById("tk-buyer").value.trim();
   const date = document.getElementById("tk-date").value.trim() || window.ERP_STATE.activeBSDate;
   const liters = Number(document.getElementById("tk-liters").value) || 0;
+  const saleType = document.getElementById("tk-sale-type")?.value || "Cash";
   const rule = getActiveTankerRateRule(buyer, date);
+  const saleAmount = Math.round(liters * Number(rule.ratePerLiter) * 100) / 100;
+  const wageAmount = Math.round(liters * Number(rule.wagePerLiter) * 100) / 100;
 
   window.ERP_STATE.tankerSales.push({
     id: "TKS-" + Date.now(),
@@ -5023,13 +5262,167 @@ function addTankerSaleEntry(e) {
     driverId: document.getElementById("tk-driver").value,
     liters,
     ratePerLiter: Number(rule.ratePerLiter),
-    saleAmount: Math.round(liters * Number(rule.ratePerLiter) * 100) / 100,
+    saleAmount,
     wagePerLiter: Number(rule.wagePerLiter),
-    wageAmount: Math.round(liters * Number(rule.wagePerLiter) * 100) / 100
+    wageAmount,
+    saleType,
+    paidAmount: saleType === "Credit" ? 0 : saleAmount,
+    paymentStatus: saleType === "Credit" ? "Unpaid" : "Paid"
   });
   window.cloudSync?.save();
   renderCurrentModule();
-  showToast("ट्याङ्कर पानी बिक्री तथा चालक ज्याला अभिलेख सुरक्षित भयो!");
+  showToast(
+    saleType === "Credit"
+      ? `ट्याङ्कर उधारो बिक्री (${fmtMoney(saleAmount)}) सुरक्षित भयो — असुली नहुँदासम्म उधारो खातामा रहनेछ!`
+      : `ट्याङ्कर ${saleType === 'Bank' ? 'बैंक' : 'नगद'} बिक्री (${fmtMoney(saleAmount)}) तथा चालक ज्याला सुरक्षित भयो!`
+  );
+}
+
+function syncTankerSalePaymentStatuses() {
+  const st = window.ERP_STATE;
+  (st.tankerSales || []).forEach(t => {
+    if (String(t.saleType || "Cash") !== "Credit") {
+      t.paidAmount = Number(t.saleAmount || 0);
+      t.paymentStatus = "Paid";
+      return;
+    }
+    const paid = getTankerSalePaidAmount(t);
+    t.paidAmount = paid;
+    const due = Math.max(0, Math.round((Number(t.saleAmount || 0) - paid) * 100) / 100);
+    t.paymentStatus = due <= 0 ? "Paid" : (paid > 0 ? "Partial" : "Unpaid");
+  });
+}
+
+function collectTankerCreditPayment(e) {
+  e.preventDefault();
+  const st = window.ERP_STATE;
+  if (!Array.isArray(st.tankerPayments)) st.tankerPayments = [];
+
+  const buyerName = document.getElementById("tk-pay-buyer")?.value || selectedTankerPayBuyer;
+  const target = document.getElementById("tk-pay-target")?.value || selectedTankerPayTarget || "FIFO";
+  const date = document.getElementById("tk-pay-date")?.value.trim() || st.activeBSDate;
+  const mode = document.getElementById("tk-pay-mode")?.value || "Cash";
+  const amount = Math.round((Number(document.getElementById("tk-pay-amount")?.value) || 0) * 100) / 100;
+  const remarks = document.getElementById("tk-pay-remarks")?.value.trim() || "";
+
+  if (!buyerName || amount <= 0) return showToast("खरिदकर्ता र सही प्राप्त रकम राख्नुहोस्।", "error");
+
+  const unpaidSales = (st.tankerSales || [])
+    .filter(t => String(t.buyerName || "").trim() === String(buyerName).trim() && getTankerSaleDueAmount(t) > 0)
+    .sort((a, b) => bsToSerialDays(a.date) - bsToSerialDays(b.date));
+
+  const targetSales = target === "FIFO"
+    ? unpaidSales
+    : unpaidSales.filter(t => t.id === target);
+
+  const maxDue = Math.round(targetSales.reduce((sum, t) => sum + getTankerSaleDueAmount(t), 0) * 100) / 100;
+  if (targetSales.length === 0 || maxDue <= 0) {
+    return showToast("छानिएको बिलमा बाँकी उधारो भेटिएन।", "error");
+  }
+  if (amount > maxDue + 0.01) {
+    return showToast(`प्राप्त रकम बाँकी उधारो (${fmtMoney(maxDue)}) भन्दा बढी छ।`, "error");
+  }
+
+  let rem = amount;
+  const allocations = [];
+  targetSales.forEach(t => {
+    if (rem <= 0) return;
+    const due = getTankerSaleDueAmount(t);
+    const apply = Math.min(due, Math.round(rem * 100) / 100);
+    if (apply > 0) {
+      allocations.push({ tankerSaleId: t.id, amount: apply });
+      rem = Math.round((rem - apply) * 100) / 100;
+    }
+  });
+
+  const seq = Number(st.settings.tankerReceiptCounter || 1);
+  const receiptNo = `TKR-${parseBS(date).y}-${String(seq).padStart(4, "0")}`;
+  st.settings.tankerReceiptCounter = seq + 1;
+
+  const payObj = {
+    id: "TKP-" + Date.now(),
+    receiptNo,
+    buyerName,
+    date,
+    mode,
+    amount,
+    remarks: remarks || (target === "FIFO" ? "ट्याङ्कर उधारो एकमुष्ट असुली" : "ट्याङ्कर बिल उधारो असुली"),
+    allocations
+  };
+  st.tankerPayments.push(payObj);
+  syncTankerSalePaymentStatuses();
+
+  window.cloudSync?.save();
+  renderCurrentModule();
+  printTankerPaymentReceipt(payObj.id);
+  showToast(`ट्याङ्कर उधारो असुली रसिद ${receiptNo} (${fmtMoney(amount)}) सुरक्षित भयो!`, "success");
+}
+
+function printTankerPaymentReceipt(payId) {
+  const st = window.ERP_STATE;
+  const p = (st.tankerPayments || []).find(x => x.id === payId);
+  if (!p) return;
+  const s = st.settings;
+  const remainingBuyerDue = (st.tankerSales || [])
+    .filter(t => String(t.buyerName || "").trim() === String(p.buyerName || "").trim())
+    .reduce((sum, t) => sum + getTankerSaleDueAmount(t), 0);
+
+  const html = `
+    <div class="border-2 border-slate-800 p-6 rounded-lg space-y-4 text-xs">
+      <div class="flex justify-between items-center border-b-2 border-slate-800 pb-3">
+        <div>
+          <h2 class="text-lg font-bold">${s.committeeName}</h2>
+          <p>${s.address} | फोन: ${s.phone}</p>
+        </div>
+        <div class="text-right">
+          <span class="px-3 py-1 bg-teal-800 text-white font-bold rounded">ट्याङ्कर उधारो असुली रसिद</span>
+          <div class="font-bold mt-1">रसिद नं.: ${p.receiptNo}</div>
+          <div>मिति: ${p.date}</div>
+        </div>
+      </div>
+      <div class="grid grid-cols-2 gap-2 bg-slate-50 p-3 rounded border">
+        <div><strong>खरिदकर्ता:</strong> ${p.buyerName}</div>
+        <div><strong>भुक्तानी माध्यम:</strong> ${p.mode === 'Bank' ? 'बैंक / QR' : 'नगद'}</div>
+      </div>
+      <table class="w-full border-collapse border border-slate-400">
+        <tr><td class="border border-slate-400 p-2">विवरण</td><td class="border border-slate-400 p-2">${p.remarks || 'ट्याङ्कर पानी उधारो भुक्तानी'}</td></tr>
+        <tr class="bg-slate-100 font-bold"><td class="border border-slate-400 p-2">प्राप्त कुल रकम</td><td class="border border-slate-400 p-2 text-right">${fmtMoney(p.amount)}</td></tr>
+        <tr><td class="border border-slate-400 p-2">अक्षरमा रकम</td><td class="border border-slate-400 p-2 font-semibold">${numberToNepaliWords(p.amount)}</td></tr>
+        <tr><td class="border border-slate-400 p-2">असुली पछि बाँकी उधारो</td><td class="border border-slate-400 p-2 text-right font-bold ${remainingBuyerDue > 0 ? 'text-rose-700' : 'text-emerald-700'}">${fmtMoney(remainingBuyerDue)}</td></tr>
+      </table>
+      <div class="flex justify-between pt-8">
+        <div>बुझाउनेको सही: ___________________</div>
+        <div>अधिकारीको सही (${s.authorizedPerson}): ___________________</div>
+      </div>
+    </div>
+  `;
+  openPrintModal(`ट्याङ्कर उधारो असुली रसिद - ${p.receiptNo}`, html);
+}
+
+function deleteTankerSaleEntry(saleId) {
+  if (!verifyAdminPasswordBeforeDelete()) return;
+  const st = window.ERP_STATE;
+  const hasPayments = (st.tankerPayments || []).some(p =>
+    String(p.tankerSaleId || "") === String(saleId) ||
+    (Array.isArray(p.allocations) && p.allocations.some(a => String(a.tankerSaleId) === String(saleId)))
+  );
+  if (hasPayments) {
+    return showToast("यो बिक्री बिलमा उधारो असुली रसिद जोडिएको छ। पहिले सम्बन्धित उधारो असुली रसिद हटाउनुहोस्।", "error");
+  }
+  st.tankerSales = (st.tankerSales || []).filter(t => t.id !== saleId);
+  window.cloudSync?.save();
+  renderCurrentModule();
+  showToast("ट्याङ्कर बिक्री अभिलेख हटाइयो!", "info");
+}
+
+function deleteTankerPaymentEntry(payId) {
+  if (!verifyAdminPasswordBeforeDelete()) return;
+  const st = window.ERP_STATE;
+  st.tankerPayments = (st.tankerPayments || []).filter(p => p.id !== payId);
+  syncTankerSalePaymentStatuses();
+  window.cloudSync?.save();
+  renderCurrentModule();
+  showToast("ट्याङ्कर उधारो असुली रसिद हटाइयो!", "info");
 }
 
 // ============================================================================
@@ -5041,6 +5434,7 @@ const ACCOUNT_CHART = [
   {id:"1001",name:"नगद मौज्दात",type:"asset"},
   {id:"1002",name:"बैंक मौज्दात",type:"asset"},
   {id:"1101",name:"पानी तथा मर्मत महसुल उठ्न बाँकी",type:"asset"},
+  {id:"1102",name:"ट्याङ्कर पानी बिक्री उधारो उठ्न बाँकी",type:"asset"},
   {id:"1201",name:"सदस्य ऋण लगानी प्राप्य",type:"asset"},
   {id:"1501",name:"स्थिर सम्पत्ति",type:"asset"},
   {id:"2001",name:"तिर्न बाँकी दायित्व",type:"liability"},
@@ -5160,8 +5554,16 @@ function getAccountingJournal(){
   (st.staffPayroll||[]).forEach(x=>{const a=Number(x.amount||0);if(a>0)out.push(makePosting("AUTO-PAYR-"+x.id,x.date,"तलब/भत्ता - "+(x.remarks||""),"payroll","5010",a,"1001",a,x.id));});
   (st.tankerSales||[]).forEach(x=>{
     const sale=Number(x.saleAmount||0), wage=Number(x.wageAmount||0);
-    if(sale>0)out.push(makePosting("AUTO-TKS-"+x.id,x.date,"ट्याङ्कर बिक्री - "+(x.buyerName||""),"tanker-sale","1001",sale,"4050",sale,x.id));
+    const sType=String(x.saleType||"Cash");
+    const drAcct=sType==="Credit"?"1102":(sType==="Bank"?"1002":"1001");
+    const modeLabel=sType==="Credit"?"उधारो":(sType==="Bank"?"बैंक":"नगद");
+    if(sale>0)out.push(makePosting("AUTO-TKS-"+x.id,x.date,"ट्याङ्कर बिक्री ("+modeLabel+") - "+(x.buyerName||""),"tanker-sale",drAcct,sale,"4050",sale,x.id));
     if(wage>0)out.push(makePosting("AUTO-TKW-"+x.id,x.date,"ट्याङ्कर ज्याला - "+(x.buyerName||""),"tanker-wage","5020",wage,"1001",wage,x.id));
+  });
+  (st.tankerPayments||[]).forEach(p=>{
+    const a=Number(p.amount||0); if(a<=0)return;
+    const isBank=/bank|बैंक/i.test(String(p.mode||""));
+    out.push(makePosting("AUTO-TKP-"+p.id,p.date,"ट्याङ्कर उधारो असुली - "+(p.buyerName||"")+" ("+(p.receiptNo||"")+")","tanker-payment",isBank?"1002":"1001",a,"1102",a,p.receiptNo||p.id));
   });
   (st.bankTransactions||[]).forEach(x=>{
     const a=Number(x.amount||0);if(a<=0)return;
@@ -5778,6 +6180,10 @@ function generateReportHTML(tab) {
   const openCashBank = accountingMoney((preBal["1001"]?.debit || 0) - (preBal["1001"]?.credit || 0) + (preBal["1002"]?.debit || 0) - (preBal["1002"]?.credit || 0));
   const waterCollectedPeriod = accountingMoney(st.payments.filter(p => isDateBetweenBS(p.date, repFromBS, repToBS)).reduce((a, b) => a + Number(b.totalPaid || 0), 0));
   const loanRepayCollectedPeriod = accountingMoney(st.loanRepayments.filter(r => isDateOnOrAfterOpeningBS(r.date) && isDateBetweenBS(r.date, repFromBS, repToBS)).reduce((a, b) => a + Number(b.principalPaid || 0) + Number(b.interestPaid || 0), 0));
+  const tankerCashPeriod = accountingMoney(
+    st.tankerSales.filter(t => String(t.saleType || "Cash") !== "Credit" && isDateBetweenBS(t.date, repFromBS, repToBS)).reduce((a, b) => a + Number(b.saleAmount || 0), 0) +
+    (st.tankerPayments || []).filter(p => isDateBetweenBS(p.date, repFromBS, repToBS)).reduce((a, b) => a + Number(b.amount || 0), 0)
+  );
   const loanDisbursedPeriod = accountingMoney(st.loans.filter(l => isDateOnOrAfterOpeningBS(l.initialIssueDate || l.issueDate) && isDateBetweenBS(l.initialIssueDate || l.issueDate, repFromBS, repToBS)).reduce((a, l) => a + Number(l.initialPrincipal != null ? l.initialPrincipal : l.principal || 0), 0));
   const otherCashInPeriod = accountingMoney((periodBal["1001"]?.debit || 0) + (periodBal["1002"]?.debit || 0) - (periodBal["1001"]?.credit || 0) - (periodBal["1002"]?.credit || 0));
   const closingCashBank = accountingMoney(cashInHand + bankTotal);
@@ -5790,8 +6196,9 @@ function generateReportHTML(tab) {
         <tr><td class="border border-slate-300 p-2 font-semibold">१. सुरुवाती नगद तथा बैंक मौज्दात (Opening Cash & Bank)</td><td class="border border-slate-300 p-2 text-right font-bold">${fmtMoney(openCashBank)}</td></tr>
         <tr><td class="border border-slate-300 p-2">२. ग्राहक महसुल र अग्रिम असुली आगमन (Water & Advance Receipts)</td><td class="border border-slate-300 p-2 text-right text-emerald-700">+ ${fmtMoney(waterCollectedPeriod)}</td></tr>
         <tr><td class="border border-slate-300 p-2">३. ऋण किस्ता असुली (Loan Principal & Interest Collected)</td><td class="border border-slate-300 p-2 text-right text-emerald-700">+ ${fmtMoney(loanRepayCollectedPeriod)}</td></tr>
-        <tr><td class="border border-slate-300 p-2">४. नयाँ ऋण लगानी बहिर्गमन (Loans Disbursed)</td><td class="border border-slate-300 p-2 text-right text-rose-700">- ${fmtMoney(loanDisbursedPeriod)}</td></tr>
-        <tr><td class="border border-slate-300 p-2">५. अवधिगत खुद नगद/बैंक परिवर्तन (Net Period Cash & Bank Flow)</td><td class="border border-slate-300 p-2 text-right font-semibold">${fmtMoney(otherCashInPeriod)}</td></tr>
+        <tr><td class="border border-slate-300 p-2">४. ट्याङ्कर नगद बिक्री तथा उधारो असुली आगमन (Tanker Cash & Credit Collected)</td><td class="border border-slate-300 p-2 text-right text-emerald-700">+ ${fmtMoney(tankerCashPeriod)}</td></tr>
+        <tr><td class="border border-slate-300 p-2">५. नयाँ ऋण लगानी बहिर्गमन (Loans Disbursed)</td><td class="border border-slate-300 p-2 text-right text-rose-700">- ${fmtMoney(loanDisbursedPeriod)}</td></tr>
+        <tr><td class="border border-slate-300 p-2">६. अवधिगत खुद नगद/बैंक परिवर्तन (Net Period Cash & Bank Flow)</td><td class="border border-slate-300 p-2 text-right font-semibold">${fmtMoney(otherCashInPeriod)}</td></tr>
         <tr class="bg-teal-50 font-bold"><td class="border border-slate-300 p-2">अन्तिम नगद तथा बैंक मौज्दात (Closing: नगद ${fmtMoney(cashInHand)} + बैंक ${fmtMoney(bankTotal)})</td><td class="border border-slate-300 p-2 text-right">${fmtMoney(closingCashBank)}</td></tr>
       </tbody>
     </table>
@@ -5841,7 +6248,12 @@ function getUnifiedDatabaseRows() {
     rows.push({ date: s.date, module: "कर्मचारी तलब/भत्ता", member: sf.name, type: "खर्च", amount: s.amount, ref: s.remarks || s.type || `${s.month} तलब` });
   });
   st.tankerSales.forEach(t => {
-    rows.push({ date: t.date, module: "ट्याङ्कर पानी बिक्री", member: t.buyerName, type: "आम्दानी", amount: t.saleAmount, ref: `${t.liters} लि.` });
+    const sType = String(t.saleType || "Cash");
+    const typeLabel = sType === "Credit" ? "उधारो" : (sType === "Bank" ? "बैंक" : "नगद");
+    rows.push({ date: t.date, module: "ट्याङ्कर पानी बिक्री", member: t.buyerName, type: sType === "Credit" ? "उधारो बिक्री" : "आम्दानी", amount: t.saleAmount, ref: `${t.liters} लि. (${typeLabel})` });
+  });
+  (st.tankerPayments || []).forEach(p => {
+    rows.push({ date: p.date, module: "ट्याङ्कर उधारो असुली", member: p.buyerName, type: "आम्दानी", amount: p.amount, ref: `${p.receiptNo} (${p.mode === 'Bank' ? 'बैंक' : 'नगद'})` });
   });
   st.bankTransactions.forEach(b => {
     const bk = st.bankAccounts.find(x => x.id === b.bankId) || { bankName: b.bankId };
@@ -6552,7 +6964,11 @@ function executeDateRangeRecordDeletion() {
   if (selectedModules.includes("incomes")) st.incomes = st.incomes.filter(i => !isDateBetweenBS(i.date, fromBS, toBS));
   if (selectedModules.includes("expenses")) st.expenses = st.expenses.filter(e => !isDateBetweenBS(e.date, fromBS, toBS));
   if (selectedModules.includes("staffPayroll")) st.staffPayroll = st.staffPayroll.filter(p => !isDateBetweenBS(p.date, fromBS, toBS));
-  if (selectedModules.includes("tankerSales")) st.tankerSales = st.tankerSales.filter(t => !isDateBetweenBS(t.date, fromBS, toBS));
+  if (selectedModules.includes("tankerSales")) {
+    st.tankerSales = st.tankerSales.filter(t => !isDateBetweenBS(t.date, fromBS, toBS));
+    st.tankerPayments = (st.tankerPayments || []).filter(p => !isDateBetweenBS(p.date, fromBS, toBS));
+    syncTankerSalePaymentStatuses();
+  }
 
   window.recalculateAllDynamicValues(true);
   renderCurrentModule();
@@ -6575,6 +6991,7 @@ function executeClearDemoRecords() {
   st.expenses = [];
   st.staffPayroll = [];
   st.tankerSales = [];
+  st.tankerPayments = [];
 
   window.recalculateAllDynamicValues(true);
   renderCurrentModule();
