@@ -1854,7 +1854,7 @@ function renderAmountEntryModule() {
   selectedCust = selectedCust || { id: "", name: "", openingDue: 0 };
 
   const custOpeningDue = Number(selectedCust.openingDue || 0);
-  const custBills = st.readings.filter(r => r.customerId === selectedSingleCustId && getReadingRemaining(r) > 0);
+  const custBills = st.readings.filter(r => r.customerId === selectedSingleCustId && (getReadingRemaining(r) > 0 || Number(r.penaltyAmount || 0) > 0));
 
   const dueBase = custBills.reduce((s, r) => s + Math.max(0, (Number(r.billAmount) - Number(r.maintenanceAmount || 0)) - Number(r.paidAmount || 0)), 0);
   const dueMaint = custBills.reduce((s, r) => s + Math.max(0, Number(r.maintenanceAmount || 0) - Number(r.paidMaintAmount || 0)), 0);
@@ -1998,7 +1998,7 @@ function renderAmountEntryModule() {
               <tbody class="divide-y divide-slate-100">
                 ${st.customers.map(c => {
                   const opDue = Number(c.openingDue || 0);
-                  const custBills = st.readings.filter(r => r.customerId === c.id && getReadingRemaining(r) > 0);
+                  const custBills = st.readings.filter(r => r.customerId === c.id && (getReadingRemaining(r) > 0 || Number(r.penaltyAmount || 0) > 0));
                   const baseDue = custBills.reduce((s, r) => s + Math.max(0, (Number(r.billAmount) - Number(r.maintenanceAmount || 0)) - Number(r.paidAmount || 0)), 0);
                   const maintDue = custBills.reduce((s, r) => s + Math.max(0, Number(r.maintenanceAmount || 0) - Number(r.paidMaintAmount || 0)), 0);
                   const penDue = custBills.reduce((s, r) => s + Number(r.penaltyAmount || 0), 0);
@@ -2073,6 +2073,11 @@ function renderAmountEntryModule() {
                       <button onclick="printWaterReceipt('${p.id}')" class="px-2.5 py-1 bg-teal-50 hover:bg-teal-100 text-teal-800 border border-teal-200 rounded-lg font-semibold flex items-center gap-1 cursor-pointer">
                         <i data-lucide="printer" class="w-3.5 h-3.5"></i> प्रिन्ट
                       </button>
+                      ${p.allocations && Array.isArray(p.allocations.readings) ? '' : `
+                        <button onclick="reconcileLegacyPaymentAllocation('${p.id}')" class="px-2.5 py-1 bg-blue-50 hover:bg-blue-100 text-blue-800 border border-blue-200 rounded-lg font-semibold cursor-pointer">
+                          हिसाब मिलाउनुहोस्
+                        </button>
+                      `}
                       <button onclick="modifyPaymentRecord('${p.id}')" class="px-2.5 py-1 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 rounded-lg font-semibold cursor-pointer">
                         Modify
                       </button>
@@ -2273,7 +2278,7 @@ function getCustomerCurrentDue(customerId) {
   return { opening: paymentRound(opening), water: paymentRound(water), maintenance: paymentRound(maintenance), penalty: paymentRound(penalty), total: paymentRound(opening + water + maintenance + penalty) };
 }
 
-function allocateCustomerPayment(customerId, amount) {
+function allocateCustomerPayment(customerId, amount, asOfDate = null) {
   const st = window.ERP_STATE;
   const customer = st.customers.find(c => c.id === customerId);
   if (!customer) throw new Error('ग्राहक फेला परेन।');
@@ -2290,7 +2295,12 @@ function allocateCustomerPayment(customerId, amount) {
   }
 
   const ordered = st.readings
-    .filter(r => r.customerId === customerId)
+    .filter(r => {
+      if (r.customerId !== customerId) return false;
+      if (!asOfDate) return true;
+      const readingDate = r.entryDate || r.date || "";
+      return !readingDate || bsToSerialDays(readingDate) <= bsToSerialDays(asOfDate);
+    })
     .slice()
     .sort((a, b) => {
       const da = a.entryDate || a.date || '0000-00-00';
@@ -2332,9 +2342,105 @@ function allocateCustomerPayment(customerId, amount) {
   return allocation;
 }
 
+function getCustomerDueAsOf(customerId, asOfDate) {
+  const st = window.ERP_STATE;
+  const customer = st.customers.find(c => c.id === customerId);
+  if (!customer) return null;
+  const eligible = st.readings.filter(r => {
+    if (r.customerId !== customerId) return false;
+    const d = r.entryDate || r.date || "";
+    return !d || bsToSerialDays(d) <= bsToSerialDays(asOfDate);
+  });
+  const opening = Math.max(0, Number(customer.openingDue || 0));
+  const water = eligible.reduce((sum, r) => sum + Math.max(0,
+    Number(r.billAmount || 0) - Number(r.maintenanceAmount || 0) - Number(r.paidAmount || 0)), 0);
+  const maintenance = eligible.reduce((sum, r) => sum + Math.max(0,
+    Number(r.maintenanceAmount || 0) - Number(r.paidMaintAmount || 0)), 0);
+  const penalty = eligible.reduce((sum, r) => sum + Math.max(0, Number(r.penaltyAmount || 0)), 0);
+  return {
+    opening: paymentRound(opening),
+    water: paymentRound(water),
+    maintenance: paymentRound(maintenance),
+    penalty: paymentRound(penalty),
+    total: paymentRound(opening + water + maintenance + penalty)
+  };
+}
+
+// Legacy receipts created before reading-level allocation was introduced have
+// valid payment records but no allocation map. This action migrates one receipt
+// only after checking that its full amount can be allocated to dues that existed
+// on that receipt date. It never creates a second receipt or changes totalPaid.
+function reconcileLegacyPaymentAllocation(payId) {
+  const st = window.ERP_STATE;
+  const payment = st.payments.find(p => p.id === payId);
+  if (!payment) return showToast("रसिद फेला परेन।", "error");
+  if (payment.allocations && Array.isArray(payment.allocations.readings)) {
+    return showToast("यो रसिदको हिसाब बाँडफाँट पहिले नै सुरक्षित छ।", "info");
+  }
+  if (!payment.date || !payment.customerId) {
+    return showToast("रसिदमा ग्राहक वा मिति नभएकाले सुरक्षित रूपमा मिलाउन सकिएन।", "error");
+  }
+
+  const amount = paymentRound(payment.totalPaid);
+  const due = getCustomerDueAsOf(payment.customerId, payment.date);
+  if (!due || amount <= 0) return showToast("रसिदको रकम वा ग्राहक विवरण मान्य छैन।", "error");
+  if (amount - due.total > 0.009) {
+    return showToast(
+      `यस रसिद मितिसम्मको बाँकी ${fmtMoney(due.total)} मात्र छ; रसिद ${fmtMoney(amount)} भएकाले स्वतः बाँडफाँट गरिएन।`,
+      "warning"
+    );
+  }
+
+  if (!confirm(
+    `रसिद ${payment.receiptNo} को ${fmtMoney(amount)} रकमलाई ${payment.date} सम्मका पुराना बाँकी Reading मा मिति क्रमअनुसार मिलाउने? रसिद नम्बर र भुक्तानी रकम परिवर्तन हुँदैन।`
+  )) return;
+
+  // Snapshot for rollback if allocation unexpectedly fails.
+  const customer = st.customers.find(c => c.id === payment.customerId);
+  const customerOpeningBefore = Number(customer?.openingDue || 0);
+  const readingSnapshot = st.readings
+    .filter(r => r.customerId === payment.customerId)
+    .map(r => ({
+      id: r.id,
+      paidAmount: Number(r.paidAmount || 0),
+      paidMaintAmount: Number(r.paidMaintAmount || 0),
+      paidPenaltyAmount: Number(r.paidPenaltyAmount || 0),
+      penaltyAmount: Number(r.penaltyAmount || 0)
+    }));
+
+  try {
+    const allocations = allocateCustomerPayment(payment.customerId, amount, payment.date);
+    payment.allocations = allocations;
+    payment.openingPaid = paymentRound(allocations.opening);
+    payment.billPaid = paymentRound(allocations.readings.reduce((s, x) => s + Number(x.water || 0), 0));
+    payment.maintPaid = paymentRound(allocations.readings.reduce((s, x) => s + Number(x.maintenance || 0), 0));
+    payment.penaltyPaid = paymentRound(allocations.readings.reduce((s, x) => s + Number(x.penalty || 0), 0));
+
+    window.recalculateAllDynamicValues(false);
+    window.cloudSync?.save();
+    renderCurrentModule();
+    showToast(
+      `रसिद ${payment.receiptNo} को ${fmtMoney(amount)} पुरानो बाँकीमा मिलाइयो। मूल रसिद सुरक्षित छ।`,
+      "success"
+    );
+  } catch (error) {
+    if (customer) customer.openingDue = customerOpeningBefore;
+    readingSnapshot.forEach(snap => {
+      const r = st.readings.find(x => x.customerId === payment.customerId && String(x.id) === String(snap.id));
+      if (!r) return;
+      r.paidAmount = snap.paidAmount;
+      r.paidMaintAmount = snap.paidMaintAmount;
+      r.paidPenaltyAmount = snap.paidPenaltyAmount;
+      r.penaltyAmount = snap.penaltyAmount;
+    });
+    delete payment.allocations;
+    return showToast(error.message || "पुरानो रसिद मिलाउन सकिएन; कुनै परिवर्तन राखिएको छैन।", "error");
+  }
+}
+
 function reverseExactPayment(payment) {
   const st = window.ERP_STATE;
-  if (!Array.isArray(payment.allocations)) {
+  if (!payment.allocations || !Array.isArray(payment.allocations.readings)) {
     throw new Error('यो पुरानो रसिदमा कुन महिनाको रकम चुक्ता भएको थियो भन्ने Allocation सुरक्षित छैन। वास्तविक हिसाब सुरक्षित राख्न यो रसिद स्वतः हटाउन/संशोधन गर्न मिल्दैन।');
   }
   const allocatedItems = payment.allocations.readings || [];
@@ -2358,15 +2464,14 @@ function createCustomerPayment(customerId, date, amount, mode) {
   const st = window.ERP_STATE;
   const paid = paymentRound(amount);
   if (!Number.isFinite(paid) || paid <= 0) throw new Error('शून्यभन्दा बढी मान्य रकम राख्नुहोस्।');
-  const due = getCustomerCurrentDue(customerId);
-  if (!due) throw new Error('ग्राहक फेला परेन।');
-  if (paid - due.total > 0.009) throw new Error(`बुझाएको रकम कुल बाँकी ${fmtMoney(due.total)} भन्दा बढी भयो।`);
-
-  // Validate BS date before touching customer balances.
+  // Validate BS date before checking or changing any customer balance.
   const parsedDate = parseBS(date);
   const normalizedDate = formatBS(parsedDate.y, parsedDate.m, parsedDate.d);
   if (normalizedDate !== date) throw new Error('रसिदको नेपाली मिति YYYY-MM-DD ढाँचामा सही राख्नुहोस्।');
-  const allocations = allocateCustomerPayment(customerId, paid);
+  const due = getCustomerDueAsOf(customerId, normalizedDate);
+  if (!due) throw new Error('ग्राहक फेला परेन।');
+  if (paid - due.total > 0.009) throw new Error(`बुझाएको रकम रसिद मितिसम्मको बाँकी ${fmtMoney(due.total)} भन्दा बढी भयो।`);
+  const allocations = allocateCustomerPayment(customerId, paid, normalizedDate);
   const year = parsedDate.y;
   const seq = Number(st.settings.receiptCounter || 1);
   const receiptNo = `REC-${year}-${seq}`;
@@ -2441,7 +2546,7 @@ function modifyPaymentRecord(payId) {
   const index = st.payments.findIndex(p => p.id === payId);
   if (index < 0) return showToast('रसिद फेला परेन।', 'error');
   const payment = st.payments[index];
-  if (!Array.isArray(payment.allocations)) {
+  if (!payment.allocations || !Array.isArray(payment.allocations.readings)) {
     return showToast('यो पुरानो रसिदको Allocation विवरण छैन। वास्तविक भुक्तानी नबिग्रियोस् भनेर Modify रोकिएको छ।', 'warning');
   }
   if (!confirm(`रसिद ${payment.receiptNo} संशोधनका लागि हटाउने? रकम पुरानै ग्राहकको बाँकीमा फिर्ता जोडिनेछ।`)) return;
@@ -2460,7 +2565,7 @@ function deletePaymentRecord(payId) {
   const index = st.payments.findIndex(p => p.id === payId);
   if (index < 0) return showToast('रसिद फेला परेन।', 'error');
   const payment = st.payments[index];
-  if (!Array.isArray(payment.allocations)) {
+  if (!payment.allocations || !Array.isArray(payment.allocations.readings)) {
     return showToast('यो पुरानो रसिदको Reading Allocation सुरक्षित छैन। वास्तविक भुक्तानी नबिग्रियोस् भनेर Delete रोकिएको छ।', 'warning');
   }
   if (!confirm(`रसिद ${payment.receiptNo} स्थायी रूपमा Delete गर्ने? ${fmtMoney(payment.totalPaid)} रकम ग्राहकको बक्यौतामा फिर्ता जोडिनेछ।`)) return;
