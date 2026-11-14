@@ -2414,6 +2414,10 @@ function applyCustomerAdvanceToReadings(customerId) {
     if (available <= 0) continue;
 
     for (const reading of orderedReadings) {
+      const readingDate = reading.entryDate || reading.date || "";
+      // Same-day and earlier dues were part of the original receipt's allocation.
+      // Keep leftover money as advance until a later-dated reading exists.
+      if (readingDate && source.date && bsToSerialDays(readingDate) <= bsToSerialDays(source.date)) continue;
       if (available <= 0) break;
       const itemList = source.allocations.readings || (source.allocations.readings = []);
       let item = itemList.find(x => String(x.readingId) === String(reading.id));
@@ -2513,15 +2517,11 @@ function reconcileLegacyPaymentAllocation(payId) {
   const amount = paymentRound(payment.totalPaid);
   const due = getCustomerDueAsOf(payment.customerId, payment.date);
   if (!due || amount <= 0) return showToast("रसिदको रकम वा ग्राहक विवरण मान्य छैन।", "error");
-  if (amount - due.total > 0.009) {
-    return showToast(
-      `यस रसिद मितिसम्मको बाँकी ${fmtMoney(due.total)} मात्र छ; रसिद ${fmtMoney(amount)} भएकाले स्वतः बाँडफाँट गरिएन।`,
-      "warning"
-    );
-  }
+  const dueAmount = paymentRound(due.total);
+  const advanceAmount = paymentRound(Math.max(0, amount - dueAmount));
 
   if (!confirm(
-    `रसिद ${payment.receiptNo} को ${fmtMoney(amount)} रकमलाई ${payment.date} सम्मका पुराना बाँकी Reading मा मिति क्रमअनुसार मिलाउने? रसिद नम्बर र भुक्तानी रकम परिवर्तन हुँदैन।`
+    `रसिद ${payment.receiptNo} को जम्मा ${fmtMoney(amount)} रकम मिलाउने? ${fmtMoney(Math.min(amount, dueAmount))} पुरानो बाँकीमा समायोजन हुनेछ र ${fmtMoney(advanceAmount)} ग्राहकको अग्रिम खातामा रहनेछ। मूल रसिद नम्बर र भुक्तानी रकम परिवर्तन हुँदैन।`
   )) return;
 
   // Snapshot for rollback if allocation unexpectedly fails.
@@ -2551,7 +2551,7 @@ function reconcileLegacyPaymentAllocation(payId) {
     window.cloudSync?.save();
     renderCurrentModule();
     showToast(
-      `रसिद ${payment.receiptNo} को ${fmtMoney(amount)} पुरानो बाँकीमा मिलाइयो। मूल रसिद सुरक्षित छ।`,
+      `रसिद ${payment.receiptNo} मिलाइयो: पुरानो बाँकी ${fmtMoney(allocations.opening + allocations.readings.reduce((sum, x) => sum + Number(x.water || 0) + Number(x.maintenance || 0) + Number(x.penalty || 0), 0))}, अग्रिम ${fmtMoney(allocations.advance || 0)}। मूल रसिद सुरक्षित छ।`,
       "success"
     );
   } catch (error) {
@@ -2605,8 +2605,8 @@ function createCustomerPayment(customerId, date, amount, mode) {
   if (normalizedDate !== date) throw new Error('रसिदको नेपाली मिति YYYY-MM-DD ढाँचामा सही राख्नुहोस्।');
   const due = getCustomerDueAsOf(customerId, normalizedDate);
   if (!due) throw new Error('ग्राहक फेला परेन।');
-  if (paid - due.total > 0.009) throw new Error(`बुझाएको रकम रसिद मितिसम्मको बाँकी ${fmtMoney(due.total)} भन्दा बढी भयो।`);
-  const allocations = allocateCustomerPayment(customerId, paid, normalizedDate);
+  // Amount above dated dues is a customer advance, not an invalid payment.
+  const allocations = allocateCustomerPayment(customerId, paid, normalizedDate, true);
   const year = parsedDate.y;
   const seq = Number(st.settings.receiptCounter || 1);
   const receiptNo = `REC-${year}-${seq}`;
@@ -2650,11 +2650,10 @@ function submitBulkAmountEntry() {
     .filter(x => x.amount > 0);
   if (!entries.length) return showToast('कृपया कम्तिमा एउटा ग्राहकको रकम प्रविष्ट गर्नुहोस्।', 'error');
 
-  // Validate all customers before changing any balance.
+  // Validate all customers before changing any balance. Excess collection is stored as advance.
   for (const entry of entries) {
-    const due = getCustomerCurrentDue(entry.customerId);
-    if (!due) return showToast(`${entry.customerId} ग्राहक फेला परेन।`, 'error');
-    if (entry.amount - due.total > 0.009) return showToast(`${entry.customerId} को रकम बाँकी ${fmtMoney(due.total)} भन्दा बढी भयो।`, 'error');
+    const customerExists = st.customers.some(c => c.id === entry.customerId);
+    if (!customerExists) return showToast(`${entry.customerId} ग्राहक फेला परेन।`, 'error');
   }
 
   const created = [];
