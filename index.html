@@ -1843,7 +1843,7 @@ function sendNextWhatsappNow(continueLoop = false) {
 }
 
 // ============================================================================
-// 8. AMOUNT ENTRY & PRINTABLE RECEIPT (Fully Updated with FIFO & Chronological Fix)
+// 8. AMOUNT ENTRY & PRINTABLE RECEIPT (Fully Updated with Flexible Reconcile, Delete & Modify)
 // ============================================================================
 let amountEntryMode = "single";
 let selectedSingleCustId = "";
@@ -2326,7 +2326,6 @@ function allocateCustomerPayment(customerId, amount, asOfDate = null, allowAdvan
     remaining = paymentRound(remaining - applied);
   }
 
-  // Chronological sorting (Oldest First): Bhadra before Asoj, etc.
   const ordered = st.readings
     .filter(r => {
       if (r.customerId !== customerId) return false;
@@ -2517,22 +2516,15 @@ function reconcileLegacyPaymentAllocation(payId) {
   if (payment.allocations && Array.isArray(payment.allocations.readings)) {
     return showToast("यो रसिदको हिसाब बाँडफाँट पहिले नै सुरक्षित छ।", "info");
   }
-  if (!payment.date || !payment.customerId) {
-    return showToast("रसिदमा ग्राहक वा मिति नभएकाले सुरक्षित रूपमा मिलाउन सकिएन।", "error");
+  if (!payment.customerId) {
+    return showToast("रसिदमा ग्राहक फेला परेन।", "error");
   }
 
   const amount = paymentRound(payment.totalPaid);
-  const due = getCustomerDueAsOf(payment.customerId, payment.date);
-  if (!due || amount <= 0) return showToast("रसिदको रकम वा ग्राहक विवरण मान्य छैन।", "error");
-  if (amount - due.total > 0.009) {
-    return showToast(
-      `यस रसिद मितिसम्मको बाँकी ${fmtMoney(due.total)} मात्र छ; रसिद ${fmtMoney(amount)} भएकाले स्वतः बाँडफाँट गरिएन।`,
-      "warning"
-    );
-  }
+  if (amount <= 0) return showToast("रसिदको रकम मान्य छैन।", "error");
 
   if (!confirm(
-    `रसिद ${payment.receiptNo} को ${fmtMoney(amount)} रकमलाई ${payment.date} सम्मका पुराना बाँकी Reading मा मिति क्रमअनुसार मिलाउने? रसिद नम्बर र भुक्तानी रकम परिवर्तन हुँदैन।`
+    `रसिद ${payment.receiptNo} को ${fmtMoney(amount)} रकमलाई FIFO क्रम अनुसार पुराना बाँकी Reading मा मिलाउने?`
   )) return;
 
   const customer = st.customers.find(c => c.id === payment.customerId);
@@ -2549,7 +2541,7 @@ function reconcileLegacyPaymentAllocation(payId) {
     }));
 
   try {
-    const allocations = allocateCustomerPayment(payment.customerId, amount, payment.date, true);
+    const allocations = allocateCustomerPayment(payment.customerId, amount, null, true);
     payment.allocations = allocations;
     payment.openingPaid = paymentRound(allocations.opening);
     payment.billPaid = paymentRound(allocations.readings.reduce((s, x) => s + Number(x.water || 0), 0));
@@ -2560,10 +2552,7 @@ function reconcileLegacyPaymentAllocation(payId) {
     window.recalculateAllDynamicValues(false);
     window.cloudSync?.save();
     renderCurrentModule();
-    showToast(
-      `रसिद ${payment.receiptNo} को ${fmtMoney(amount)} पुरानो बाँकीमा मिलाइयो। मूल रसिद सुरक्षित छ।`,
-      "success"
-    );
+    showToast(`रसिद ${payment.receiptNo} को ${fmtMoney(amount)} सफलतापूर्वक मिलाइयो।`, "success");
   } catch (error) {
     if (customer) { customer.openingDue = customerOpeningBefore; customer.advanceBalance = customerAdvanceBefore; }
     readingSnapshot.forEach(snap => {
@@ -2575,23 +2564,20 @@ function reconcileLegacyPaymentAllocation(payId) {
       r.penaltyAmount = snap.penaltyAmount;
     });
     delete payment.allocations;
-    return showToast(error.message || "पुरानो रसिद मिलाउन सकिएन; कुनै परिवर्तन राखिएको छैन।", "error");
+    return showToast(error.message || "हिसाब मिलाउन सकिएन।", "error");
   }
 }
 
 function reverseExactPayment(payment) {
   const st = window.ERP_STATE;
   if (!payment.allocations || !Array.isArray(payment.allocations.readings)) {
-    throw new Error('यो पुरानो रसिदमा कुन महिनाको रकम चुक्ता भएको थियो भन्ने Allocation सुरक्षित छैन। वास्तविक हिसाब सुरक्षित राख्न यो रसिद स्वतः हटाउन/संशोधन गर्न मिल्दैन।');
+    throw new Error('यो पुरानो रसिदमा कुन महिनाको रकम चुक्ता भएको थियो भन्ने Allocation सुरक्षित छैन।');
   }
   const allocatedItems = payment.allocations.readings || [];
   const matchedReadings = allocatedItems.map(item => ({
     item,
     reading: st.readings.find(r => r.customerId === payment.customerId && String(r.id) === String(item.readingId))
   }));
-  if (matchedReadings.some(x => !x.reading)) {
-    throw new Error('रसिदसँग सम्बन्धित पुरानो Reading फेला परेन। डेटा नमिलेकाले रसिद हटाइएको छैन।');
-  }
   const customer = st.customers.find(c => c.id === payment.customerId);
   if (customer) {
     customer.openingDue = paymentRound(Number(customer.openingDue || 0) + Number(payment.allocations.opening || 0));
@@ -2599,6 +2585,7 @@ function reverseExactPayment(payment) {
     customer.advanceBalance = paymentRound(Math.max(0, Number(customer.advanceBalance || 0) - unusedAdvance));
   }
   matchedReadings.forEach(({ item, reading }) => {
+    if (!reading) return;
     reading.paidAmount = paymentRound(Math.max(0, Number(reading.paidAmount || 0) - Number(item.water || 0)));
     reading.paidMaintAmount = paymentRound(Math.max(0, Number(reading.paidMaintAmount || 0) - Number(item.maintenance || 0)));
     reading.paidPenaltyAmount = paymentRound(Math.max(0, Number(reading.paidPenaltyAmount || 0) - Number(item.penalty || 0)));
@@ -2688,18 +2675,20 @@ function modifyPaymentRecord(payId) {
   const index = st.payments.findIndex(p => p.id === payId);
   if (index < 0) return showToast('रसिद फेला परेन।', 'error');
   const payment = st.payments[index];
-  if (!payment.allocations || !Array.isArray(payment.allocations.readings)) {
-    return showToast('यो पुरानो रसिदको Allocation विवरण छैन। वास्तविक भुक्तानी नबिग्रियोस् भनेर Modify रोकिएको छ।', 'warning');
+
+  if (!confirm(`रसिद ${payment.receiptNo} संशोधनका लागि हटाउने?`)) return;
+
+  if (payment.allocations && Array.isArray(payment.allocations.readings)) {
+    try { reverseExactPayment(payment); }
+    catch (error) { return showToast(error.message, 'error'); }
   }
-  if (!confirm(`रसिद ${payment.receiptNo} संशोधनका लागि हटाउने? रकम पुरानै ग्राहकको बाँकीमा फिर्ता जोडिनेछ।`)) return;
-  try { reverseExactPayment(payment); }
-  catch (error) { return showToast(error.message, 'error'); }
+
   st.payments.splice(index, 1);
   selectedSingleCustId = payment.customerId;
   amountEntryMode = 'single';
   window.recalculateAllDynamicValues(false);
   renderCurrentModule();
-  showToast(`रसिद ${payment.receiptNo} संशोधनका लागि हटाइयो। अब सही रकम पुनः इन्ट्री गर्नुहोस्।`, 'success');
+  showToast(`रसिद ${payment.receiptNo} हटाइयो। अब सही रकम पुनः इन्ट्री गर्नुहोस्।`, 'success');
 }
 
 function deletePaymentRecord(payId) {
@@ -2707,16 +2696,18 @@ function deletePaymentRecord(payId) {
   const index = st.payments.findIndex(p => p.id === payId);
   if (index < 0) return showToast('रसिद फेला परेन।', 'error');
   const payment = st.payments[index];
-  if (!payment.allocations || !Array.isArray(payment.allocations.readings)) {
-    return showToast('यो पुरानो रसिदको Reading Allocation सुरक्षित छैन। वास्तविक भुक्तानी नबिग्रियोस् भनेर Delete रोकिएको छ।', 'warning');
+
+  if (!confirm(`रसिद ${payment.receiptNo} (${fmtMoney(payment.totalPaid)}) लाई स्थायी रूपमा Delete गर्ने?`)) return;
+
+  if (payment.allocations && Array.isArray(payment.allocations.readings)) {
+    try { reverseExactPayment(payment); }
+    catch (error) { return showToast(error.message, 'error'); }
   }
-  if (!confirm(`रसिद ${payment.receiptNo} स्थायी रूपमा Delete गर्ने? ${fmtMoney(payment.totalPaid)} रकम ग्राहकको बक्यौतामा फिर्ता जोडिनेछ।`)) return;
-  try { reverseExactPayment(payment); }
-  catch (error) { return showToast(error.message, 'error'); }
+
   st.payments.splice(index, 1);
   window.recalculateAllDynamicValues(false);
   renderCurrentModule();
-  showToast(`रसिद ${payment.receiptNo} हटाइयो र रकम बक्यौतामा फिर्ता जोडियो।`, 'success');
+  showToast(`रसिद ${payment.receiptNo} हटाइयो।`, 'success');
 }
 
 function printWaterReceipt(payId) {
