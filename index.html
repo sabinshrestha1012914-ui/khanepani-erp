@@ -2264,6 +2264,23 @@ function paymentRound(value) {
   return Math.round((Number(value) || 0) * 100) / 100;
 }
 
+// Penalty is derived data: paidPenaltyAmount is the permanent payment history,
+// while penaltyAmount is only the currently outstanding calculated penalty.
+// Never decrement penaltyAmount directly when allocating a payment.
+function getReadingPenaltyDueAsOf(reading, asOfDate) {
+  const date = asOfDate || window.ERP_STATE.activeBSDate;
+  const baseDue = Math.max(0,
+    Number(reading.billAmount || 0) - Number(reading.paidAmount || 0) - Number(reading.paidMaintAmount || 0));
+  if (baseDue <= 0) return 0;
+  const rule = getActivePenaltyRule(date);
+  let elapsed = 0;
+  try { elapsed = diffDaysBS(reading.entryDate || date, date); } catch (_) { elapsed = 0; }
+  const assessed = elapsed > Number(rule.graceDays || 0)
+    ? paymentRound(baseDue * Number(rule.penaltyPercent || 0) / 100)
+    : 0;
+  return paymentRound(Math.max(0, assessed - Number(reading.paidPenaltyAmount || 0)));
+}
+
 function getCustomerCurrentDue(customerId) {
   const st = window.ERP_STATE;
   const customer = st.customers.find(c => c.id === customerId);
@@ -2313,11 +2330,12 @@ function allocateCustomerPayment(customerId, amount, asOfDate = null) {
     if (remaining <= 0) break;
     const item = { readingId: reading.id, penalty: 0, maintenance: 0, water: 0 };
 
-    const penaltyDue = Math.max(0, Number(reading.penaltyAmount || 0));
+    const penaltyDue = getReadingPenaltyDueAsOf(reading, asOfDate || st.activeBSDate);
     if (penaltyDue > 0 && remaining > 0) {
       item.penalty = paymentRound(Math.min(penaltyDue, remaining));
+      // Store payment history only. recalculateAllDynamicValues derives the
+      // remaining penalty from the unpaid base and this paid amount.
       reading.paidPenaltyAmount = paymentRound(Number(reading.paidPenaltyAmount || 0) + item.penalty);
-      reading.penaltyAmount = paymentRound(penaltyDue - item.penalty);
       remaining = paymentRound(remaining - item.penalty);
     }
 
@@ -2356,7 +2374,7 @@ function getCustomerDueAsOf(customerId, asOfDate) {
     Number(r.billAmount || 0) - Number(r.maintenanceAmount || 0) - Number(r.paidAmount || 0)), 0);
   const maintenance = eligible.reduce((sum, r) => sum + Math.max(0,
     Number(r.maintenanceAmount || 0) - Number(r.paidMaintAmount || 0)), 0);
-  const penalty = eligible.reduce((sum, r) => sum + Math.max(0, Number(r.penaltyAmount || 0)), 0);
+  const penalty = eligible.reduce((sum, r) => sum + getReadingPenaltyDueAsOf(r, asOfDate), 0);
   return {
     opening: paymentRound(opening),
     water: paymentRound(water),
@@ -4252,7 +4270,7 @@ function getAccountingJournal(){
     });
   }
   (st.readings||[]).forEach(r=>{
-    const total=Number(r.billAmount||0), maint=Math.min(total,Number(r.maintenanceAmount||0)), water=Math.max(0,total-maint), penalty=Math.max(0,Number(r.penaltyAmount||0));
+    const total=Number(r.billAmount||0), maint=Math.min(total,Number(r.maintenanceAmount||0)), water=Math.max(0,total-maint), penalty=Math.max(0,Number(r.penaltyAmount||0)+Number(r.paidPenaltyAmount||0));
     const amount=water+maint+penalty;
     if(amount>0){
       const lines=[{accountId:"1101",debit:accountingMoney(amount),credit:0}];
@@ -4467,14 +4485,18 @@ function generateReportHTML(tab) {
       // मिति अनुसार रिडिङ क्रम मिलाउने
       rds.sort((a, b) => String(a.entryDate || "").localeCompare(String(b.entryDate || "")));
 
-      // एउटै रसिद दोहोरिएर अर्को महिनामा नदेखियोस्
-      const usedPayIds = new Set();
+      // New receipts are linked to the exact reading(s) they paid. Legacy
+      // receipts without allocations retain the old month-based fallback until
+      // the user runs the safe 'हिसाब मिलाउनुहोस्' action.
+      const usedLegacyPayIds = new Set();
 
       rds.forEach((r) => {
         const units = Number(r.units || 0);
         const maint = Number(r.maintenanceAmount || 0);
         const billOnly = Math.max(0, Number(r.billAmount || 0) - maint);
-        const pen = Number(r.penaltyAmount || 0);
+        // Show gross assessed penalty in the report (outstanding + already paid),
+        // while collection screens continue to use penaltyAmount as remaining due.
+        const pen = paymentRound(Number(r.penaltyAmount || 0) + Number(r.paidPenaltyAmount || 0));
 
         const tRule = getActiveTariffRule(r.entryDate || st.activeBSDate);
         const minUnit = Number(tRule.minUnits || 6);
@@ -4493,24 +4515,20 @@ function generateReportHTML(tab) {
         // Single payment मा p.month मिति हुन सक्छ, त्यस अवस्थामा वास्तविक p.date प्रयोग हुन्छ।
         const matchingPays = payments
           .filter(p => {
-            if (p.id !== undefined && usedPayIds.has(p.id)) return false;
-
+            const allocations = p.allocations && Array.isArray(p.allocations.readings)
+              ? p.allocations.readings : null;
+            if (allocations) {
+              return allocations.some(item => String(item.readingId) === String(r.id));
+            }
+            if (p.id !== undefined && usedLegacyPayIds.has(p.id)) return false;
             const pMonth = String(p.month || "").trim();
             const pDateMonth = String(p.date || "").slice(0, 7);
-
             const pMonthIsDate = /^\d{4}-\d{2}-\d{2}/.test(pMonth);
-            const monthNameMatch = pMonth && !pMonthIsDate &&
-              pMonth === readingMonthName;
-            const paymentDateMatch = readingYearMonth &&
-              pDateMonth === readingYearMonth;
-
+            const monthNameMatch = pMonth && !pMonthIsDate && pMonth === readingMonthName;
+            const paymentDateMatch = readingYearMonth && pDateMonth === readingYearMonth;
             return monthNameMatch || paymentDateMatch;
           })
           .sort((a, b) => String(a.date || "").localeCompare(String(b.date || "")));
-
-        matchingPays.forEach(p => {
-          if (p.id !== undefined) usedPayIds.add(p.id);
-        });
 
         // Reading Row: यस महिनाको बिल पहिले बाँकीमा जोड्ने
         runningDue += totalRowAmt;
@@ -4542,7 +4560,13 @@ function generateReportHTML(tab) {
 
         // जति पटक भुक्तानी भएको छ, त्यति नै छुट्टाछुट्टै मिति/रकम/रसिद Row
         matchingPays.forEach(pay => {
-          const thisPaid = Number(pay.totalPaid || 0);
+          const allocation = pay.allocations && Array.isArray(pay.allocations.readings)
+            ? pay.allocations.readings.find(item => String(item.readingId) === String(r.id))
+            : null;
+          const thisPaid = allocation
+            ? paymentRound(Number(allocation.water || 0) + Number(allocation.maintenance || 0) + Number(allocation.penalty || 0))
+            : Number(pay.totalPaid || 0);
+          if (!allocation && pay.id !== undefined) usedLegacyPayIds.add(pay.id);
           if (thisPaid <= 0) return;
 
           runningDue = Math.max(0, Math.round((runningDue - thisPaid) * 100) / 100);
