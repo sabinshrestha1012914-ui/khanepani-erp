@@ -1843,7 +1843,7 @@ function sendNextWhatsappNow(continueLoop = false) {
 }
 
 // ============================================================================
-// 8. AMOUNT ENTRY & PRINTABLE RECEIPT (Fully Updated with Flexible Reconcile, Delete & Modify)
+// 8. AMOUNT ENTRY & PRINTABLE RECEIPT (Complete & Fully Updated Module)
 // ============================================================================
 let amountEntryMode = "single";
 let selectedSingleCustId = "";
@@ -2570,26 +2570,65 @@ function reconcileLegacyPaymentAllocation(payId) {
 
 function reverseExactPayment(payment) {
   const st = window.ERP_STATE;
-  if (!payment.allocations || !Array.isArray(payment.allocations.readings)) {
-    throw new Error('यो पुरानो रसिदमा कुन महिनाको रकम चुक्ता भएको थियो भन्ने Allocation सुरक्षित छैन।');
+  
+  if (payment.allocations && Array.isArray(payment.allocations.readings)) {
+    const allocatedItems = payment.allocations.readings || [];
+    const matchedReadings = allocatedItems.map(item => ({
+      item,
+      reading: st.readings.find(r => r.customerId === payment.customerId && String(r.id) === String(item.readingId))
+    }));
+
+    const customer = st.customers.find(c => c.id === payment.customerId);
+    if (customer) {
+      customer.openingDue = paymentRound(Number(customer.openingDue || 0) + Number(payment.allocations.opening || 0));
+      const unusedAdvance = Number(payment.allocations.advanceRemaining ?? payment.allocations.advance ?? 0);
+      customer.advanceBalance = paymentRound(Math.max(0, Number(customer.advanceBalance || 0) - unusedAdvance));
+    }
+
+    matchedReadings.forEach(({ item, reading }) => {
+      if (!reading) return;
+      reading.paidAmount = paymentRound(Math.max(0, Number(reading.paidAmount || 0) - Number(item.water || 0)));
+      reading.paidMaintAmount = paymentRound(Math.max(0, Number(reading.paidMaintAmount || 0) - Number(item.maintenance || 0)));
+      reading.paidPenaltyAmount = paymentRound(Math.max(0, Number(reading.paidPenaltyAmount || 0) - Number(item.penalty || 0)));
+      if (item.penalty > 0) {
+        reading.penaltyAmount = paymentRound(Number(reading.penaltyAmount || 0) + Number(item.penalty || 0));
+      }
+    });
+  } else {
+    const readings = st.readings.filter(r => r.customerId === payment.customerId);
+    let refundWater = Number(payment.billPaid || payment.totalPaid || 0);
+    let refundPenalty = Number(payment.penaltyPaid || 0);
+    let refundMaint = Number(payment.maintPaid || 0);
+    let refundOpening = Number(payment.openingPaid || 0);
+
+    const customer = st.customers.find(c => c.id === payment.customerId);
+    if (customer && refundOpening > 0) {
+      customer.openingDue = paymentRound(Number(customer.openingDue || 0) + refundOpening);
+    }
+
+    for (const r of readings) {
+      if (refundWater <= 0 && refundPenalty <= 0 && refundMaint <= 0) break;
+
+      if (refundPenalty > 0) {
+        let pRev = Math.min(Number(r.paidPenaltyAmount || 0), refundPenalty);
+        r.paidPenaltyAmount = paymentRound(Number(r.paidPenaltyAmount || 0) - pRev);
+        r.penaltyAmount = paymentRound(Number(r.penaltyAmount || 0) + pRev);
+        refundPenalty = paymentRound(refundPenalty - pRev);
+      }
+
+      if (refundMaint > 0) {
+        let mRev = Math.min(Number(r.paidMaintAmount || 0), refundMaint);
+        r.paidMaintAmount = paymentRound(Number(r.paidMaintAmount || 0) - mRev);
+        refundMaint = paymentRound(refundMaint - mRev);
+      }
+
+      if (refundWater > 0) {
+        let wRev = Math.min(Number(r.paidAmount || 0), refundWater);
+        r.paidAmount = paymentRound(Number(r.paidAmount || 0) - wRev);
+        refundWater = paymentRound(refundWater - wRev);
+      }
+    }
   }
-  const allocatedItems = payment.allocations.readings || [];
-  const matchedReadings = allocatedItems.map(item => ({
-    item,
-    reading: st.readings.find(r => r.customerId === payment.customerId && String(r.id) === String(item.readingId))
-  }));
-  const customer = st.customers.find(c => c.id === payment.customerId);
-  if (customer) {
-    customer.openingDue = paymentRound(Number(customer.openingDue || 0) + Number(payment.allocations.opening || 0));
-    const unusedAdvance = Number(payment.allocations.advanceRemaining ?? payment.allocations.advance ?? 0);
-    customer.advanceBalance = paymentRound(Math.max(0, Number(customer.advanceBalance || 0) - unusedAdvance));
-  }
-  matchedReadings.forEach(({ item, reading }) => {
-    if (!reading) return;
-    reading.paidAmount = paymentRound(Math.max(0, Number(reading.paidAmount || 0) - Number(item.water || 0)));
-    reading.paidMaintAmount = paymentRound(Math.max(0, Number(reading.paidMaintAmount || 0) - Number(item.maintenance || 0)));
-    reading.paidPenaltyAmount = paymentRound(Math.max(0, Number(reading.paidPenaltyAmount || 0) - Number(item.penalty || 0)));
-  });
 }
 
 function createCustomerPayment(customerId, date, amount, mode) {
@@ -2678,9 +2717,10 @@ function modifyPaymentRecord(payId) {
 
   if (!confirm(`रसिद ${payment.receiptNo} संशोधनका लागि हटाउने?`)) return;
 
-  if (payment.allocations && Array.isArray(payment.allocations.readings)) {
-    try { reverseExactPayment(payment); }
-    catch (error) { return showToast(error.message, 'error'); }
+  try {
+    reverseExactPayment(payment);
+  } catch (error) {
+    return showToast(error.message || 'भुक्तानी रिभर्स गर्दा त्रुटि भयो।', 'error');
   }
 
   st.payments.splice(index, 1);
@@ -2699,9 +2739,10 @@ function deletePaymentRecord(payId) {
 
   if (!confirm(`रसिद ${payment.receiptNo} (${fmtMoney(payment.totalPaid)}) लाई स्थायी रूपमा Delete गर्ने?`)) return;
 
-  if (payment.allocations && Array.isArray(payment.allocations.readings)) {
-    try { reverseExactPayment(payment); }
-    catch (error) { return showToast(error.message, 'error'); }
+  try {
+    reverseExactPayment(payment);
+  } catch (error) {
+    return showToast(error.message || 'भुक्तानी रिभर्स गर्दा त्रुटि भयो।', 'error');
   }
 
   st.payments.splice(index, 1);
