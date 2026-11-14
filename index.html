@@ -754,13 +754,12 @@ window.recalculateAllDynamicValues = function(showBanner = true) {
     const paidPenalty = Math.max(0, Number(rd.paidPenaltyAmount || 0));
     const pRule = getActivePenaltyRule(activeBS);
     const daysElapsed = diffDaysBS(rd.entryDate, activeBS);
-    const newlyAssessed = daysElapsed > Number(pRule.graceDays)
+    const newlyAssessed = (unpaidBase > 0 && daysElapsed > Number(pRule.graceDays))
       ? Math.round((unpaidBase * Number(pRule.penaltyPercent) / 100) * 100) / 100
       : 0;
-    // Keep the highest historical assessed amount. Paying the water principal must
-    // never erase a penalty that was already charged; payments reduce only the due.
-    const previousAssessed = Number(rd.penaltyAssessedAmount ?? (Number(rd.penaltyAmount || 0) + paidPenalty));
-    rd.penaltyAssessedAmount = Math.max(previousAssessed, newlyAssessed, paidPenalty);
+    // Dynamically apply or remove unpaid penalties when activeBSDate changes,
+    // while preserving any penalty that was already collected via a receipt.
+    rd.penaltyAssessedAmount = Math.max(newlyAssessed, paidPenalty);
     rd.penaltyAmount = Math.max(0, Math.round((rd.penaltyAssessedAmount - paidPenalty) * 100) / 100);
     const totalRemaining = unpaidBase + rd.penaltyAmount;
     rd.status = totalRemaining <= 0 ? "Paid" : ((getReadingPaidTotal(rd) > 0 || paidPenalty > 0) ? "Partial" : "Unpaid");
@@ -831,6 +830,7 @@ function applyGlobalDateChange() {
 
   window.ERP_STATE.activeBSDate = formatted;
   window.ERP_STATE.autoDateMode = false;
+  if (typeof selectedAmountEntryDate !== "undefined") selectedAmountEntryDate = "";
 
   window.recalculateAllDynamicValues(true);
   renderCurrentModule();
@@ -843,6 +843,7 @@ function resetToAutoTodayBS() {
 
   window.ERP_STATE.activeBSDate = autoBS;
   window.ERP_STATE.autoDateMode = true;
+  if (typeof selectedAmountEntryDate !== "undefined") selectedAmountEntryDate = "";
 
   window.recalculateAllDynamicValues(true);
   renderCurrentModule();
@@ -1849,6 +1850,7 @@ let amountEntryMode = "single";
 let selectedSingleCustId = "";
 let statementStartDate = "";
 let statementEndDate = "";
+let selectedAmountEntryDate = "";
 
 function renderAmountEntryModule() {
   const st = window.ERP_STATE;
@@ -1861,7 +1863,10 @@ function renderAmountEntryModule() {
   }
   selectedCust = selectedCust || { id: "", name: "", openingDue: 0 };
 
-  const selectedDue = getCustomerCurrentDue(selectedSingleCustId) || { opening: 0, water: 0, maintenance: 0, penalty: 0, total: 0, advanceBalance: 0 };
+  const receiptDateValue = selectedAmountEntryDate || st.activeBSDate;
+  const selectedDue = (selectedAmountEntryDate && selectedAmountEntryDate !== st.activeBSDate)
+    ? (getCustomerDueAsOf(selectedSingleCustId, receiptDateValue) || { opening: 0, water: 0, maintenance: 0, penalty: 0, total: 0, advanceBalance: 0 })
+    : (getCustomerCurrentDue(selectedSingleCustId) || { opening: 0, water: 0, maintenance: 0, penalty: 0, total: 0, advanceBalance: 0 });
   const custOpeningDue = selectedDue.opening;
   const dueBase = selectedDue.water;
   const dueMaint = selectedDue.maintenance;
@@ -1894,7 +1899,7 @@ function renderAmountEntryModule() {
             </div>
             <div>
               <label class="font-semibold text-slate-600 block mb-1">रसिद मिति (Auto BS)</label>
-              <input type="text" id="amt-date" value="${st.activeBSDate}" class="w-full bg-teal-50 border border-teal-300 rounded-xl px-3 py-2 font-bold">
+              <input type="text" id="amt-date" value="${receiptDateValue}" onchange="selectedAmountEntryDate=this.value.trim(); renderCurrentModule();" class="w-full bg-teal-50 border border-teal-300 rounded-xl px-3 py-2 font-bold">
             </div>
             <div>
               <label class="font-semibold text-slate-600 block mb-1">ग्राहक छान्नुहोस् *</label>
@@ -2489,6 +2494,18 @@ function applyCustomerAdvanceToReadings(customerId) {
   return totalApplied;
 }
 
+function getReadingPenaltyAsOf(reading, asOfDate) {
+  const unpaidBase = getReadingRemaining(reading);
+  const paidPenalty = Math.max(0, Number(reading.paidPenaltyAmount || 0));
+  if (unpaidBase <= 0) return 0;
+  const pRule = getActivePenaltyRule(asOfDate);
+  const daysElapsed = diffDaysBS(reading.entryDate, asOfDate);
+  const assessed = daysElapsed > Number(pRule.graceDays)
+    ? Math.round((unpaidBase * Number(pRule.penaltyPercent) / 100) * 100) / 100
+    : 0;
+  return Math.max(0, Math.round((Math.max(assessed, paidPenalty) - paidPenalty) * 100) / 100);
+}
+
 function getCustomerDueAsOf(customerId, asOfDate) {
   const st = window.ERP_STATE;
   const customer = st.customers.find(c => c.id === customerId);
@@ -2503,18 +2520,35 @@ function getCustomerDueAsOf(customerId, asOfDate) {
       return true;
     }
   });
-  const opening = Math.max(0, Number(customer.openingDue || 0));
-  const water = eligible.reduce((sum, r) => sum + Math.max(0,
+  let opening = Math.max(0, Number(customer.openingDue || 0));
+  let water = eligible.reduce((sum, r) => sum + Math.max(0,
     Number(r.billAmount || r.netBillAmount || 0) - Number(r.maintenanceAmount || 0) - Number(r.paidAmount || 0)), 0);
-  const maintenance = eligible.reduce((sum, r) => sum + Math.max(0,
+  let maintenance = eligible.reduce((sum, r) => sum + Math.max(0,
     Number(r.maintenanceAmount || 0) - Number(r.paidMaintAmount || 0)), 0);
-  const penalty = eligible.reduce((sum, r) => sum + Math.max(0, Number(r.penaltyAmount || 0)), 0);
+  let penalty = eligible.reduce((sum, r) => sum + getReadingPenaltyAsOf(r, asOfDate), 0);
+
+  const advanceBalance = Math.max(0, Number(customer.advanceBalance || 0));
+  let credit = advanceBalance;
+  const applyCredit = value => {
+    const applied = paymentRound(Math.min(value, credit));
+    credit = paymentRound(credit - applied);
+    return paymentRound(value - applied);
+  };
+  opening = applyCredit(opening);
+  penalty = applyCredit(penalty);
+  maintenance = applyCredit(maintenance);
+  water = applyCredit(water);
+
+  const total = paymentRound(opening + water + maintenance + penalty);
   return {
     opening: paymentRound(opening),
     water: paymentRound(water),
     maintenance: paymentRound(maintenance),
     penalty: paymentRound(penalty),
-    total: paymentRound(opening + water + maintenance + penalty)
+    advanceBalance,
+    advanceApplied: paymentRound(advanceBalance - credit),
+    total,
+    grossTotal: paymentRound(opening + water + maintenance + penalty + advanceBalance - credit)
   };
 }
 
@@ -2804,7 +2838,32 @@ function createCustomerPayment(customerId, date, amount, mode) {
   const due = getCustomerDueAsOf(customerId, normalizedDate);
   if (!due) throw new Error('ग्राहक फेला परेन।');
   if (paid - due.total > 0.009) throw new Error(`बुझाएको रकम रसिद मितिसम्मको बाँकी ${fmtMoney(due.total)} भन्दा बढी भयो।`);
-  const allocations = allocateCustomerPayment(customerId, paid, normalizedDate);
+
+  // Temporarily sync each eligible reading's penalty to normalizedDate (receipt date)
+  // so backdated receipts do not wrongly charge a future activeBSDate penalty.
+  const custReadings = st.readings.filter(r => r.customerId === customerId);
+  const prevPenalties = custReadings.map(r => ({
+    r,
+    penaltyAmount: r.penaltyAmount,
+    penaltyAssessedAmount: r.penaltyAssessedAmount
+  }));
+  let allocations;
+  try {
+    custReadings.forEach(r => {
+      const paidPenalty = Math.max(0, Number(r.paidPenaltyAmount || 0));
+      const penAsOf = getReadingPenaltyAsOf(r, normalizedDate);
+      r.penaltyAmount = penAsOf;
+      r.penaltyAssessedAmount = paymentRound(paidPenalty + penAsOf);
+    });
+    allocations = allocateCustomerPayment(customerId, paid, normalizedDate);
+  } catch (err) {
+    prevPenalties.forEach(s => {
+      s.r.penaltyAmount = s.penaltyAmount;
+      s.r.penaltyAssessedAmount = s.penaltyAssessedAmount;
+    });
+    throw err;
+  }
+
   const year = parsedDate.y;
   const seq = Number(st.settings.receiptCounter || 1);
   const receiptNo = `REC-${year}-${seq}`;
