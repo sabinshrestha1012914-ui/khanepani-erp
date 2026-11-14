@@ -1417,7 +1417,7 @@ function filterKYCTable(q) {
 }
 
 // ============================================================================
-// 7. UNIT ENTRY, ANTI-BLOCK BULK WHATSAPP & READING MODIFY/DELETE MODULE
+// 7. UNIT ENTRY, ANTI-BLOCK BULK WHATSAPP & READING MODIFY MODULE
 // ============================================================================
 let selectedUnitMonth = "कार्तिक";
 
@@ -1505,8 +1505,8 @@ function renderUnitEntryModule() {
                   <td class="p-3 text-center flex items-center justify-center gap-1.5">
                     ${existing
                       ? `<span class="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-teal-100 text-teal-800">सुरक्षित</span>
-                         <button onclick="deleteReadingRecord('${existing.id}')" title="यो रिडिङ हटाउनुहोस्" class="p-1 bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 rounded-lg cursor-pointer">
-                           <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+                         <button onclick="modifyReadingRecord('${existing.id}')" title="यो रिडिङ सच्याउनुहोस्" class="px-2 py-1 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 rounded-lg font-semibold cursor-pointer flex items-center gap-1 text-[11px]">
+                           <i data-lucide="edit-3" class="w-3 h-3"></i> Modify
                          </button>`
                       : `<span class="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-slate-100 text-slate-500">बाँकी</span>`
                     }
@@ -1628,33 +1628,48 @@ function saveBulkReadings() {
   }
 }
 
-// रिडिङ रेकर्ड Delete वा Modify गर्ने फंक्सन
-function deleteReadingRecord(readingId) {
+// रिडिङ Modify गर्ने फंक्सन
+function modifyReadingRecord(readingId) {
   const st = window.ERP_STATE;
-  const idx = st.readings.findIndex(r => r.id === readingId);
-  if (idx < 0) return;
+  const reading = st.readings.find(r => r.id === readingId);
+  if (!reading) return showToast("रिडिङ रेकर्ड फेला परेन।", "error");
 
-  const reading = st.readings[idx];
-
-  // यदि यो महिनाको बिलबापत पैसा तिराइसकेको छ भने सुरक्षाको लागि रोक्ने
   if (Number(reading.paidAmount || 0) > 0 || Number(reading.paidMaintAmount || 0) > 0) {
     return showToast("यो रिडिङको महसुल वापत भुक्तानी भइसकेको हुनाले पहिले अमाउन्ट इन्ट्री (Payment) मा गएर उक्त रसिद Modify/Delete गर्नुहोस्।", "error");
   }
 
-  if (!confirm(`के तपाईं ग्राहक (${reading.customerId}) को ${reading.month} महिनाको यो युनिट इन्ट्री हटाउन चाहनुहुन्छ?`)) {
-    return;
+  const cust = st.customers.find(c => c.id === reading.customerId) || { name: "" };
+
+  let newCurrStr = prompt(`ग्राहक: ${cust.name} (${reading.customerId})\nसाविक अङ्क (Prev): ${reading.prevReading}\nहालको रिडिङ (Current Reading) सच्याउनुहोस्:`, reading.currReading);
+  if (newCurrStr === null) return;
+
+  let newCurr = Number(newCurrStr);
+  if (isNaN(newCurr) || newCurr < Number(reading.prevReading)) {
+    return showToast("अमान्य रिडिङ! हालको अङ्क साविक अङ्कभन्दा कम हुनु हुँदैन।", "error");
   }
 
-  // ग्राहकको lastReading लाई साविकको (prevReading मा) फर्काउने
-  const cust = st.customers.find(c => c.id === reading.customerId);
-  if (cust && cust.lastReading === reading.currReading) {
-    cust.lastReading = reading.prevReading;
+  let newMaintStr = prompt(`मर्मत शुल्क (Maintenance Amount) सच्याउनुहोस्:`, reading.maintenanceAmount || 0);
+  if (newMaintStr === null) return;
+  let newMaint = Number(newMaintStr) || 0;
+
+  let units = newCurr - Number(reading.prevReading);
+  let calc = calculateWaterBill(units, reading.entryDate || st.activeBSDate);
+  let totalBillWithMaint = calc.totalBill + newMaint;
+
+  reading.currReading = newCurr;
+  reading.units = units;
+  reading.baseAmount = calc.baseAmount;
+  reading.extraAmount = calc.extraAmount;
+  reading.maintenanceAmount = newMaint;
+  reading.billAmount = totalBillWithMaint;
+
+  if (cust && newCurr > cust.lastReading) {
+    cust.lastReading = newCurr;
   }
 
-  st.readings.splice(idx, 1);
   window.recalculateAllDynamicValues(false);
   renderCurrentModule();
-  showToast("युनिट इन्ट्री सफलतापूर्वक हटाइयो!", "info");
+  showToast(`ग्राहक (${reading.customerId}) को रिडिङ सफलतापूर्वक Modify भयो!`, "success");
 }
 
 function buildCustomerHistoryPrintableHTML(customer, custReadings) {
