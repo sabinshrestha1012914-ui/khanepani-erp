@@ -26,22 +26,81 @@
     ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
 
     @media print {
-      body * { visibility: hidden; }
-      #print-area, #print-area * { visibility: visible; }
-      #print-area {
-        position: absolute;
-        left: 0;
-        top: 0;
-        width: 100%;
-        background: white !important;
+      @page { size: A4 portrait; margin: 8mm; }
+      html, body {
+        background: #ffffff !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        height: auto !important;
+        overflow: visible !important;
+      }
+      body.printing-from-modal > *:not(#print-modal) {
+        display: none !important;
+      }
+      body.printing-from-modal #print-modal {
+        position: static !important;
+        inset: auto !important;
+        display: block !important;
+        width: 100% !important;
+        height: auto !important;
+        background: #ffffff !important;
         padding: 0 !important;
         margin: 0 !important;
+        backdrop-filter: none !important;
+      }
+      body.printing-from-modal #print-modal > div,
+      body.printing-from-modal #print-modal .overflow-y-auto,
+      body.printing-from-modal #print-area {
+        position: static !important;
+        display: block !important;
+        width: 100% !important;
+        max-width: none !important;
+        height: auto !important;
+        max-height: none !important;
+        overflow: visible !important;
         box-shadow: none !important;
+        border: none !important;
+        border-radius: 0 !important;
+        padding: 0 !important;
+        margin: 0 !important;
+        background: #ffffff !important;
+      }
+      body:not(.printing-from-modal) #sidebar,
+      body:not(.printing-from-modal) #sidebar-backdrop,
+      body:not(.printing-from-modal) header,
+      body:not(.printing-from-modal) #recalc-banner,
+      body:not(.printing-from-modal) #toast-box {
+        display: none !important;
+      }
+      body:not(.printing-from-modal) main,
+      body:not(.printing-from-modal) #app-shell,
+      body:not(.printing-from-modal) #module-container {
+        position: static !important;
+        height: auto !important;
+        overflow: visible !important;
+        margin: 0 !important;
+        padding: 0 !important;
       }
       .no-print { display: none !important; }
-      @page { size: A4; margin: 12mm; }
-      table { page-break-inside: auto; }
-      tr { page-break-inside: avoid; page-break-after: auto; }
+      table { page-break-inside: auto; border-collapse: collapse; }
+      thead { display: table-header-group; }
+      tr { break-inside: avoid; page-break-inside: avoid; }
+      .field-sheet-onepage {
+        break-inside: avoid;
+        page-break-inside: avoid;
+      }
+      .bulk-slip-page {
+        break-after: page;
+        page-break-after: always;
+      }
+      .bulk-slip-page:last-child {
+        break-after: auto;
+        page-break-after: auto;
+      }
+      .bulk-slip-card {
+        break-inside: avoid;
+        page-break-inside: avoid;
+      }
     }
   </style>
 </head>
@@ -3368,16 +3427,15 @@ function renderReadingPrintModule() {
           <table class="w-full text-xs border-collapse">
             <thead>
               <tr class="bg-slate-100 border-b border-slate-300">
-                <th class="border-r border-slate-300 p-2.5 text-left">क्र.सं.</th>
-                <th class="border-r border-slate-300 p-2.5 text-left">ग्राहक आइडी</th>
-                <th class="border-r border-slate-300 p-2.5 text-left">ग्राहकको नाम</th>
-                <th class="border-r border-slate-300 p-2.5 text-left">ठेगाना</th>
-                <th class="border-r border-slate-300 p-2.5 text-right">साविक अङ्क (Auto)</th>
-                <th class="border-r border-slate-300 p-2.5 text-center w-24">हालको अङ्क</th>
-                <th class="border-r border-slate-300 p-2.5 text-center w-20">खपत युनिट</th>
-                <th class="border-r border-slate-300 p-2.5 text-right w-24">बिल रकम</th>
-                <th class="border-r border-slate-300 p-2.5 text-right w-24">अग्रिम (-)</th>
-                <th class="p-2.5 text-right w-28">तिर्नुपर्ने (रू.)</th>
+                <th class="border-r border-slate-300 p-2 text-center w-12">क्र.सं.</th>
+                <th class="border-r border-slate-300 p-2 text-left w-24">ग्राहक आइडी</th>
+                <th class="border-r border-slate-300 p-2 text-left">ग्राहकको नाम</th>
+                <th class="border-r border-slate-300 p-2 text-right w-24">साविक अङ्क</th>
+                <th class="border-r border-slate-300 p-2 text-center w-24">हालको अङ्क</th>
+                <th class="border-r border-slate-300 p-2 text-center w-20">खपत युनिट</th>
+                <th class="border-r border-slate-300 p-2 text-right w-24">बिल रकम</th>
+                <th class="border-r border-slate-300 p-2 text-right w-24">अग्रिम (-)</th>
+                <th class="p-2 text-right w-28">तिर्नुपर्ने (रू.)</th>
               </tr>
             </thead>
             <tbody class="divide-y divide-slate-200">
@@ -3389,16 +3447,15 @@ function renderReadingPrintModule() {
                 const netPayable = rd ? (getReadingRemaining(rd) + Number(rd.penaltyAmount || 0)) : null;
                 return `
                 <tr>
-                  <td class="border-r border-slate-300 p-2.5">${i + 1}</td>
-                  <td class="border-r border-slate-300 p-2.5 font-bold">${c.id}</td>
-                  <td class="border-r border-slate-300 p-2.5 font-semibold">${c.name}</td>
-                  <td class="border-r border-slate-300 p-2.5">${c.address}</td>
-                  <td class="border-r border-slate-300 p-2.5 text-right font-mono font-bold">${rd ? rd.prevReading : c.lastReading}</td>
-                  <td class="border-r border-slate-300 p-2.5 text-right font-mono">${rd ? rd.currReading : ''}</td>
-                  <td class="border-r border-slate-300 p-2.5 text-right">${rd ? rd.units : ''}</td>
-                  <td class="border-r border-slate-300 p-2.5 text-right">${rd ? fmtMoney(rd.billAmount) : ''}</td>
-                  <td class="border-r border-slate-300 p-2.5 text-right font-bold text-emerald-700">${advShown > 0 ? `-${fmtMoney(advShown)}` : '-'}</td>
-                  <td class="p-2.5 text-right font-bold ${netPayable !== null && netPayable > 0 ? 'text-rose-700' : 'text-emerald-700'}">${netPayable !== null ? fmtMoney(netPayable) : ''}</td>
+                  <td class="border-r border-slate-300 p-2 text-center">${i + 1}</td>
+                  <td class="border-r border-slate-300 p-2 font-bold">${c.id}</td>
+                  <td class="border-r border-slate-300 p-2 font-semibold">${c.name}</td>
+                  <td class="border-r border-slate-300 p-2 text-right font-mono font-bold">${rd ? rd.prevReading : c.lastReading}</td>
+                  <td class="border-r border-slate-300 p-2 text-right font-mono">${rd ? rd.currReading : ''}</td>
+                  <td class="border-r border-slate-300 p-2 text-right">${rd ? rd.units : ''}</td>
+                  <td class="border-r border-slate-300 p-2 text-right">${rd ? fmtMoney(rd.billAmount) : ''}</td>
+                  <td class="border-r border-slate-300 p-2 text-right font-bold text-emerald-700">${advShown > 0 ? `-${fmtMoney(advShown)}` : '-'}</td>
+                  <td class="p-2 text-right font-bold ${netPayable !== null && netPayable > 0 ? 'text-rose-700' : 'text-emerald-700'}">${netPayable !== null ? fmtMoney(netPayable) : ''}</td>
                 </tr>
               `;
               }).join("")}
@@ -3413,26 +3470,50 @@ function renderReadingPrintModule() {
 function openA4FieldReadingSheet() {
   const st = window.ERP_STATE;
   const s = st.settings;
+  const n = st.customers.length;
+  // Row count अनुसार 1 A4 पृष्ठमै अटाउने गरी font-size, padding र zoom स्वतः समायोजन गर्ने
+  let fontSizePx = 10.5;
+  let cellPad = "3.5px 5px";
+  let lineHeight = "1.2";
+  let zoomScale = 1;
+  if (n > 26 && n <= 38) {
+    fontSizePx = 9.5;
+    cellPad = "2.2px 4px";
+    lineHeight = "1.15";
+  } else if (n > 38 && n <= 52) {
+    fontSizePx = 9;
+    cellPad = "1.4px 4px";
+    lineHeight = "1.1";
+  } else if (n > 52) {
+    fontSizePx = 8.5;
+    cellPad = "1px 3px";
+    lineHeight = "1.05";
+    const estHeight = 110 + n * 14;
+    if (estHeight > 940) {
+      zoomScale = Math.max(0.5, Math.floor((940 / estHeight) * 100) / 100);
+    }
+  }
+
+  const tdStyle = `padding:${cellPad};line-height:${lineHeight};`;
   const html = `
-    <div class="space-y-4">
-      <div class="text-center border-b-2 border-slate-800 pb-3">
-        <h2 class="text-lg font-bold">${s.committeeName}</h2>
-        <p class="text-xs">${s.address} | फोन: ${s.phone}</p>
-        <div class="mt-1 font-bold text-sm underline">फिल्ड मिटर रिडिङ लगत सिट - ${printReadingMonth} महिना (${parseBS(st.activeBSDate).y})</div>
+    <div class="field-sheet-onepage" style="font-size:${fontSizePx}px;${zoomScale < 1 ? `zoom:${zoomScale};` : ''}">
+      <div class="text-center border-b-2 border-slate-800 pb-1.5 mb-2">
+        <h2 class="text-base font-bold leading-tight">${s.committeeName}</h2>
+        <p class="text-[11px] leading-tight">${s.address} | फोन: ${s.phone}</p>
+        <div class="mt-0.5 font-bold text-xs underline">फिल्ड मिटर रिडिङ लगत सिट - ${printReadingMonth} महिना (${parseBS(st.activeBSDate).y})</div>
       </div>
-      <table class="w-full text-xs border-collapse border border-slate-800">
+      <table class="w-full border-collapse border border-slate-800" style="font-size:${fontSizePx}px;">
         <thead>
           <tr class="bg-slate-100">
-            <th class="border border-slate-800 p-2">क्र.सं.</th>
-            <th class="border border-slate-800 p-2">आइडी</th>
-            <th class="border border-slate-800 p-2 text-left">ग्राहकको नाम</th>
-            <th class="border border-slate-800 p-2 text-left">ठेगाना</th>
-            <th class="border border-slate-800 p-2 text-right">साविक अङ्क</th>
-            <th class="border border-slate-800 p-2 w-24">हालको अङ्क</th>
-            <th class="border border-slate-800 p-2 w-20">युनिट</th>
-            <th class="border border-slate-800 p-2 w-24 text-right">बिल रकम</th>
-            <th class="border border-slate-800 p-2 w-24 text-right">अग्रिम (-)</th>
-            <th class="border border-slate-800 p-2 w-24 text-right">तिर्नुपर्ने</th>
+            <th class="border border-slate-800 text-center whitespace-nowrap" style="${tdStyle}width:28px;">क्र.सं.</th>
+            <th class="border border-slate-800 text-center whitespace-nowrap" style="${tdStyle}width:56px;">आइडी</th>
+            <th class="border border-slate-800 text-left" style="${tdStyle}">ग्राहकको नाम</th>
+            <th class="border border-slate-800 text-right whitespace-nowrap" style="${tdStyle}width:52px;">साविक</th>
+            <th class="border border-slate-800 text-center whitespace-nowrap" style="${tdStyle}width:64px;">हालको अङ्क</th>
+            <th class="border border-slate-800 text-center whitespace-nowrap" style="${tdStyle}width:44px;">युनिट</th>
+            <th class="border border-slate-800 text-right whitespace-nowrap" style="${tdStyle}width:66px;">बिल रकम</th>
+            <th class="border border-slate-800 text-right whitespace-nowrap" style="${tdStyle}width:62px;">अग्रिम (-)</th>
+            <th class="border border-slate-800 text-right whitespace-nowrap" style="${tdStyle}width:70px;">तिर्नुपर्ने</th>
           </tr>
         </thead>
         <tbody>
@@ -3443,61 +3524,78 @@ function openA4FieldReadingSheet() {
             const netPayable = rd ? (getReadingRemaining(rd) + Number(rd.penaltyAmount || 0)) : null;
             return `
             <tr>
-              <td class="border border-slate-800 p-2 text-center">${idx + 1}</td>
-              <td class="border border-slate-800 p-2 font-bold text-center">${c.id}</td>
-              <td class="border border-slate-800 p-2 font-semibold">${c.name}</td>
-              <td class="border border-slate-800 p-2">${c.address}</td>
-              <td class="border border-slate-800 p-2 text-right font-bold">${rd ? rd.prevReading : c.lastReading}</td>
-              <td class="border border-slate-800 p-2 h-8 text-right">${rd ? rd.currReading : ''}</td>
-              <td class="border border-slate-800 p-2 text-right">${rd ? rd.units : ''}</td>
-              <td class="border border-slate-800 p-2 text-right">${rd ? fmtMoney(rd.billAmount) : ''}</td>
-              <td class="border border-slate-800 p-2 text-right font-bold text-emerald-700">${advShown > 0 ? `-${fmtMoney(advShown)}` : '-'}</td>
-              <td class="border border-slate-800 p-2 text-right font-bold">${netPayable !== null ? fmtMoney(netPayable) : ''}</td>
+              <td class="border border-slate-800 text-center tabular-nums whitespace-nowrap" style="${tdStyle}">${idx + 1}</td>
+              <td class="border border-slate-800 font-bold text-center whitespace-nowrap" style="${tdStyle}">${c.id}</td>
+              <td class="border border-slate-800 font-semibold whitespace-nowrap overflow-hidden" style="${tdStyle}">${c.name}</td>
+              <td class="border border-slate-800 text-right font-bold tabular-nums whitespace-nowrap" style="${tdStyle}">${rd ? rd.prevReading : c.lastReading}</td>
+              <td class="border border-slate-800 text-right tabular-nums whitespace-nowrap" style="${tdStyle}">${rd ? rd.currReading : ''}</td>
+              <td class="border border-slate-800 text-right tabular-nums whitespace-nowrap" style="${tdStyle}">${rd ? rd.units : ''}</td>
+              <td class="border border-slate-800 text-right tabular-nums whitespace-nowrap" style="${tdStyle}">${rd ? fmtMoney(rd.billAmount) : ''}</td>
+              <td class="border border-slate-800 text-right font-bold text-emerald-700 tabular-nums whitespace-nowrap" style="${tdStyle}">${advShown > 0 ? `-${fmtMoney(advShown)}` : '-'}</td>
+              <td class="border border-slate-800 text-right font-bold tabular-nums whitespace-nowrap" style="${tdStyle}">${netPayable !== null ? fmtMoney(netPayable) : ''}</td>
             </tr>
           `;
           }).join("")}
         </tbody>
       </table>
-      <div class="flex justify-between pt-8 text-xs">
+      <div class="flex justify-between pt-3 text-[11px]">
         <div>मिटर रिडरको सही: ___________________</div>
         <div>प्रमाणित गर्ने: ___________________</div>
       </div>
     </div>
   `;
-  openPrintModal(`A4 फिल्ड मिटर रिडिङ सिट - ${printReadingMonth}`, html);
+  openPrintModal(`A4 फिल्ड मिटर रिडिङ सिट - ${printReadingMonth} (१ पृष्ठ)`, html);
 }
 
 function openBulkCustomerReadingSlips() {
   const st = window.ERP_STATE;
   const s = st.settings;
-  const html = `
-    <div class="grid grid-cols-2 gap-4">
-      ${st.customers.map(c => {
-        const rd = st.readings.find(r => r.customerId === c.id && r.month === printReadingMonth);
-        const advApplied = rd ? getReadingAdvanceApplied(rd.id) : 0;
-        const custAdv = Number(c.advanceBalance || 0);
-        const advShown = rd ? advApplied : custAdv;
-        const netPayable = rd ? (getReadingRemaining(rd) + Number(rd.penaltyAmount || 0)) : null;
-        return `
-        <div class="border-2 border-dashed border-slate-600 p-3.5 rounded-lg text-xs space-y-1.5">
-          <div class="font-bold text-center border-b border-slate-400 pb-1">${s.committeeName}</div>
-          <div class="flex justify-between"><span><strong>महिना:</strong> ${printReadingMonth}</span><span><strong>आइडी:</strong> ${c.id}</span></div>
-          <div><strong>ग्राहकको नाम:</strong> ${c.name}</div>
-          <div><strong>ठेगाना:</strong> ${c.address}</div>
-          <div class="grid grid-cols-2 gap-2 pt-1 border-t border-slate-300">
-            <div><strong>साविक अङ्क:</strong> ${rd ? rd.prevReading : c.lastReading}</div>
-            <div><strong>हालको अङ्क:</strong> ${rd ? rd.currReading : '_________'}</div>
-            <div><strong>खपत युनिट:</strong> ${rd ? rd.units : '_________'}</div>
-            <div><strong>उठेको बिल:</strong> ${rd ? fmtMoney(rd.billAmount) : '_________'}</div>
-            <div><strong>अग्रिम (-):</strong> <span class="${advShown > 0 ? 'font-bold text-emerald-700' : ''}">${advShown > 0 ? `-${fmtMoney(advShown)}` : 'रु. 0.00'}</span></div>
-            <div><strong>खुद तिर्नुपर्ने:</strong> <span class="font-bold">${netPayable !== null ? fmtMoney(netPayable) : '_________'}</span></div>
-          </div>
-          <div class="text-[10px] text-right pt-2">रिडर सही: ____________</div>
+  const perPage = 8; // प्रति A4 पृष्ठमा ८ वटा बिल (२ स्तम्भ × ४ पङ्क्ति) नखप्टिने गरी
+  const totalPages = Math.max(1, Math.ceil(st.customers.length / perPage));
+  const pages = [];
+
+  for (let p = 0; p < st.customers.length; p += perPage) {
+    const chunk = st.customers.slice(p, p + perPage);
+    const pageNum = Math.floor(p / perPage) + 1;
+    pages.push(`
+      <div class="bulk-slip-page ${pageNum > 1 ? 'mt-4 pt-4 border-t-2 border-dotted border-slate-300 print:mt-0 print:pt-0 print:border-0' : ''}">
+        <div class="no-print text-[10px] font-semibold text-slate-500 mb-2 flex justify-between">
+          <span>A4 प्रिन्ट पृष्ठ ${pageNum} / ${totalPages}</span>
+          <span>प्रति पृष्ठ अधिकतम ${perPage} बिल (नखप्टिने लेआउट)</span>
         </div>
-      `;
-      }).join("")}
-    </div>
-  `;
+        <div class="grid grid-cols-2 gap-3">
+          ${chunk.map(c => {
+            const rd = st.readings.find(r => r.customerId === c.id && r.month === printReadingMonth);
+            const advApplied = rd ? getReadingAdvanceApplied(rd.id) : 0;
+            const custAdv = Number(c.advanceBalance || 0);
+            const advShown = rd ? advApplied : custAdv;
+            const netPayable = rd ? (getReadingRemaining(rd) + Number(rd.penaltyAmount || 0)) : null;
+            return `
+            <div class="bulk-slip-card border-2 border-dashed border-slate-600 p-3 rounded-lg text-[11px] leading-snug space-y-1 bg-white">
+              <div class="font-bold text-center border-b border-slate-400 pb-1 text-xs truncate">${s.committeeName}</div>
+              <div class="flex justify-between"><span><strong>महिना:</strong> ${printReadingMonth}</span><span><strong>आइडी:</strong> ${c.id}</span></div>
+              <div class="truncate"><strong>ग्राहकको नाम:</strong> ${c.name}</div>
+              <div class="text-[10px] text-slate-700 truncate"><strong>ठेगाना:</strong> ${c.address || '-'}</div>
+              <div class="grid grid-cols-2 gap-x-2 gap-y-0.5 pt-1 border-t border-slate-300">
+                <div><strong>साविक अङ्क:</strong> ${rd ? rd.prevReading : c.lastReading}</div>
+                <div><strong>हालको अङ्क:</strong> ${rd ? rd.currReading : '________'}</div>
+                <div><strong>खपत युनिट:</strong> ${rd ? rd.units : '________'}</div>
+                <div><strong>उठेको बिल:</strong> ${rd ? fmtMoney(rd.billAmount) : '________'}</div>
+                <div><strong>अग्रिम (-):</strong> <span class="${advShown > 0 ? 'font-bold text-emerald-700' : ''}">${advShown > 0 ? `-${fmtMoney(advShown)}` : 'रु. 0.00'}</span></div>
+                <div><strong>खुद तिर्नुपर्ने:</strong> <span class="font-bold">${netPayable !== null ? fmtMoney(netPayable) : '________'}</span></div>
+              </div>
+              <div class="text-[10px] text-right pt-1">रिडर सही: ____________</div>
+            </div>
+          `;
+          }).join("")}
+        </div>
+      </div>
+    `);
+  }
+
+  const html = pages.length > 0
+    ? pages.join("")
+    : `<div class="p-6 text-center text-xs text-slate-500">कुनै ग्राहक दर्ता छैन।</div>`;
   openPrintModal(`बल्क ग्राहक मिटर रिडिङ बिल - ${printReadingMonth}`, html);
 }
 
@@ -6400,12 +6498,14 @@ function openPrintModal(title, innerHtml) {
   document.getElementById("print-area").innerHTML = innerHtml;
   document.getElementById("print-modal").classList.remove("hidden");
   document.getElementById("print-modal").classList.add("flex");
+  document.body?.classList?.add("printing-from-modal");
   safeCreateIcons();
 }
 
 function closePrintModal() {
   document.getElementById("print-modal").classList.add("hidden");
   document.getElementById("print-modal").classList.remove("flex");
+  document.body?.classList?.remove("printing-from-modal");
 }
 
 window.addEventListener("DOMContentLoaded", () => {
