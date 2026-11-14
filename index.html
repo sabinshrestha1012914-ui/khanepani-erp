@@ -751,27 +751,27 @@ window.recalculateAllDynamicValues = function(showBanner = true) {
 
   window.ERP_STATE.readings.forEach(rd => {
     const unpaidBase = getReadingRemaining(rd);
-    if (unpaidBase <= 0) {
-      rd.penaltyAmount = 0;
-      rd.status = "Paid";
-      return;
-    }
-    rd.status = getReadingPaidTotal(rd) > 0 ? "Partial" : "Unpaid";
+    const paidPenalty = Math.max(0, Number(rd.paidPenaltyAmount || 0));
     const pRule = getActivePenaltyRule(activeBS);
     const daysElapsed = diffDaysBS(rd.entryDate, activeBS);
-    const assessedPenalty = daysElapsed > Number(pRule.graceDays)
+    const newlyAssessed = daysElapsed > Number(pRule.graceDays)
       ? Math.round((unpaidBase * Number(pRule.penaltyPercent) / 100) * 100) / 100
       : 0;
-    // paidPenaltyAmount survives recalculation; penaltyAmount always means remaining penalty.
-    rd.penaltyAmount = Math.max(0, Math.round((assessedPenalty - Number(rd.paidPenaltyAmount || 0)) * 100) / 100);
+    // Keep the highest historical assessed amount. Paying the water principal must
+    // never erase a penalty that was already charged; payments reduce only the due.
+    const previousAssessed = Number(rd.penaltyAssessedAmount ?? (Number(rd.penaltyAmount || 0) + paidPenalty));
+    rd.penaltyAssessedAmount = Math.max(previousAssessed, newlyAssessed, paidPenalty);
+    rd.penaltyAmount = Math.max(0, Math.round((rd.penaltyAssessedAmount - paidPenalty) * 100) / 100);
+    const totalRemaining = unpaidBase + rd.penaltyAmount;
+    rd.status = totalRemaining <= 0 ? "Paid" : ((getReadingPaidTotal(rd) > 0 || paidPenalty > 0) ? "Partial" : "Unpaid");
     totalPenalties += rd.penaltyAmount;
   });
 
   // Apply any unused customer advance to currently outstanding readings.
   window.ERP_STATE.customers.forEach(c => applyCustomerAdvanceToReadings(c.id));
   window.ERP_STATE.readings.forEach(rd => {
-    const remaining = getReadingRemaining(rd);
-    rd.status = remaining <= 0 ? "Paid" : (getReadingPaidTotal(rd) > 0 ? "Partial" : "Unpaid");
+    const remaining = getReadingRemaining(rd) + Number(rd.penaltyAmount || 0);
+    rd.status = remaining <= 0 ? "Paid" : ((getReadingPaidTotal(rd) > 0 || Number(rd.paidPenaltyAmount || 0) > 0) ? "Partial" : "Unpaid");
   });
   totalPenalties = window.ERP_STATE.readings.reduce((sum, rd) => sum + Number(rd.penaltyAmount || 0), 0);
 
@@ -2084,11 +2084,11 @@ function renderAmountEntryModule() {
                       <button onclick="printWaterReceipt('${p.id}')" class="px-2.5 py-1 bg-teal-50 hover:bg-teal-100 text-teal-800 border border-teal-200 rounded-lg font-semibold flex items-center gap-1 cursor-pointer">
                         <i data-lucide="printer" class="w-3.5 h-3.5"></i> प्रिन्ट
                       </button>
-                      ${p.allocations && Array.isArray(p.allocations.readings) ? '' : `
-                        <button onclick="reconcileLegacyPaymentAllocation('${p.id}')" class="px-2.5 py-1 bg-blue-50 hover:bg-blue-100 text-blue-800 border border-blue-200 rounded-lg font-semibold cursor-pointer">
-                          हिसाब मिलाउनुहोस्
+                      ${(!p.allocations || !Array.isArray(p.allocations.readings) || Number(p.allocations.advance || 0) > 0 || Number(p.allocations.advanceRemaining || 0) > 0 || Number(p.advancePaid || 0) > 0) ? `
+                        <button onclick="repairPaymentAllocation('${p.id}')" class="px-2.5 py-1 bg-blue-50 hover:bg-blue-100 text-blue-800 border border-blue-200 rounded-lg font-semibold cursor-pointer">
+                          ${p.allocations && Array.isArray(p.allocations.readings) ? 'गलत अग्रिम सच्याउनुहोस्' : 'हिसाब मिलाउनुहोस्'}
                         </button>
-                      `}
+                      ` : ''}
                       <button onclick="modifyPaymentRecord('${p.id}')" class="px-2.5 py-1 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 rounded-lg font-semibold cursor-pointer">
                         Modify
                       </button>
@@ -2518,10 +2518,12 @@ function reconcileLegacyPaymentAllocation(payId) {
   const due = getCustomerDueAsOf(payment.customerId, payment.date);
   if (!due || amount <= 0) return showToast("रसिदको रकम वा ग्राहक विवरण मान्य छैन।", "error");
   const dueAmount = paymentRound(due.total);
-  const advanceAmount = paymentRound(Math.max(0, amount - dueAmount));
+  if (amount - dueAmount > 0.009) {
+    return showToast(`रसिद मितिसम्मको बाँकी ${fmtMoney(dueAmount)} मात्र छ; रसिद ${fmtMoney(amount)} भएकाले स्वतः अग्रिम बनाइएन। Reading/जरिवाना मिति जाँच्नुहोस्।`, "warning");
+  }
 
   if (!confirm(
-    `रसिद ${payment.receiptNo} को जम्मा ${fmtMoney(amount)} रकम मिलाउने? ${fmtMoney(Math.min(amount, dueAmount))} पुरानो बाँकीमा समायोजन हुनेछ र ${fmtMoney(advanceAmount)} ग्राहकको अग्रिम खातामा रहनेछ। मूल रसिद नम्बर र भुक्तानी रकम परिवर्तन हुँदैन।`
+    `रसिद ${payment.receiptNo} को जम्मा ${fmtMoney(amount)} रकम ${payment.date} सम्मका वास्तविक पुरानो बाँकीमा मिलाउने? कुनै अग्रिम रकम बनाइने छैन। मूल रसिद नम्बर र भुक्तानी रकम परिवर्तन हुँदैन।`
   )) return;
 
   // Snapshot for rollback if allocation unexpectedly fails.
@@ -2535,17 +2537,18 @@ function reconcileLegacyPaymentAllocation(payId) {
       paidAmount: Number(r.paidAmount || 0),
       paidMaintAmount: Number(r.paidMaintAmount || 0),
       paidPenaltyAmount: Number(r.paidPenaltyAmount || 0),
-      penaltyAmount: Number(r.penaltyAmount || 0)
+      penaltyAmount: Number(r.penaltyAmount || 0),
+      penaltyAssessedAmount: Number(r.penaltyAssessedAmount || 0)
     }));
 
   try {
-    const allocations = allocateCustomerPayment(payment.customerId, amount, payment.date, true);
+    const allocations = allocateCustomerPayment(payment.customerId, amount, payment.date, false);
     payment.allocations = allocations;
     payment.openingPaid = paymentRound(allocations.opening);
     payment.billPaid = paymentRound(allocations.readings.reduce((s, x) => s + Number(x.water || 0), 0));
     payment.maintPaid = paymentRound(allocations.readings.reduce((s, x) => s + Number(x.maintenance || 0), 0));
     payment.penaltyPaid = paymentRound(allocations.readings.reduce((s, x) => s + Number(x.penalty || 0), 0));
-    payment.advancePaid = paymentRound(allocations.advance || 0);
+    payment.advancePaid = 0;
 
     window.recalculateAllDynamicValues(false);
     window.cloudSync?.save();
@@ -2563,9 +2566,76 @@ function reconcileLegacyPaymentAllocation(payId) {
       r.paidMaintAmount = snap.paidMaintAmount;
       r.paidPenaltyAmount = snap.paidPenaltyAmount;
       r.penaltyAmount = snap.penaltyAmount;
+      r.penaltyAssessedAmount = snap.penaltyAssessedAmount;
     });
     delete payment.allocations;
     return showToast(error.message || "पुरानो रसिद मिलाउन सकिएन; कुनै परिवर्तन राखिएको छैन।", "error");
+  }
+}
+
+function repairPaymentAllocation(payId) {
+  const st = window.ERP_STATE;
+  const payment = st.payments.find(p => p.id === payId);
+  if (!payment) return showToast("रसिद फेला परेन।", "error");
+  if (!payment.allocations || !Array.isArray(payment.allocations.readings)) {
+    return reconcileLegacyPaymentAllocation(payId);
+  }
+  const recordedAdvance = Number(payment.allocations.advance || 0);
+  const remainingAdvance = Number(payment.allocations.advanceRemaining ?? payment.allocations.advance ?? 0);
+  const taggedAdvance = Math.max(recordedAdvance, remainingAdvance, Number(payment.advancePaid || 0));
+  if (taggedAdvance <= 0.009) return showToast("यो रसिदमा अग्रिम रकम देखिएको छैन; परिवर्तन गरिएको छैन।", "info");
+  if (!payment.date || !payment.customerId) return showToast("रसिदको मिति वा ग्राहक विवरण अपूरो छ।", "error");
+
+  const customer = st.customers.find(c => c.id === payment.customerId);
+  if (!customer) return showToast("ग्राहक फेला परेन।", "error");
+  const customerSnapshot = JSON.parse(JSON.stringify(customer));
+  const paymentSnapshot = JSON.parse(JSON.stringify(payment));
+  const readingSnapshots = st.readings.filter(r => r.customerId === payment.customerId)
+    .map(r => ({ id: r.id, data: JSON.parse(JSON.stringify(r)) }));
+
+  if (!confirm(`रसिद ${payment.receiptNo} मा देखिएको ${fmtMoney(taggedAdvance)} अग्रिम गलत रूपमा राखिएको हो भने यसलाई हटाएर रसिदको पूरै ${fmtMoney(payment.totalPaid)} रकम ${payment.date} सम्मका वास्तविक महसुल/मर्मत/जरिवानामा पुनः मिलाउने? रसिद नम्बर, मिति र जम्मा भुक्तानी रकम परिवर्तन हुँदैन।`)) return;
+
+  try {
+    // Reverse only this receipt's exact prior allocations, including any part
+    // of its supposed advance already applied to later readings.
+    reverseExactPayment(payment);
+    delete payment.allocations;
+    payment.openingPaid = 0;
+    payment.billPaid = 0;
+    payment.maintPaid = 0;
+    payment.penaltyPaid = 0;
+    payment.advancePaid = 0;
+
+    // Recalculate after reversal so any penalty removed by the faulty old
+    // calculation is assessed again before allocating this historical receipt.
+    window.recalculateAllDynamicValues(false);
+    const due = getCustomerDueAsOf(payment.customerId, payment.date);
+    const amount = paymentRound(payment.totalPaid);
+    if (!due || amount - due.total > 0.009) {
+      throw new Error(`यस मितिसम्मको वास्तविक बाँकी ${fmtMoney(due?.total || 0)} मात्र छ, तर रसिद ${fmtMoney(amount)} छ। अतिरिक्त रकमलाई अग्रिम नबनाई रोकिएको छ। Reading/जरिवाना मिति जाँच्नुहोस्।`);
+    }
+
+    const allocations = allocateCustomerPayment(payment.customerId, amount, payment.date, false);
+    payment.allocations = allocations;
+    payment.openingPaid = paymentRound(allocations.opening || 0);
+    payment.billPaid = paymentRound(allocations.readings.reduce((s, x) => s + Number(x.water || 0), 0));
+    payment.maintPaid = paymentRound(allocations.readings.reduce((s, x) => s + Number(x.maintenance || 0), 0));
+    payment.penaltyPaid = paymentRound(allocations.readings.reduce((s, x) => s + Number(x.penalty || 0), 0));
+    payment.advancePaid = 0;
+
+    window.recalculateAllDynamicValues(false);
+    window.cloudSync?.save();
+    renderCurrentModule();
+    showToast(`रसिद ${payment.receiptNo} सच्याइयो। अग्रिम रु. ०; महसुल ${fmtMoney(payment.billPaid)}, मर्मत ${fmtMoney(payment.maintPaid)}, जरिवाना ${fmtMoney(payment.penaltyPaid)} मा मिलाइयो।`, "success");
+  } catch (error) {
+    Object.assign(customer, customerSnapshot);
+    readingSnapshots.forEach(s => {
+      const live = st.readings.find(r => r.customerId === payment.customerId && String(r.id) === String(s.id));
+      if (live) { for (const k of Object.keys(live)) delete live[k]; Object.assign(live, s.data); }
+    });
+    for (const k of Object.keys(payment)) delete payment[k];
+    Object.assign(payment, paymentSnapshot);
+    return showToast(error.message || "रसिद सच्याउन सकिएन; पुरानो डेटा जस्ताको तस्तै राखिएको छ।", "error");
   }
 }
 
@@ -2605,8 +2675,9 @@ function createCustomerPayment(customerId, date, amount, mode) {
   if (normalizedDate !== date) throw new Error('रसिदको नेपाली मिति YYYY-MM-DD ढाँचामा सही राख्नुहोस्।');
   const due = getCustomerDueAsOf(customerId, normalizedDate);
   if (!due) throw new Error('ग्राहक फेला परेन।');
-  // Amount above dated dues is a customer advance, not an invalid payment.
-  const allocations = allocateCustomerPayment(customerId, paid, normalizedDate, true);
+  // Do not silently create an advance. The receipt amount must settle dues
+  // existing on its date; an advance needs a separate, explicit transaction.
+  const allocations = allocateCustomerPayment(customerId, paid, normalizedDate, false);
   const year = parsedDate.y;
   const seq = Number(st.settings.receiptCounter || 1);
   const receiptNo = `REC-${year}-${seq}`;
@@ -2650,7 +2721,7 @@ function submitBulkAmountEntry() {
     .filter(x => x.amount > 0);
   if (!entries.length) return showToast('कृपया कम्तिमा एउटा ग्राहकको रकम प्रविष्ट गर्नुहोस्।', 'error');
 
-  // Validate all customers before changing any balance. Excess collection is stored as advance.
+  // Validate all customers before changing any balance; no implicit advance is allowed.
   for (const entry of entries) {
     const customerExists = st.customers.some(c => c.id === entry.customerId);
     if (!customerExists) return showToast(`${entry.customerId} ग्राहक फेला परेन।`, 'error');
@@ -4387,7 +4458,7 @@ function getAccountingJournal(){
     });
   }
   (st.readings||[]).forEach(r=>{
-    const total=Number(r.billAmount||0), maint=Math.min(total,Number(r.maintenanceAmount||0)), water=Math.max(0,total-maint), penalty=Math.max(0,Number(r.penaltyAmount||0));
+    const total=Number(r.billAmount||0), maint=Math.min(total,Number(r.maintenanceAmount||0)), water=Math.max(0,total-maint), penalty=Math.max(0,Number(r.penaltyAssessedAmount ?? (Number(r.penaltyAmount||0)+Number(r.paidPenaltyAmount||0))));
     const amount=water+maint+penalty;
     if(amount>0){
       const lines=[{accountId:"1101",debit:accountingMoney(amount),credit:0}];
@@ -4614,7 +4685,7 @@ function generateReportHTML(tab) {
         const units = Number(r.units || 0);
         const maint = Number(r.maintenanceAmount || 0);
         const billOnly = Math.max(0, Number(r.billAmount || 0) - maint);
-        const pen = Number(r.penaltyAmount || 0);
+        const pen = Number(r.penaltyAssessedAmount ?? (Number(r.penaltyAmount || 0) + Number(r.paidPenaltyAmount || 0)));
 
         const tRule = getActiveTariffRule(r.entryDate || st.activeBSDate);
         const minUnit = Number(tRule.minUnits || 6);
@@ -4765,7 +4836,7 @@ function generateReportHTML(tab) {
       const units = rds.reduce((a, b) => a + Number(b.units), 0);
       const maint = rds.reduce((a, b) => a + Number(b.maintenanceAmount || 0), 0);
       const billOnly = rds.reduce((a, b) => a + Math.max(0, Number(b.billAmount) - Number(b.maintenanceAmount || 0)), 0);
-      const pen = rds.reduce((a, b) => a + Number(b.penaltyAmount || 0), 0);
+      const pen = rds.reduce((a, b) => a + Number(b.penaltyAssessedAmount ?? (Number(b.penaltyAmount || 0) + Number(b.paidPenaltyAmount || 0))), 0);
       const paid = rds.reduce((a, b) => a + getReadingPaidTotal(b), 0) + totalOpPaid;
       const due = (openingDue + billOnly + maint + pen) - paid;
 
