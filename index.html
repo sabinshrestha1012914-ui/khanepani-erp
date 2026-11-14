@@ -1417,7 +1417,7 @@ function filterKYCTable(q) {
 }
 
 // ============================================================================
-// 7. UNIT ENTRY & ANTI-BLOCK BULK WHATSAPP MODULE
+// 7. UNIT ENTRY, ANTI-BLOCK BULK WHATSAPP & READING MODIFY/DELETE MODULE
 // ============================================================================
 let selectedUnitMonth = "कार्तिक";
 
@@ -1451,12 +1451,12 @@ function renderUnitEntryModule() {
             </select>
           </div>
           <div class="pt-4">
-            <button onclick="openCustomerHistoryModal(document.getElementById('header-customer-select').value)" class="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold px-3 py-2 rounded-xl shadow-sm flex items-center gap-1">
+            <button onclick="openCustomerHistoryModal(document.getElementById('header-customer-select').value)" class="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold px-3 py-2 rounded-xl shadow-sm flex items-center gap-1 cursor-pointer">
               📊 स्टेटमेन्ट
             </button>
           </div>
           <div class="pt-4">
-            <button onclick="openBulkWhatsappModal('${selectedUnitMonth}')" class="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold px-4 py-2 rounded-xl shadow-sm flex items-center gap-1.5">
+            <button onclick="openBulkWhatsappModal('${selectedUnitMonth}')" class="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold px-4 py-2 rounded-xl shadow-sm flex items-center gap-1.5 cursor-pointer">
               <i data-lucide="message-circle" class="w-4 h-4"></i> Bulk WhatsApp (${monthReadings.length})
             </button>
           </div>
@@ -1474,7 +1474,7 @@ function renderUnitEntryModule() {
               <th class="p-3 w-28 text-right">मर्मत खर्च (रु.)</th>
               <th class="p-3 text-right">खपत युनिट</th>
               <th class="p-3 text-right">जम्मा बिल रकम</th>
-              <th class="p-3 text-center">अवस्था</th>
+              <th class="p-3 text-center">अवस्था / कार्य</th>
             </tr>
           </thead>
           <tbody class="divide-y divide-slate-100">
@@ -1502,9 +1502,12 @@ function renderUnitEntryModule() {
                   </td>
                   <td class="p-3 text-right font-bold tabular-nums text-slate-700" id="units-${c.id}">${units}</td>
                   <td class="p-3 text-right font-bold tabular-nums text-teal-800" id="bill-${c.id}">${fmtMoney(bill)}</td>
-                  <td class="p-3 text-center">
+                  <td class="p-3 text-center flex items-center justify-center gap-1.5">
                     ${existing
-                      ? `<span class="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-teal-100 text-teal-800">सुरक्षित</span>`
+                      ? `<span class="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-teal-100 text-teal-800">सुरक्षित</span>
+                         <button onclick="deleteReadingRecord('${existing.id}')" title="यो रिडिङ हटाउनुहोस्" class="p-1 bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 rounded-lg cursor-pointer">
+                           <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+                         </button>`
                       : `<span class="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-slate-100 text-slate-500">बाँकी</span>`
                     }
                   </td>
@@ -1516,7 +1519,7 @@ function renderUnitEntryModule() {
       </div>
 
       <div class="flex justify-end pt-2">
-        <button onclick="saveBulkReadings()" class="bg-teal-700 hover:bg-teal-800 text-white text-xs font-semibold px-6 py-2.5 rounded-xl shadow-md flex items-center gap-2">
+        <button onclick="saveBulkReadings()" class="bg-teal-700 hover:bg-teal-800 text-white text-xs font-semibold px-6 py-2.5 rounded-xl shadow-md flex items-center gap-2 cursor-pointer">
           <i data-lucide="check-circle-2" class="w-4 h-4"></i> ${selectedUnitMonth} महिनाको बल्क रिडिङ र मर्मत शुल्क सेभ / अपडेट गर्नुहोस्
         </button>
       </div>
@@ -1621,8 +1624,37 @@ function saveBulkReadings() {
   if (skippedInvalid > 0) {
     showToast(`${savedCount} जना सुरक्षित भयो (${skippedInvalid} जनाको हालको अङ्क साविकभन्दा कम भएकाले छोडियो)।`, "warning");
   } else {
-    showToast(`${selectedUnitMonth} महिनाको ${savedCount} जना ग्राहकको युनिट र मर्मत शुल्क सुरक्षित/अपडेट भयो!`);
+    showToast(`${selectedUnitMonth} महिनाको ${savedCount} जना ग्राहकको युनिट र मर्मत शुल्क सुरक्षित/अपडेट भयो!`, "success");
   }
+}
+
+// रिडिङ रेकर्ड Delete वा Modify गर्ने फंक्सन
+function deleteReadingRecord(readingId) {
+  const st = window.ERP_STATE;
+  const idx = st.readings.findIndex(r => r.id === readingId);
+  if (idx < 0) return;
+
+  const reading = st.readings[idx];
+
+  // यदि यो महिनाको बिलबापत पैसा तिराइसकेको छ भने सुरक्षाको लागि रोक्ने
+  if (Number(reading.paidAmount || 0) > 0 || Number(reading.paidMaintAmount || 0) > 0) {
+    return showToast("यो रिडिङको महसुल वापत भुक्तानी भइसकेको हुनाले पहिले अमाउन्ट इन्ट्री (Payment) मा गएर उक्त रसिद Modify/Delete गर्नुहोस्।", "error");
+  }
+
+  if (!confirm(`के तपाईं ग्राहक (${reading.customerId}) को ${reading.month} महिनाको यो युनिट इन्ट्री हटाउन चाहनुहुन्छ?`)) {
+    return;
+  }
+
+  // ग्राहकको lastReading लाई साविकको (prevReading मा) फर्काउने
+  const cust = st.customers.find(c => c.id === reading.customerId);
+  if (cust && cust.lastReading === reading.currReading) {
+    cust.lastReading = reading.prevReading;
+  }
+
+  st.readings.splice(idx, 1);
+  window.recalculateAllDynamicValues(false);
+  renderCurrentModule();
+  showToast("युनिट इन्ट्री सफलतापूर्वक हटाइयो!", "info");
 }
 
 function buildCustomerHistoryPrintableHTML(customer, custReadings) {
@@ -1681,7 +1713,7 @@ function openCustomerHistoryModal(customerId) {
             <h3 class="text-base font-bold text-slate-800">ग्राहक रिडिङ तथा मर्मत हिस्ट्री स्टेटमेन्ट</h3>
             <p class="text-xs text-slate-500">नाम: <b>${customer.name}</b> | आईडी: <b>${customer.id}</b> | फोन: ${customer.phone || 'उपलब्ध छैन'}</p>
           </div>
-          <button onclick="closeCustomerHistoryModal()" class="text-slate-400 hover:text-slate-600 font-bold text-lg px-2">✕</button>
+          <button onclick="closeCustomerHistoryModal()" class="text-slate-400 hover:text-slate-600 font-bold text-lg px-2 cursor-pointer">✕</button>
         </div>
         <div class="overflow-x-auto">
           <table class="w-full text-xs text-left border-collapse">
@@ -1714,10 +1746,10 @@ function openCustomerHistoryModal(customerId) {
           </table>
         </div>
         <div class="flex justify-end gap-2 pt-3 border-t border-slate-100">
-          <button onclick="printCustomerHistoryStatement('${customer.id}')" class="bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold px-4 py-2 rounded-xl flex items-center gap-1.5">
+          <button onclick="printCustomerHistoryStatement('${customer.id}')" class="bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold px-4 py-2 rounded-xl flex items-center gap-1.5 cursor-pointer">
             🖨️ प्रिन्ट गर्नुहोस्
           </button>
-          <button onclick="closeCustomerHistoryModal()" class="bg-teal-700 hover:bg-teal-800 text-white text-xs font-semibold px-4 py-2 rounded-xl">
+          <button onclick="closeCustomerHistoryModal()" class="bg-teal-700 hover:bg-teal-800 text-white text-xs font-semibold px-4 py-2 rounded-xl cursor-pointer">
             बन्द गर्नुहोस्
           </button>
         </div>
@@ -1833,7 +1865,7 @@ function sendNextWhatsappNow(continueLoop = false) {
     waCountdown = Math.floor(Math.random() * 5) + 6;
   }
 }
-
+  
 // ============================================================================
 // 8. AMOUNT ENTRY & PRINTABLE RECEIPT (Fully Updated with CSV Upload/Download)
 // ============================================================================
