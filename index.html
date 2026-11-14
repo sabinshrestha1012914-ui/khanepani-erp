@@ -1835,7 +1835,7 @@ function sendNextWhatsappNow(continueLoop = false) {
 }
 
 // ============================================================================
-// 8. AMOUNT ENTRY & PRINTABLE RECEIPT (Fully Fixed & Optimized)
+// 8. AMOUNT ENTRY & PRINTABLE RECEIPT (Fully Updated with CSV Upload/Download)
 // ============================================================================
 let amountEntryMode = "single";
 let selectedSingleCustId = "";
@@ -1961,13 +1961,26 @@ function renderAmountEntryModule() {
         </div>
       ` : `
         <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-4">
-          <div class="flex items-center justify-between flex-wrap gap-2">
+          <div class="flex items-center justify-between flex-wrap gap-3">
             <div>
-              <h3 class="text-base font-bold text-slate-800">बल्क अमाउन्ट इन्ट्री (एकैपटक धेरै ग्राहकको असुली - पुरानो महिनाबाट स्वतः मिलान हुने)</h3>
-              <p class="text-xs text-slate-500">तपाईले तल राख्नुभएको रकमको कुल योग तल स्वतः गणना हुनेछ।</p>
+              <h3 class="text-base font-bold text-slate-800">बल्क अमाउन्ट इन्ट्री (एकैपटक धेरै ग्राहकको असुली)</h3>
+              <p class="text-xs text-slate-500">तपाईंले सीधै रकम राख्न वा CSV फाइल अपलोड गरेर एकैपटक भर्न सक्नुहुन्छ।</p>
             </div>
-            <input type="text" id="bulk-amt-date" value="${st.activeBSDate}" class="w-28 text-xs font-bold border border-teal-300 bg-teal-50 rounded-xl px-3 py-1.5 text-center">
+            
+            <div class="flex items-center gap-2 flex-wrap">
+              <button type="button" onclick="downloadBulkCSVTemplate()" class="bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold px-3 py-1.5 rounded-lg border border-slate-300 flex items-center gap-1.5 cursor-pointer shadow-sm">
+                <i data-lucide="download" class="w-3.5 h-3.5"></i> CSV टेम्प्लेट डाउनलोड
+              </button>
+              
+              <label class="bg-indigo-50 hover:bg-indigo-100 text-indigo-800 text-xs font-semibold px-3 py-1.5 rounded-lg border border-indigo-200 flex items-center gap-1.5 cursor-pointer shadow-sm">
+                <i data-lucide="upload" class="w-3.5 h-3.5"></i> CSV फाइल अपलोड
+                <input type="file" accept=".csv" onchange="handleBulkCSVUpload(event)" class="hidden">
+              </label>
+
+              <input type="text" id="bulk-amt-date" value="${st.activeBSDate}" class="w-28 text-xs font-bold border border-teal-300 bg-teal-50 rounded-xl px-3 py-1.5 text-center">
+            </div>
           </div>
+
           <div class="overflow-x-auto">
             <table class="w-full text-xs text-left">
               <thead class="bg-slate-50 border-b border-slate-200">
@@ -2084,6 +2097,64 @@ function updateBulkTotalSum() {
   if (el) {
     el.textContent = fmtMoney(total);
   }
+}
+
+function downloadBulkCSVTemplate() {
+  const st = window.ERP_STATE;
+  let csvContent = "CustomerId,CustomerName,AmountToPay\n";
+  st.customers.forEach(c => {
+    csvContent += `${c.id},"${c.name.replace(/"/g, '""')}",0\n`;
+  });
+  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.setAttribute('href', url);
+  a.setAttribute('download', `bulk_payment_template_${st.activeBSDate}.csv`);
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  showToast("CSV टेम्प्लेट सफलतापूर्वक डाउनलोड भयो!", "success");
+}
+
+function handleBulkCSVUpload(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    const text = e.target.result;
+    const lines = text.split(/\r\n|\n/);
+    let matchCount = 0;
+
+    for (let i = 0; i < lines.length; i++) {
+      let line = lines[i].trim();
+      if (!line) continue;
+      if (i === 0 && (line.toLowerCase().includes('customerid') || line.toLowerCase().includes('id'))) {
+        continue;
+      }
+      let parts = line.split(',');
+      if (parts.length >= 2) {
+        let cid = parts[0].trim().replace(/^["']|["']$/g, '');
+        let amountStr = parts[parts.length - 1].trim().replace(/^["']|["']$/g, '');
+        let amount = parseFloat(amountStr) || 0;
+
+        if (amount > 0) {
+          let inputElem = document.querySelector(`.bulk-pay-input[data-cust-id="${cid}"]`);
+          if (inputElem) {
+            inputElem.value = amount;
+            matchCount++;
+          }
+        }
+      }
+    }
+    updateBulkTotalSum();
+    showToast(`${matchCount} वटा ग्राहकको रकम फाइलबाट सफलतापूर्वक भरियो!`, "success");
+    event.target.value = '';
+  };
+  reader.onerror = function() {
+    showToast("फाइल पढ्नमा त्रुटि भयो। कृपया फेरि प्रयास गर्नुहोस्।", "error");
+  };
+  reader.readAsText(file);
 }
 
 function generateCustomerDateRangeStatement() {
@@ -2203,7 +2274,6 @@ function submitSingleAmountEntry(e) {
   st.readings.filter(r => r.customerId === cid && getReadingRemaining(r) > 0).forEach(r => {
     if (remaining <= 0) return;
 
-    // 1. Penalty
     const pen = Number(r.penaltyAmount || 0);
     if (pen > 0) {
       const pApply = Math.min(remaining, pen);
@@ -2214,7 +2284,6 @@ function submitSingleAmountEntry(e) {
 
     if (remaining <= 0) return;
 
-    // 2. Maintenance
     const maintDue = Math.max(0, Number(r.maintenanceAmount || 0) - Number(r.paidMaintAmount || 0));
     if (maintDue > 0) {
       const mApply = Math.min(remaining, maintDue);
@@ -2225,7 +2294,6 @@ function submitSingleAmountEntry(e) {
 
     if (remaining <= 0) return;
 
-    // 3. Base Bill
     const baseDue = Math.max(0, (Number(r.billAmount) - Number(r.maintenanceAmount || 0)) - Number(r.paidAmount || 0));
     if (baseDue > 0) {
       const bApply = Math.min(remaining, baseDue);
@@ -2235,7 +2303,6 @@ function submitSingleAmountEntry(e) {
     }
   });
 
-  // Floating point tolerance check (preventing 0.01 leftover due mismatch)
   if (remaining > 0) {
     if (remaining < 1.0) {
       billPaid = Math.round((billPaid + remaining) * 100) / 100;
@@ -2293,7 +2360,6 @@ function submitBulkAmountEntry() {
     st.readings.filter(r => r.customerId === cid && getReadingRemaining(r) > 0).forEach(r => {
       if (remaining <= 0) return;
 
-      // 1. Penalty
       const pen = Number(r.penaltyAmount || 0);
       if (pen > 0) {
         const pApply = Math.min(remaining, pen);
@@ -2304,7 +2370,6 @@ function submitBulkAmountEntry() {
 
       if (remaining <= 0) return;
 
-      // 2. Maintenance
       const maintDue = Math.max(0, Number(r.maintenanceAmount || 0) - Number(r.paidMaintAmount || 0));
       if (maintDue > 0) {
         const mApply = Math.min(remaining, maintDue);
@@ -2315,7 +2380,6 @@ function submitBulkAmountEntry() {
 
       if (remaining <= 0) return;
 
-      // 3. Base Bill
       const baseDue = Math.max(0, (Number(r.billAmount) - Number(r.maintenanceAmount || 0)) - Number(r.paidAmount || 0));
       if (baseDue > 0) {
         const bApply = Math.min(remaining, baseDue);
@@ -2364,7 +2428,6 @@ function modifyPaymentRecord(payId) {
   if (idx < 0) return;
   const p = st.payments[idx];
 
-  // १. ओपनिङ बक्यौता फिर्ता गर्ने
   if (Number(p.openingPaid || 0) > 0) {
     const cust = st.customers.find(c => c.id === p.customerId);
     if (cust) {
@@ -2376,7 +2439,6 @@ function modifyPaymentRecord(payId) {
   let refundMaint = Number(p.maintPaid || 0);
   let refundPenalty = Number(p.penaltyPaid || 0);
 
-  // २. रिडिङ/बिलहरूमा गएको भुक्तानी रकम घटाएर फेरि बाँकी देखाउने (Reverse गर्ने)
   st.readings.filter(r => r.customerId === p.customerId).reverse().forEach(r => {
     if (refundBill > 0 && Number(r.paidAmount || 0) > 0) {
       const rev = Math.min(refundBill, Number(r.paidAmount));
@@ -2394,7 +2456,6 @@ function modifyPaymentRecord(payId) {
     }
   });
 
-  // ३. payments सूचीबाट यो रसिद हटाउने
   st.payments.splice(idx, 1);
   selectedSingleCustId = p.customerId;
   amountEntryMode = "single";
