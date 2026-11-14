@@ -1880,9 +1880,8 @@ function sendNextWhatsappNow(continueLoop = false) {
     waCountdown = Math.floor(Math.random() * 5) + 6;
   }
 }
-  
-// ============================================================================
-// 8. AMOUNT ENTRY & PRINTABLE RECEIPT (Fully Updated with CSV Upload/Download)
+  // ============================================================================
+// 8. AMOUNT ENTRY & PRINTABLE RECEIPT (Fully Fixed & Optimized with FIFO & Correct Sync)
 // ============================================================================
 let amountEntryMode = "single";
 let selectedSingleCustId = "";
@@ -2318,9 +2317,15 @@ function submitSingleAmountEntry(e) {
     remaining = Math.round((remaining - opApply) * 100) / 100;
   }
 
-  st.readings.filter(r => r.customerId === cid && getReadingRemaining(r) > 0).forEach(r => {
+  // FIFO: पुराना महिनाका बिलहरू पहिले क्रमबद्ध गर्ने (सुरु देखि अन्त्य सम्म)
+  const sortedReadings = st.readings
+    .filter(r => r.customerId === cid && getReadingRemaining(r) > 0)
+    .sort((a, b) => (NEPALI_MONTHS.indexOf(a.month) - NEPALI_MONTHS.indexOf(b.month)) || a.id.localeCompare(b.id));
+
+  sortedReadings.forEach(r => {
     if (remaining <= 0) return;
 
+    // 1. जरिवाना (Penalty) पहिले काट्ने
     const pen = Number(r.penaltyAmount || 0);
     if (pen > 0) {
       const pApply = Math.min(remaining, pen);
@@ -2331,6 +2336,7 @@ function submitSingleAmountEntry(e) {
 
     if (remaining <= 0) return;
 
+    // 2. मर्मत शुल्क (Maintenance) काट्ने
     const maintDue = Math.max(0, Number(r.maintenanceAmount || 0) - Number(r.paidMaintAmount || 0));
     if (maintDue > 0) {
       const mApply = Math.min(remaining, maintDue);
@@ -2341,6 +2347,7 @@ function submitSingleAmountEntry(e) {
 
     if (remaining <= 0) return;
 
+    // 3. मुख्य महसुल (Base Bill) काट्ने
     const baseDue = Math.max(0, (Number(r.billAmount) - Number(r.maintenanceAmount || 0)) - Number(r.paidAmount || 0));
     if (baseDue > 0) {
       const bApply = Math.min(remaining, baseDue);
@@ -2404,7 +2411,12 @@ function submitBulkAmountEntry() {
       remaining = Math.round((remaining - opApply) * 100) / 100;
     }
 
-    st.readings.filter(r => r.customerId === cid && getReadingRemaining(r) > 0).forEach(r => {
+    // FIFO: पुराना महिनाका बिलहरू पहिले क्रमबद्ध गर्ने
+    const sortedReadings = st.readings
+      .filter(r => r.customerId === cid && getReadingRemaining(r) > 0)
+      .sort((a, b) => (NEPALI_MONTHS.indexOf(a.month) - NEPALI_MONTHS.indexOf(b.month)) || a.id.localeCompare(b.id));
+
+    sortedReadings.forEach(r => {
       if (remaining <= 0) return;
 
       const pen = Number(r.penaltyAmount || 0);
@@ -2487,21 +2499,18 @@ function modifyPaymentRecord(payId) {
   let refundMaint = Number(p.maintPaid || 0);
   let refundPenalty = Number(p.penaltyPaid || 0);
 
-  // २. यो ग्राहकका रिडिङहरू फेला पार्ने (पुरानोबाट नयाँ वा उल्टो क्रमानुसार)
-  const custReadings = st.readings.filter(r => r.customerId === p.customerId);
+  // २. यो ग्राहकका रिडिङहरू फेला पार्ने (पछिल्लोबाट पहिलो reverse अर्डरमा refund गर्न)
+  const custReadings = st.readings.filter(r => r.customerId === p.customerId).reverse();
   
-  // रसिद बन्दा कुन-कुन बिलबाट काटिएको थियो, त्यसलाई उल्टाउन (Reverse) रिडिङहरूमा रकम फिर्ता गर्ने
   custReadings.forEach(r => {
-    // महसुल (Base Bill Paid) फिर्ता गर्ने
-    if (refundBill > 0) {
+    if (refundBill > 0 && Number(r.paidAmount || 0) > 0) {
       const currentPaid = Number(r.paidAmount || 0);
       const toRefund = Math.min(refundBill, currentPaid);
       r.paidAmount = Math.round((currentPaid - toRefund) * 100) / 100;
       refundBill = Math.round((refundBill - toRefund) * 100) / 100;
     }
 
-    // मर्मत शुल्क (Maintenance Paid) फिर्ता गर्ने
-    if (refundMaint > 0) {
+    if (refundMaint > 0 && Number(r.paidMaintAmount || 0) > 0) {
       const currentMaintPaid = Number(r.paidMaintAmount || 0);
       const toRefundMaint = Math.min(refundMaint, currentMaintPaid);
       r.paidMaintAmount = Math.round((currentMaintPaid - toRefundMaint) * 100) / 100;
@@ -2509,27 +2518,20 @@ function modifyPaymentRecord(payId) {
     }
   });
 
-  // ३. जरिवाना (Penalty) फिर्ता गर्ने (सम्बन्धित रिडिङ वा पछिल्लो रिडिङमा जोड्ने)
+  // ३. जरिवाना (Penalty) फिर्ता गर्ने
   if (refundPenalty > 0 && custReadings.length > 0) {
-    // पछिल्लो रिडिङमा जरिवाना फिर्ता थप्ने
-    const latestReading = custReadings[custReadings.length - 1];
-    latestReading.penaltyAmount = Math.round((Number(latestReading.penaltyAmount || 0) + refundPenalty) * 100) / 100;
+    // पछिल्लो रिडिङमा जरिवाना फिर्ता जोड्ने
+    custReadings[0].penaltyAmount = Math.round((Number(custReadings[0].penaltyAmount || 0) + refundPenalty) * 100) / 100;
   }
 
-  // ४. payments सूचीबाट यो रसिद स्थायी रूपमा हटाउने
+  // ४. payments सूचीबाट यो रसिद हटाउने
   st.payments.splice(idx, 1);
-  
-  // ५. State पूर्ण रूपमा Re-calculate र Sync गर्ने
-  if (typeof window.recalculateAllDynamicValues === 'function') {
-    window.recalculateAllDynamicValues(true);
-  }
-
-  // ६. सिङ्गल मोडमा फर्काएर वा हालको module लाई तुरुन्त render गर्ने
-  amountEntryMode = "bulk"; // वा single, तपाईंको इच्छा अनुसार
   selectedSingleCustId = p.customerId;
+  amountEntryMode = "single";
   
+  window.recalculateAllDynamicValues(false);
   renderCurrentModule();
-  showToast(`रसिद ${p.receiptNo} सफलतापूर्वक हटाइयो। बक्यौता रकम बल्क लिस्टमा पुन: जोडिएको छ।`, "success");
+  showToast(`रसिद ${p.receiptNo} संशोधनका लागि हटाइयो। बक्यौता रकम पुन: जोडिएको छ।`, "info");
 }
 
 function printWaterReceipt(payId) {
@@ -2599,7 +2601,7 @@ function printWaterReceipt(payId) {
   `;
   openPrintModal(`खानेपानी महसुल तथा मर्मत रसिद - ${p.receiptNo}`, html);
 }
-
+  
 // ============================================================================
 // 9. METER READING SHEETS & BULK READING BILLS PRINT MODULE
 // ============================================================================
