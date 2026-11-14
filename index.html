@@ -2647,26 +2647,40 @@ function createCustomerPayment(customerId, date, amount, mode) {
   const st = window.ERP_STATE;
   const paid = paymentRound(amount);
   if (!Number.isFinite(paid) || paid <= 0) throw new Error('शून्यभन्दा बढी मान्य रकम राख्नुहोस्।');
+  
   const parsedDate = parseBS(date);
   const normalizedDate = formatBS(parsedDate.y, parsedDate.m, parsedDate.d);
   if (normalizedDate !== date) throw new Error('रसिदको नेपाली मिति YYYY-MM-DD ढाँचामा सही राख्नुहोस्।');
+
   const due = getCustomerDueAsOf(customerId, normalizedDate);
   if (!due) throw new Error('ग्राहक फेला परेन।');
-  if (paid - due.total > 0.009) throw new Error(`बुझाएको रकम रसिद मितिसम्मको बाँकी ${fmtMoney(due.total)} भन्दा बढी भयो।`);
-  const allocations = allocateCustomerPayment(customerId, paid, normalizedDate);
+
+  if (paid - due.total > 0.009) {
+    throw new Error(`बुझाएको रकम रसिद मितिसम्मको बाँकी (${fmtMoney(due.total)}) भन्दा बढी भयो।`);
+  }
+
+  const allocations = allocateCustomerPayment(customerId, paid, normalizedDate, false);
+
   const year = parsedDate.y;
   const seq = Number(st.settings.receiptCounter || 1);
   const receiptNo = `REC-${year}-${seq}`;
   st.settings.receiptCounter = seq + 1;
+
   const payment = {
     id: 'PAY-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8),
-    receiptNo, customerId, date: normalizedDate, month: st.activeBSDate,
-    openingPaid: allocations.opening,
+    receiptNo,
+    customerId,
+    date: normalizedDate,
+    month: st.activeBSDate,
+    openingPaid: paymentRound(allocations.opening),
     billPaid: paymentRound(allocations.readings.reduce((sum, x) => sum + Number(x.water || 0), 0)),
     maintPaid: paymentRound(allocations.readings.reduce((sum, x) => sum + Number(x.maintenance || 0), 0)),
     penaltyPaid: paymentRound(allocations.readings.reduce((sum, x) => sum + Number(x.penalty || 0), 0)),
-    totalPaid: paid, allocations, mode: mode || 'नगद'
+    totalPaid: paid,
+    allocations,
+    mode: mode || 'नगद'
   };
+
   st.payments.push(payment);
   return payment;
 }
@@ -2828,7 +2842,7 @@ function printWaterReceipt(payId) {
       </div>
     </div>
   `;
-  openPrintModal(`खानेपानी महसुल तथा मर्मत रसिद - ${p.receiptNo}`, html);
+  openPrintModal(`खानेपानी महसुल तथा रसिद - ${p.receiptNo}`, html);
 }
   
 // ============================================================================
