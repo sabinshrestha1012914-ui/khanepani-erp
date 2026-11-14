@@ -1843,7 +1843,7 @@ function sendNextWhatsappNow(continueLoop = false) {
 }
 
 // ============================================================================
-// 8. AMOUNT ENTRY & PRINTABLE RECEIPT (Fully Updated with CSV Upload/Download)
+// 8. AMOUNT ENTRY & PRINTABLE RECEIPT (Fully Updated with FIFO & Chronological Fix)
 // ============================================================================
 let amountEntryMode = "single";
 let selectedSingleCustId = "";
@@ -2266,13 +2266,16 @@ function generateCustomerDateRangeStatement() {
 }
 
 // ---------------------------------------------------------------------------
-// SAFE RECEIPT ALLOCATION
-// New receipts store exact reading-level allocations. This makes Modify/Delete
-// reversible without touching unrelated receipts or later payments.
-// Legacy receipts without allocations are intentionally protected from delete.
+// SAFE RECEIPT ALLOCATION & FIFO HELPERS
 // ---------------------------------------------------------------------------
 function paymentRound(value) {
   return Math.round((Number(value) || 0) * 100) / 100;
+}
+
+function getNormalizedReadingDate(r) {
+  const d = r.entryDate || r.date || r.month || "";
+  if (!d) return "0000-00-00";
+  return d.length === 7 ? d + "-01" : d;
 }
 
 function getCustomerCurrentDue(customerId) {
@@ -2282,12 +2285,11 @@ function getCustomerCurrentDue(customerId) {
   const readings = st.readings.filter(r => r.customerId === customerId);
   let opening = Math.max(0, Number(customer.openingDue || 0));
   let water = readings.reduce((sum, r) => sum + Math.max(0,
-    Number(r.billAmount || 0) - Number(r.maintenanceAmount || 0) - Number(r.paidAmount || 0)), 0);
+    Number(r.billAmount || r.netBillAmount || 0) - Number(r.maintenanceAmount || 0) - Number(r.paidAmount || 0)), 0);
   let maintenance = readings.reduce((sum, r) => sum + Math.max(0,
     Number(r.maintenanceAmount || 0) - Number(r.paidMaintAmount || 0)), 0);
   let penalty = readings.reduce((sum, r) => sum + Math.max(0, Number(r.penaltyAmount || 0)), 0);
 
-  // Credit/advance is shown as a reduction of the oldest outstanding balance.
   const advanceBalance = Math.max(0, Number(customer.advanceBalance || 0));
   let credit = advanceBalance;
   const applyCredit = value => {
@@ -2316,7 +2318,6 @@ function allocateCustomerPayment(customerId, amount, asOfDate = null, allowAdvan
   let remaining = paymentRound(amount);
   const allocation = { opening: 0, readings: [] };
 
-  // Oldest outstanding dues are settled first; opening balance precedes monthly bills.
   const openingDue = Math.max(0, Number(customer.openingDue || 0));
   if (openingDue && remaining > 0) {
     const applied = paymentRound(Math.min(openingDue, remaining));
@@ -2325,25 +2326,35 @@ function allocateCustomerPayment(customerId, amount, asOfDate = null, allowAdvan
     remaining = paymentRound(remaining - applied);
   }
 
+  // Chronological sorting (Oldest First): Bhadra before Asoj, etc.
   const ordered = st.readings
     .filter(r => {
       if (r.customerId !== customerId) return false;
       if (!asOfDate) return true;
-      const readingDate = r.entryDate || r.date || "";
-      return !readingDate || bsToSerialDays(readingDate) <= bsToSerialDays(asOfDate);
+      const dStr = getNormalizedReadingDate(r);
+      if (dStr === "0000-00-00") return true;
+      try {
+        return bsToSerialDays(dStr) <= bsToSerialDays(asOfDate);
+      } catch (_) {
+        return true;
+      }
     })
     .slice()
     .sort((a, b) => {
-      const da = a.entryDate || a.date || '0000-00-00';
-      const db = b.entryDate || b.date || '0000-00-00';
-      try { return bsToSerialDays(da) - bsToSerialDays(db); }
-      catch (_) { return String(da).localeCompare(String(db)); }
+      const da = getNormalizedReadingDate(a);
+      const db = getNormalizedReadingDate(b);
+      try {
+        return bsToSerialDays(da) - bsToSerialDays(db);
+      } catch (_) {
+        return da.localeCompare(db);
+      }
     });
 
   for (const reading of ordered) {
     if (remaining <= 0) break;
     const item = { readingId: reading.id, penalty: 0, maintenance: 0, water: 0 };
 
+    // 1st Priority: Penalty
     const penaltyDue = Math.max(0, Number(reading.penaltyAmount || 0));
     if (penaltyDue > 0 && remaining > 0) {
       item.penalty = paymentRound(Math.min(penaltyDue, remaining));
@@ -2352,6 +2363,7 @@ function allocateCustomerPayment(customerId, amount, asOfDate = null, allowAdvan
       remaining = paymentRound(remaining - item.penalty);
     }
 
+    // 2nd Priority: Maintenance Charge
     const maintenanceDue = Math.max(0, Number(reading.maintenanceAmount || 0) - Number(reading.paidMaintAmount || 0));
     if (maintenanceDue > 0 && remaining > 0) {
       item.maintenance = paymentRound(Math.min(maintenanceDue, remaining));
@@ -2359,7 +2371,8 @@ function allocateCustomerPayment(customerId, amount, asOfDate = null, allowAdvan
       remaining = paymentRound(remaining - item.maintenance);
     }
 
-    const waterDue = Math.max(0, Number(reading.billAmount || 0) - Number(reading.maintenanceAmount || 0) - Number(reading.paidAmount || 0));
+    // 3rd Priority: Base Bill / Water Consumption
+    const waterDue = Math.max(0, Number(reading.billAmount || reading.netBillAmount || 0) - Number(reading.maintenanceAmount || 0) - Number(reading.paidAmount || 0));
     if (waterDue > 0 && remaining > 0) {
       item.water = paymentRound(Math.min(waterDue, remaining));
       reading.paidAmount = paymentRound(Number(reading.paidAmount || 0) + item.water);
@@ -2379,9 +2392,6 @@ function allocateCustomerPayment(customerId, amount, asOfDate = null, allowAdvan
   return allocation;
 }
 
-// Apply advance credit to outstanding readings in date order. Each application
-// is written back to the originating receipt allocation so Modify/Delete can
-// reverse the exact same amounts later.
 function applyCustomerAdvanceToReadings(customerId) {
   const st = window.ERP_STATE;
   const customer = st.customers.find(c => c.id === customerId);
@@ -2400,10 +2410,10 @@ function applyCustomerAdvanceToReadings(customerId) {
     .filter(r => r.customerId === customerId)
     .slice()
     .sort((a, b) => {
-      const da = a.entryDate || a.date || "0000-00-00";
-      const db = b.entryDate || b.date || "0000-00-00";
+      const da = getNormalizedReadingDate(a);
+      const db = getNormalizedReadingDate(b);
       try { return bsToSerialDays(da) - bsToSerialDays(db); }
-      catch (_) { return String(da).localeCompare(String(db)); }
+      catch (_) { return da.localeCompare(db); }
     });
 
   for (const source of sourcePayments) {
@@ -2445,7 +2455,7 @@ function applyCustomerAdvanceToReadings(customerId) {
         totalApplied = paymentRound(totalApplied + applied);
       }
 
-      const waterDue = Math.max(0, Number(reading.billAmount || 0) - Number(reading.maintenanceAmount || 0) - Number(reading.paidAmount || 0));
+      const waterDue = Math.max(0, Number(reading.billAmount || reading.netBillAmount || 0) - Number(reading.maintenanceAmount || 0) - Number(reading.paidAmount || 0));
       if (waterDue > 0 && available > 0) {
         const applied = paymentRound(Math.min(waterDue, available));
         item.water = paymentRound(Number(item.water || 0) + applied);
@@ -2477,12 +2487,17 @@ function getCustomerDueAsOf(customerId, asOfDate) {
   if (!customer) return null;
   const eligible = st.readings.filter(r => {
     if (r.customerId !== customerId) return false;
-    const d = r.entryDate || r.date || "";
-    return !d || bsToSerialDays(d) <= bsToSerialDays(asOfDate);
+    const dStr = getNormalizedReadingDate(r);
+    if (dStr === "0000-00-00") return true;
+    try {
+      return bsToSerialDays(dStr) <= bsToSerialDays(asOfDate);
+    } catch (_) {
+      return true;
+    }
   });
   const opening = Math.max(0, Number(customer.openingDue || 0));
   const water = eligible.reduce((sum, r) => sum + Math.max(0,
-    Number(r.billAmount || 0) - Number(r.maintenanceAmount || 0) - Number(r.paidAmount || 0)), 0);
+    Number(r.billAmount || r.netBillAmount || 0) - Number(r.maintenanceAmount || 0) - Number(r.paidAmount || 0)), 0);
   const maintenance = eligible.reduce((sum, r) => sum + Math.max(0,
     Number(r.maintenanceAmount || 0) - Number(r.paidMaintAmount || 0)), 0);
   const penalty = eligible.reduce((sum, r) => sum + Math.max(0, Number(r.penaltyAmount || 0)), 0);
@@ -2495,10 +2510,6 @@ function getCustomerDueAsOf(customerId, asOfDate) {
   };
 }
 
-// Legacy receipts created before reading-level allocation was introduced have
-// valid payment records but no allocation map. This action migrates one receipt
-// only after checking that its full amount can be allocated to dues that existed
-// on that receipt date. It never creates a second receipt or changes totalPaid.
 function reconcileLegacyPaymentAllocation(payId) {
   const st = window.ERP_STATE;
   const payment = st.payments.find(p => p.id === payId);
@@ -2524,7 +2535,6 @@ function reconcileLegacyPaymentAllocation(payId) {
     `रसिद ${payment.receiptNo} को ${fmtMoney(amount)} रकमलाई ${payment.date} सम्मका पुराना बाँकी Reading मा मिति क्रमअनुसार मिलाउने? रसिद नम्बर र भुक्तानी रकम परिवर्तन हुँदैन।`
   )) return;
 
-  // Snapshot for rollback if allocation unexpectedly fails.
   const customer = st.customers.find(c => c.id === payment.customerId);
   const customerOpeningBefore = Number(customer?.openingDue || 0);
   const customerAdvanceBefore = Number(customer?.advanceBalance || 0);
@@ -2599,7 +2609,6 @@ function createCustomerPayment(customerId, date, amount, mode) {
   const st = window.ERP_STATE;
   const paid = paymentRound(amount);
   if (!Number.isFinite(paid) || paid <= 0) throw new Error('शून्यभन्दा बढी मान्य रकम राख्नुहोस्।');
-  // Validate BS date before checking or changing any customer balance.
   const parsedDate = parseBS(date);
   const normalizedDate = formatBS(parsedDate.y, parsedDate.m, parsedDate.d);
   if (normalizedDate !== date) throw new Error('रसिदको नेपाली मिति YYYY-MM-DD ढाँचामा सही राख्नुहोस्।');
@@ -2650,7 +2659,6 @@ function submitBulkAmountEntry() {
     .filter(x => x.amount > 0);
   if (!entries.length) return showToast('कृपया कम्तिमा एउटा ग्राहकको रकम प्रविष्ट गर्नुहोस्।', 'error');
 
-  // Validate all customers before changing any balance.
   for (const entry of entries) {
     const due = getCustomerCurrentDue(entry.customerId);
     if (!due) return showToast(`${entry.customerId} ग्राहक फेला परेन।`, 'error');
@@ -2661,7 +2669,6 @@ function submitBulkAmountEntry() {
   try {
     for (const entry of entries) created.push(createCustomerPayment(entry.customerId, date, entry.amount, 'नगद (Bulk)'));
   } catch (error) {
-    // Roll back this batch only, using the exact allocation saved for each new receipt.
     for (const payment of created.reverse()) {
       reverseExactPayment(payment);
       const index = st.payments.findIndex(p => p.id === payment.id);
@@ -2779,8 +2786,7 @@ function printWaterReceipt(payId) {
   `;
   openPrintModal(`खानेपानी महसुल तथा मर्मत रसिद - ${p.receiptNo}`, html);
 }
-
-
+  
 // ============================================================================
 // 9. METER READING SHEETS & BULK READING BILLS PRINT MODULE
 // ============================================================================
