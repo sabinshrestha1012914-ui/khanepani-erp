@@ -531,6 +531,17 @@ function isDateBetweenBS(targetBS, fromBS, toBS) {
   return t >= f && t <= to;
 }
 
+function getOpeningDateBS() {
+  const raw = String(window.ERP_STATE?.settings?.openingDate || "2083-04-01").trim();
+  return /^\d{4}-\d{2}-\d{2}$/.test(raw) ? raw : "2083-04-01";
+}
+
+function isDateOnOrAfterOpeningBS(dateBS) {
+  const clean = String(dateBS || "").trim();
+  if (!clean) return false;
+  return bsToSerialDays(clean) >= bsToSerialDays(getOpeningDateBS());
+}
+
 function numberToNepaliWords(num) {
   num = Math.round(Number(num) || 0);
   if (num === 0) return "शून्य रुपैयाँ मात्र";
@@ -593,6 +604,7 @@ const INITIAL_STATE = {
     logoDataUrl: "",
     receiptCounter: 1001,
     loanReceiptCounter: 501,
+    openingDate: "2083-04-01",
     openingCash: 0,
     openingDues: 0,
     openingLoan: 0,
@@ -1103,8 +1115,6 @@ function renderDashboard() {
   const totalCustomerAdvance = st.customers.reduce((sum, c) => sum + Math.max(0, Number(c.advanceBalance || 0)), 0);
   const advanceCustomerCount = st.customers.filter(c => Number(c.advanceBalance || 0) > 0).length;
 
-  const currentLoanPrincipalOut = st.loans.reduce((sum, l) => sum + Math.max(0, Number(l.principal) - Number(l.paidPrincipal || 0)), 0);
-  const totalLoanPrincipalOut = Number(s.openingLoan || 0) + currentLoanPrincipalOut;
   const totalAccruedInterest = st.loans.reduce((sum, l) => sum + Number(l.accruedInterest || 0), 0);
   const overdueLoans = st.loans.filter(l => l.isOverdue);
 
@@ -1112,6 +1122,7 @@ function renderDashboard() {
   const accBalances = typeof getAccountBalances === "function" ? getAccountBalances(accJournal, null, null) : {};
   const cashAcctBal = accBalances["1001"] ? (Number(accBalances["1001"].debit || 0) - Number(accBalances["1001"].credit || 0)) : Number(s.openingCash || 0);
   const bankAcctBal = accBalances["1002"] ? (Number(accBalances["1002"].debit || 0) - Number(accBalances["1002"].credit || 0)) : Number(s.openingBank || 0);
+  const totalLoanPrincipalOut = accBalances["1201"] ? (Number(accBalances["1201"].debit || 0) - Number(accBalances["1201"].credit || 0)) : Number(s.openingLoan || 0);
   const openingCapitalBal = accBalances["3001"] ? (Number(accBalances["3001"].credit || 0) - Number(accBalances["3001"].debit || 0)) : 0;
 
   return `
@@ -1190,7 +1201,7 @@ function renderDashboard() {
 
     <div class="bg-slate-50 border border-slate-200 rounded-2xl px-4 py-3 flex flex-wrap items-center justify-between gap-2 text-xs">
       <div class="flex flex-wrap items-center gap-4">
-        <span class="font-bold text-slate-700">सेटिङ सुरु मौज्दात र पुँजी मिलान (Double Entry लिंक):</span>
+        <span class="font-bold text-slate-700">सेटिङ सुरु मौज्दात (${getOpeningDateBS()}) र पुँजी मिलान (Double Entry लिंक):</span>
         <span>स्थिर सम्पत्ति (1501): <strong class="text-slate-900">${fmtMoney(s.fixedAssets || 0)}</strong></span>
         <span>सुरु नगद (1001): <strong class="text-teal-800">${fmtMoney(s.openingCash || 0)}</strong></span>
         <span>प्रारम्भिक पुँजी कोष (3001): <strong class="text-indigo-800">${fmtMoney(openingCapitalBal)}</strong></span>
@@ -3514,8 +3525,22 @@ function renderLoansModule() {
 
   const filteredLoans = st.loans.filter(l => loanFilterCust === "ALL" || l.customerId === loanFilterCust);
 
+  const openingDate = getOpeningDateBS();
+  const postOpeningLoanTotal = st.loans
+    .filter(l => isDateOnOrAfterOpeningBS(l.initialIssueDate || l.issueDate))
+    .reduce((sum, l) => sum + Math.max(0, Number(l.initialPrincipal != null ? l.initialPrincipal : l.principal || 0)), 0);
+  const preOpeningLoanTotal = st.loans
+    .filter(l => !isDateOnOrAfterOpeningBS(l.initialIssueDate || l.issueDate))
+    .reduce((sum, l) => sum + Math.max(0, Number(l.initialPrincipal != null ? l.initialPrincipal : l.principal || 0)), 0);
+
   return `
     <div class="space-y-6">
+      <div class="bg-amber-50 border border-amber-200 text-amber-900 rounded-2xl px-4 py-3 text-xs leading-relaxed">
+        <strong>सुरु मौज्दात मिति नियम (${openingDate}):</strong>
+        ${openingDate} भन्दा अघिका पुराना ऋणहरू ब्याज गणना र किस्ता असुलीका लागि मात्र राखिन्छन् — तिनले सेटिङको <strong>सुरुवाती नगद (1001)</strong> घटाउँदैनन् (पुराना ऋणको सुरु बाँकी साँवा सेटिङको <em>गत वर्षको बाँकी ऋण</em> बाट मिलान हुन्छ)।
+        <strong>${openingDate} र त्यसपछिका</strong> नयाँ ऋण लगानी मात्र नगदबाट घटेर दोहोरो लेखामा पोस्ट हुन्छन्।
+        <span class="ml-1 font-semibold text-teal-900">[${openingDate} पछिको नयाँ लगानी: ${fmtMoney(postOpeningLoanTotal)} | अघिको ब्याज खाता: ${fmtMoney(preOpeningLoanTotal)}]</span>
+      </div>
       <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <div class="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
           <div class="text-xs text-slate-500">कुल ऋण लगानी (साँवा + गाभिएको ब्याज)</div>
@@ -3672,11 +3697,16 @@ function renderLoansModule() {
                 const c = st.customers.find(x => x.id === l.customerId) || { name: l.customerId };
                 const rem = l.principal - (l.paidPrincipal || 0);
                 const latestRemark = l.remarksHistory && l.remarksHistory.length > 0 ? l.remarksHistory[l.remarksHistory.length - 1].note : "नियमित चालु";
+                const loanIssueDt = l.initialIssueDate || l.issueDate;
+                const isPreOpeningLoan = !isDateOnOrAfterOpeningBS(loanIssueDt);
                 return `
                   <tr class="hover:bg-slate-50">
                     <td class="p-3 font-bold text-indigo-800">${l.id}</td>
                     <td class="p-3 font-semibold">${c.name} (${l.customerId})</td>
-                    <td class="p-3 tabular-nums">${l.initialIssueDate || l.issueDate}</td>
+                    <td class="p-3 tabular-nums">
+                      <div>${loanIssueDt}</div>
+                      ${isPreOpeningLoan ? `<span class="inline-block mt-0.5 px-1.5 py-0.5 rounded bg-amber-50 text-amber-800 border border-amber-200 text-[10px] font-semibold">सुरु मिति अघिको (ब्याज मात्र)</span>` : ''}
+                    </td>
                     <td class="p-3 tabular-nums font-bold text-teal-800">${l.dueDate}</td>
                     <td class="p-3 text-right tabular-nums">${fmtMoney(l.principal)}</td>
                     <td class="p-3 text-right font-bold tabular-nums">${fmtMoney(rem)}</td>
@@ -3987,7 +4017,11 @@ function disburseNewLoan(e) {
 
   window.recalculateAllDynamicValues(false);
   renderCurrentModule();
-  showToast(`नयाँ ऋण खाता ${sequentialLoanId} सफलतापूर्वक स्वीकृत भयो!`);
+  if (isDateOnOrAfterOpeningBS(issueDt)) {
+    showToast(`नयाँ ऋण खाता ${sequentialLoanId} सफलतापूर्वक स्वीकृत भयो!`);
+  } else {
+    showToast(`सुरु मिति (${getOpeningDateBS()}) अघिको ऋण ${sequentialLoanId} ब्याज गणनाका लागि सुरक्षित भयो (सुरु नगदबाट घटाइएन)।`, "info");
+  }
 }
 
 function promptEditLoan(loanId) {
@@ -5005,14 +5039,19 @@ function getAccountingJournal(){
     }
   });
   (st.loans||[]).forEach(l=>{
-    const capTotal=(l.capitalizationLogs||[]).reduce((sum,x)=>sum+Number(x.amount||0),0);
-    const amount=Number(l.initialPrincipal!=null?l.initialPrincipal:Math.max(0,Number(l.principal||0)-capTotal)); if(amount<=0)return;
-    out.push(makePosting("AUTO-LN-"+l.id,l.initialIssueDate||l.issueDate,"ऋण लगानी "+l.id,"loan","1201",amount,"1001",amount,l.id));
+    const loanIssueDate=l.initialIssueDate||l.issueDate||"";
+    if(isDateOnOrAfterOpeningBS(loanIssueDate)){
+      const capTotal=(l.capitalizationLogs||[]).reduce((sum,x)=>sum+Number(x.amount||0),0);
+      const amount=Number(l.initialPrincipal!=null?l.initialPrincipal:Math.max(0,Number(l.principal||0)-capTotal));
+      if(amount>0) out.push(makePosting("AUTO-LN-"+l.id,loanIssueDate,"ऋण लगानी "+l.id,"loan","1201",amount,"1001",amount,l.id));
+    }
     (l.capitalizationLogs||[]).forEach((x,i)=>{
+      if(!isDateOnOrAfterOpeningBS(x.date))return;
       const a=Number(x.amount||0); if(a>0) out.push(makePosting("AUTO-CAP-"+l.id+"-"+i,x.date,"ऋण ब्याज साँवामा गाभिएको "+l.id,"capitalization","1201",a,"4030",a,l.id));
     });
   });
   (st.loanRepayments||[]).forEach(r=>{
+    if(!isDateOnOrAfterOpeningBS(r.date))return;
     const principal=Number(r.principalPaid||0), interest=Number(r.interestPaid||0), total=principal+interest;
     if(total>0) out.push({id:"AUTO-LRP-"+r.id,date:r.date,description:"ऋण किस्ता असुली "+(r.receiptNo||""),source:"loan-repayment",ref:r.receiptNo||r.id,lines:[{accountId:"1001",debit:accountingMoney(total),credit:0},{accountId:"1201",debit:0,credit:accountingMoney(principal)},{accountId:"4030",debit:0,credit:accountingMoney(interest)}]});
   });
@@ -5077,7 +5116,7 @@ function renderAccountingModule(){
       const drAccts=(j.lines||[]).filter(l=>l.debit>0).map(l=>`${l.accountId} ${accountById(l.accountId).name}`).join(", ");
       const crAccts=(j.lines||[]).filter(l=>l.credit>0).map(l=>`${l.accountId} ${accountById(l.accountId).name}`).join(", ");
       const srcBadge=j.source==="opening"?`<span class="px-1.5 py-0.5 bg-amber-100 text-amber-800 rounded text-[10px] font-semibold">सुरु मौज्दात</span>`:(j.source==="manual"?`<span class="px-1.5 py-0.5 bg-indigo-100 text-indigo-800 rounded text-[10px] font-semibold">म्यानुअल</span>`:`<span class="px-1.5 py-0.5 bg-teal-50 text-teal-800 rounded text-[10px] font-semibold">अटो पोस्ट</span>`);
-      return `<tr class="border-t ${j.source==='opening'?'bg-amber-50/40':''}"><td class="p-2">${j.source==="opening"?"सुरु (Opening)":accountingEscape(j.date)}</td><td class="p-2">${accountingEscape(j.ref||j.id)}</td><td class="p-2">${accountingEscape(j.description)}<div class="text-[10px] text-slate-500">Dr: ${accountingEscape(drAccts)} | Cr: ${accountingEscape(crAccts)}</div></td><td class="p-2">${srcBadge}</td><td class="p-2 text-right font-semibold">${fmtMoney(j.lines.reduce((a,l)=>a+Number(l.debit||0),0))}</td><td class="p-2 text-right">${j.source==="manual"&&!j.reverses?`<button onclick="reverseAccountingVoucher('${j.id}')" class="text-rose-700 underline">उल्टाउनुहोस्</button>`:"—"}</td></tr>`;
+      return `<tr class="border-t ${j.source==='opening'?'bg-amber-50/40':''}"><td class="p-2">${j.source==="opening"?("सुरु ("+getOpeningDateBS()+")"):accountingEscape(j.date)}</td><td class="p-2">${accountingEscape(j.ref||j.id)}</td><td class="p-2">${accountingEscape(j.description)}<div class="text-[10px] text-slate-500">Dr: ${accountingEscape(drAccts)} | Cr: ${accountingEscape(crAccts)}</div></td><td class="p-2">${srcBadge}</td><td class="p-2 text-right font-semibold">${fmtMoney(j.lines.reduce((a,l)=>a+Number(l.debit||0),0))}</td><td class="p-2 text-right">${j.source==="manual"&&!j.reverses?`<button onclick="reverseAccountingVoucher('${j.id}')" class="text-rose-700 underline">उल्टाउनुहोस्</button>`:"—"}</td></tr>`;
     }).join("");
     content=`<div class="bg-white border rounded-xl overflow-hidden"><div class="p-4 border-b"><h3 class="font-bold">नयाँ जर्नल भौचर (एक Debit र एक Credit)</h3><p class="text-xs text-slate-500 mt-1">सेटिङको सुरु मौज्दात, बिलिङ, अग्रिम र असुली स्वतः जर्नलमा जोडिन्छ। भौचर सच्याउन reversal प्रयोग गर्नुहोस्।</p><form onsubmit="addAccountingVoucher(event)" class="grid grid-cols-1 md:grid-cols-6 gap-2 mt-3 text-xs"><select id="acc-v-type" class="border rounded-lg p-2"><option>Journal</option><option>Receipt</option><option>Payment</option><option>Contra</option></select><input id="acc-v-date" value="${st.activeBSDate}" class="border rounded-lg p-2" placeholder="मिति BS"><select id="acc-v-debit" class="border rounded-lg p-2 md:col-span-1">${opts}</select><select id="acc-v-credit" class="border rounded-lg p-2">${opts.replace('value="1001"','value="1001" selected')}</select><input id="acc-v-amount" type="number" min="0.01" step="0.01" required placeholder="रकम" class="border rounded-lg p-2"><button class="bg-teal-700 text-white rounded-lg p-2">भौचर सेभ</button><input id="acc-v-desc" required placeholder="कारोबार विवरण" class="border rounded-lg p-2 md:col-span-6"></form></div><div class="overflow-x-auto"><table class="w-full text-xs"><thead class="bg-slate-50"><tr><th class="p-2 text-left">मिति</th><th class="p-2 text-left">Ref</th><th class="p-2 text-left">विवरण / खाता शीर्षक</th><th class="p-2 text-left">स्रोत</th><th class="p-2 text-right">रकम</th><th class="p-2 text-right">कार्य</th></tr></thead><tbody>${rows||'<tr><td colspan="6" class="p-4 text-center text-slate-500">यस अवधिमा कारोबार छैन।</td></tr>'}</tbody></table></div></div>`;
   } else if(accountingTab==="ledger"){
@@ -5093,7 +5132,7 @@ function renderAccountingModule(){
         entries.push(`<tr class="border-t"><td class="p-2">${accountingEscape(j.date)}</td><td class="p-2">${accountingEscape(j.ref||j.id)}</td><td class="p-2">${accountingEscape(j.description)}</td><td class="p-2 text-right">${d?fmtMoney(d):"—"}</td><td class="p-2 text-right">${c?fmtMoney(c):"—"}</td><td class="p-2 text-right font-semibold">${fmtMoney(Math.abs(run))} ${run>=0?"":"(उल्टो)"}</td></tr>`);
       }
     }));
-    const openingRow=(openDr>0||openCr>0||Math.abs(openNet)>0.009)?`<tr class="border-t bg-amber-50/70 font-semibold"><td class="p-2">सुरु मौज्दात</td><td class="p-2">Opening B/F</td><td class="p-2">प्रारम्भिक मौज्दात / अघिल्लो अवधि बाँकी</td><td class="p-2 text-right">${openDr?fmtMoney(openDr):"—"}</td><td class="p-2 text-right">${openCr?fmtMoney(openCr):"—"}</td><td class="p-2 text-right">${fmtMoney(openNet)}</td></tr>`:"";
+    const openingRow=(openDr>0||openCr>0||Math.abs(openNet)>0.009)?`<tr class="border-t bg-amber-50/70 font-semibold"><td class="p-2">सुरु (${accountingEscape(getOpeningDateBS())})</td><td class="p-2">Opening B/F</td><td class="p-2">प्रारम्भिक मौज्दात / अघिल्लो अवधि बाँकी</td><td class="p-2 text-right">${openDr?fmtMoney(openDr):"—"}</td><td class="p-2 text-right">${openCr?fmtMoney(openCr):"—"}</td><td class="p-2 text-right">${fmtMoney(openNet)}</td></tr>`:"";
     const totalDr=accountingMoney(openDr+periodDr),totalCr=accountingMoney(openCr+periodCr);
     content=`<div class="bg-white border rounded-xl p-4 space-y-3"><div class="flex flex-wrap items-center justify-between gap-2"><div><label class="text-xs font-bold">खाता छान्नुहोस्</label><select class="border rounded-lg p-2 text-xs ml-2 font-semibold" onchange="accountingLedgerAccount=this.value;renderCurrentModule();">${ACCOUNT_CHART.map(x=>`<option value="${x.id}" ${x.id===a.id?'selected':''}>${x.id} - ${accountingEscape(x.name)}</option>`).join("")}</select></div><div class="flex flex-wrap gap-3 text-xs bg-slate-50 px-3 py-2 rounded-lg border"><span>प्रारम्भिक मौज्दात: <strong class="text-amber-800">${fmtMoney(openNet)}</strong></span><span>कुल डेबिट: <strong>${fmtMoney(totalDr)}</strong></span><span>कुल क्रेडिट: <strong>${fmtMoney(totalCr)}</strong></span><span>अन्तिम मौज्दात: <strong class="text-teal-800">${fmtMoney(run)}</strong></span></div></div><div class="overflow-x-auto"><table class="w-full text-xs"><thead class="bg-slate-100"><tr><th class="p-2 text-left">मिति</th><th class="p-2 text-left">Ref</th><th class="p-2 text-left">विवरण</th><th class="p-2 text-right">Debit</th><th class="p-2 text-right">Credit</th><th class="p-2 text-right">चल्ती मौज्दात</th></tr></thead><tbody>${openingRow}${entries.join("")||(!openingRow?'<tr><td colspan="6" class="p-3 text-center text-slate-500">यस खातामा कारोबार छैन।</td></tr>':'')}</tbody><tfoot class="bg-slate-100 font-bold border-t-2"><tr><td colspan="3" class="p-2 text-right">कुल योग र अन्तिम मौज्दात (Closing Balance):</td><td class="p-2 text-right">${fmtMoney(totalDr)}</td><td class="p-2 text-right">${fmtMoney(totalCr)}</td><td class="p-2 text-right text-teal-900">${fmtMoney(run)}</td></tr></tfoot></table></div></div>`;
   } else if(accountingTab==="trial"){
@@ -5113,7 +5152,7 @@ function renderAccountingModule(){
   } else {
     const cashLines=period.flatMap(j=>j.lines.filter(l=>["1001","1002"].includes(l.accountId)).map(l=>({date:j.date,desc:j.description,account:l.accountId,debit:l.debit,credit:l.credit}))).sort((a,b)=>a.date.localeCompare(b.date));
     const net=cashLines.reduce((z,l)=>z+Number(l.debit||0)-Number(l.credit||0),0);
-    content=`<div class="bg-white border rounded-xl p-4"><div class="font-bold mb-3">नगद तथा बैंकको अवधिगत प्रवाह</div><div class="text-sm mb-3">प्रारम्भिक र अवधिको खुद नगद/बैंक मौज्दात: <b>${fmtMoney(net)}</b></div><div class="overflow-x-auto"><table class="w-full text-xs"><thead class="bg-slate-100"><tr><th class="p-2">मिति</th><th class="p-2">विवरण</th><th class="p-2">खाता</th><th class="p-2 text-right">आगमन</th><th class="p-2 text-right">बहिर्गमन</th></tr></thead><tbody>${cashLines.map(l=>`<tr class="border-t"><td class="p-2">${l.date==="0000-01-01"?"सुरु (Opening)":l.date}</td><td class="p-2">${accountingEscape(l.desc)}</td><td class="p-2">${l.account==="1001"?"नगद":"बैंक"}</td><td class="p-2 text-right">${l.debit?fmtMoney(l.debit):"—"}</td><td class="p-2 text-right">${l.credit?fmtMoney(l.credit):"—"}</td></tr>`).join("")}</tbody></table></div></div>`;
+    content=`<div class="bg-white border rounded-xl p-4"><div class="font-bold mb-3">नगद तथा बैंकको अवधिगत प्रवाह</div><div class="text-sm mb-3">प्रारम्भिक र अवधिको खुद नगद/बैंक मौज्दात: <b>${fmtMoney(net)}</b></div><div class="overflow-x-auto"><table class="w-full text-xs"><thead class="bg-slate-100"><tr><th class="p-2">मिति</th><th class="p-2">विवरण</th><th class="p-2">खाता</th><th class="p-2 text-right">आगमन</th><th class="p-2 text-right">बहिर्गमन</th></tr></thead><tbody>${cashLines.map(l=>`<tr class="border-t"><td class="p-2">${l.date==="0000-01-01"?("सुरु ("+getOpeningDateBS()+")"):l.date}</td><td class="p-2">${accountingEscape(l.desc)}</td><td class="p-2">${l.account==="1001"?"नगद":"बैंक"}</td><td class="p-2 text-right">${l.debit?fmtMoney(l.debit):"—"}</td><td class="p-2 text-right">${l.credit?fmtMoney(l.credit):"—"}</td></tr>`).join("")}</tbody></table></div></div>`;
   }
   return `<div class="space-y-4"><div class="bg-white border rounded-xl p-4"><div class="flex flex-wrap gap-2 mb-3">${tabs.map(([id,label])=>`<button onclick="accountingTab='${id}';renderCurrentModule()" class="px-3 py-2 rounded-lg text-xs font-semibold ${accountingTab===id?'bg-teal-700 text-white':'bg-slate-100'}">${label}</button>`).join("")}</div><div class="flex flex-wrap items-center gap-2 text-xs"><b>अवधि:</b><input value="${accountingFrom}" onchange="accountingFrom=this.value;renderCurrentModule()" class="border rounded-lg p-2 w-28"><span>देखि</span><input value="${accountingTo}" onchange="accountingTo=this.value;renderCurrentModule()" class="border rounded-lg p-2 w-28"><span class="text-slate-500">BS मिति YYYY-MM-DD</span></div></div>${content}<div class="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-xl p-3">महत्त्वपूर्ण: सेटिङको सुरु मौज्दात (Opening Balances), बिलिङ, अग्रिम, ऋण र बैंक कारोबार स्वतः दोहोरो लेखा प्रणालीमा पोस्ट हुन्छन्। कानुनी/लेखापरीक्षण प्रयोजनअघि लेखापालबाट opening balances प्रमाणित गराउनुहोस्।</div></div>`;
 }
@@ -5640,8 +5679,8 @@ function generateReportHTML(tab) {
   const preBal = getAccountBalances(preCashBankJournal, null, null);
   const openCashBank = accountingMoney((preBal["1001"]?.debit || 0) - (preBal["1001"]?.credit || 0) + (preBal["1002"]?.debit || 0) - (preBal["1002"]?.credit || 0));
   const waterCollectedPeriod = accountingMoney(st.payments.filter(p => isDateBetweenBS(p.date, repFromBS, repToBS)).reduce((a, b) => a + Number(b.totalPaid || 0), 0));
-  const loanRepayCollectedPeriod = accountingMoney(st.loanRepayments.filter(r => isDateBetweenBS(r.date, repFromBS, repToBS)).reduce((a, b) => a + Number(b.principalPaid || 0) + Number(b.interestPaid || 0), 0));
-  const loanDisbursedPeriod = accountingMoney(st.loans.filter(l => isDateBetweenBS(l.initialIssueDate || l.issueDate, repFromBS, repToBS)).reduce((a, l) => a + Number(l.initialPrincipal != null ? l.initialPrincipal : l.principal || 0), 0));
+  const loanRepayCollectedPeriod = accountingMoney(st.loanRepayments.filter(r => isDateOnOrAfterOpeningBS(r.date) && isDateBetweenBS(r.date, repFromBS, repToBS)).reduce((a, b) => a + Number(b.principalPaid || 0) + Number(b.interestPaid || 0), 0));
+  const loanDisbursedPeriod = accountingMoney(st.loans.filter(l => isDateOnOrAfterOpeningBS(l.initialIssueDate || l.issueDate) && isDateBetweenBS(l.initialIssueDate || l.issueDate, repFromBS, repToBS)).reduce((a, l) => a + Number(l.initialPrincipal != null ? l.initialPrincipal : l.principal || 0), 0));
   const otherCashInPeriod = accountingMoney((periodBal["1001"]?.debit || 0) + (periodBal["1002"]?.debit || 0) - (periodBal["1001"]?.credit || 0) - (periodBal["1002"]?.credit || 0));
   const closingCashBank = accountingMoney(cashInHand + bankTotal);
   return `
@@ -5864,14 +5903,15 @@ function renderSettingsModule() {
 
       <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-4">
         <h3 class="text-base font-bold text-teal-700 flex items-center gap-2"><i data-lucide="wallet" class="w-5 h-5"></i> ओपनिङ ब्यालेन्स, स्थिर सम्पत्ति र गत वर्षको बाँकी बक्यौता</h3>
-        <p class="text-[11px] text-slate-600">यहाँ राखिएका सुरु मौज्दातहरू ड्यासबोर्ड, दोहोरो लेखा प्रणाली (जर्नल/खातावही/वासलात) र A4 रिपोर्टमा स्वतः प्रारम्भिक मौज्दातका रूपमा जोडिन्छन्। नोट: ग्राहक KYC मा राखेको ओपनिङ बक्यौता र बैंक खातामा राखेको ओपनिङ मौज्दात स्वतः जोडिने हुनाले यहाँ नबाँडिएको अतिरिक्त पुरानो मौज्दात मात्र राख्नुहोस्।</p>
-        <form onsubmit="saveOpeningBalances(event)" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-3 text-xs">
+        <p class="text-[11px] text-slate-600">यहाँ राखिएका सुरु मौज्दातहरू ड्यासबोर्ड, दोहोरो लेखा प्रणाली (जर्नल/खातावही/वासलात) र A4 रिपोर्टमा <strong>सुरु मौज्दात मिति (${s.openingDate || '2083-04-01'})</strong> का प्रारम्भिक मौज्दातका रूपमा जोडिन्छन्। नोट: ग्राहक KYC मा राखेको ओपनिङ बक्यौता र बैंक खातामा राखेको ओपनिङ मौज्दात स्वतः जोडिन्छ। सुरु मौज्दात मितिभन्दा अघिका पुराना ऋणहरू ब्याज गणनाका लागि मात्र रहन्छन् र तिनले सुरु नगद घटाउँदैनन् — ती पुराना ऋणको बाँकी साँवा <em>गत वर्षको बाँकी ऋण</em> मा राख्नुहोस्।</p>
+        <form onsubmit="saveOpeningBalances(event)" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-6 gap-3 text-xs">
+          <div><label class="font-semibold text-slate-600 block mb-1">सुरु मौज्दात मिति (BS)</label><input type="text" id="set-open-date" value="${s.openingDate || '2083-04-01'}" placeholder="2083-04-01" class="w-full border border-teal-300 bg-teal-50 rounded-xl px-3 py-2 font-bold text-teal-900"></div>
           <div><label class="font-semibold text-slate-600 block mb-1">सुरुवाती नगद (Opening Cash)</label><input type="number" id="set-open-cash" value="${s.openingCash || 0}" class="w-full border border-slate-300 rounded-xl px-3 py-2 font-bold text-teal-800"></div>
           <div><label class="font-semibold text-slate-600 block mb-1">गत वर्षको बाँकी महसुल (अतिरिक्त)</label><input type="number" id="set-open-dues" value="${s.openingDues || 0}" class="w-full border border-slate-300 rounded-xl px-3 py-2 font-bold text-amber-700"></div>
           <div><label class="font-semibold text-slate-600 block mb-1">गत वर्षको बाँकी ऋण</label><input type="number" id="set-open-loan" value="${s.openingLoan || 0}" class="w-full border border-slate-300 rounded-xl px-3 py-2 font-bold text-indigo-700"></div>
           <div><label class="font-semibold text-slate-600 block mb-1">बैंक ओपनिङ ब्यालेन्स (अतिरिक्त)</label><input type="number" id="set-open-bank" value="${s.openingBank || 0}" class="w-full border border-slate-300 rounded-xl px-3 py-2 font-bold text-cyan-800"></div>
           <div><label class="font-semibold text-slate-600 block mb-1">स्थिर सम्पत्ति (Fixed Assets)</label><input type="number" id="set-fixed-assets" value="${s.fixedAssets || 0}" class="w-full border border-slate-300 rounded-xl px-3 py-2 font-bold text-slate-800"></div>
-          <div class="sm:col-span-2 md:col-span-5 flex justify-end pt-2">
+          <div class="sm:col-span-2 md:col-span-6 flex justify-end pt-2">
             <button type="submit" class="bg-teal-700 hover:bg-teal-800 text-white font-semibold px-5 py-2.5 rounded-xl flex items-center gap-2 cursor-pointer"><i data-lucide="save" class="w-4 h-4"></i> ओपनिङ ब्यालेन्स सुरक्षित गर्नुहोस्</button>
           </div>
         </form>
@@ -6044,6 +6084,11 @@ function saveCommitteeProfile(e) {
 function saveOpeningBalances(e) {
   e.preventDefault();
   const s = window.ERP_STATE.settings;
+  const openDateEl = document.getElementById("set-open-date");
+  const rawDate = String(openDateEl?.value || "2083-04-01").trim();
+  const parsedOpen = parseBS(rawDate);
+  s.openingDate = /^\d{4}-\d{2}-\d{2}$/.test(rawDate) ? formatBS(parsedOpen.y, parsedOpen.m, parsedOpen.d) : "2083-04-01";
+  if (openDateEl) openDateEl.value = s.openingDate;
   s.openingCash = Number(document.getElementById("set-open-cash").value) || 0;
   s.openingDues = Number(document.getElementById("set-open-dues").value) || 0;
   s.openingLoan = Number(document.getElementById("set-open-loan").value) || 0;
@@ -6051,6 +6096,7 @@ function saveOpeningBalances(e) {
   s.fixedAssets = Number(document.getElementById("set-fixed-assets").value) || 0;
 
   window.recalculateAllDynamicValues(true);
+  renderCurrentModule();
   showToast("ओपनिङ ब्यालेन्स तथा बाँकी बक्यौता सफलतापूर्वक सुरक्षित गरियो!", "success");
 }
 
