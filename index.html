@@ -1939,7 +1939,12 @@ function renderAmountEntryModule() {
               <strong id="amt-words-preview" class="text-xs text-slate-900">${numberToNepaliWords(totalDue)}</strong>
             </div>
 
-            <div class="sm:col-span-3 flex justify-end gap-2 pt-2">
+            <div class="sm:col-span-3 flex flex-wrap justify-between items-center gap-2 pt-2">
+              ${selectedSingleCustId ? `
+                <button type="button" onclick="repairSelectedCustomerLedger('${selectedSingleCustId}')" class="bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 font-semibold px-4 py-2 rounded-xl flex items-center gap-1.5 cursor-pointer">
+                  <i data-lucide="wrench" class="w-4 h-4"></i> यो ग्राहकको हिसाब / जरिवाना मिलान
+                </button>
+              ` : `<span></span>`}
               <button type="submit" class="bg-teal-700 hover:bg-teal-800 text-white font-semibold px-5 py-2.5 rounded-xl shadow-sm flex items-center gap-2 cursor-pointer">
                 <i data-lucide="printer" class="w-4 h-4"></i> रकम सेभ गरी रसिद प्रिन्ट गर्नुहोस्
               </button>
@@ -2049,8 +2054,11 @@ function renderAmountEntryModule() {
       `}
 
       <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-        <div class="p-4 border-b border-slate-200 flex items-center justify-between">
+        <div class="p-4 border-b border-slate-200 flex flex-wrap items-center justify-between gap-2">
           <h3 class="text-sm font-bold text-slate-800">संकलित रसिदहरूको सूची (Print / Modify / Delete)</h3>
+          <button type="button" onclick="repairAllCustomersLedger()" class="px-3 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 rounded-xl text-xs font-semibold flex items-center gap-1.5 cursor-pointer">
+            <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i> सबै ग्राहकको हिसाब / जरिवाना मिलान
+          </button>
         </div>
         <div class="overflow-x-auto">
           <table class="w-full text-xs text-left">
@@ -2581,10 +2589,10 @@ function reconcileLegacyPaymentAllocation(payId) {
 
 function reverseExactPayment(payment) {
   const st = window.ERP_STATE;
-  
+
   if (payment.allocations && Array.isArray(payment.allocations.readings)) {
     const allocatedItems = payment.allocations.readings || [];
-    
+
     const customer = st.customers.find(c => c.id === payment.customerId);
     if (customer) {
       customer.openingDue = paymentRound(Number(customer.openingDue || 0) + Number(payment.allocations.opening || 0));
@@ -2608,79 +2616,208 @@ function reverseExactPayment(payment) {
       }
     });
   } else {
-    const customer = st.customers.find(c => c.id === payment.customerId);
-    if (customer && Number(payment.openingPaid || 0) > 0) {
-      customer.openingDue = paymentRound(Number(customer.openingDue || 0) + Number(payment.openingPaid));
-    }
-
-    const readings = st.readings.filter(r => r.customerId === payment.customerId);
-    let refundWater = Number(payment.billPaid || payment.totalPaid || 0);
+    // Legacy payment without exact allocation map: reverse from newest readings first (LIFO)
+    // so deleting a recent receipt never removes payment from an older settled month.
+    const hasSplit = payment.billPaid !== undefined || payment.maintPaid !== undefined || payment.penaltyPaid !== undefined || payment.openingPaid !== undefined;
+    let refundWater = hasSplit ? Number(payment.billPaid || 0) : Number(payment.totalPaid || 0);
     let refundPenalty = Number(payment.penaltyPaid || 0);
     let refundMaint = Number(payment.maintPaid || 0);
+    const refundOpening = Number(payment.openingPaid || 0);
+
+    const paySerial = (() => {
+      try { return bsToSerialDays(payment.date || st.activeBSDate); }
+      catch (_) { return Infinity; }
+    })();
+
+    const readings = st.readings
+      .map((r, idx) => ({ r, idx }))
+      .filter(x => x.r.customerId === payment.customerId)
+      .sort((a, b) => {
+        const da = getNormalizedReadingDate(a.r);
+        const db = getNormalizedReadingDate(b.r);
+        let sa = 0, sb = 0;
+        try { sa = bsToSerialDays(da); } catch (_) { sa = 0; }
+        try { sb = bsToSerialDays(db); } catch (_) { sb = 0; }
+        const aBeforeOrOnPay = sa <= paySerial ? 1 : 0;
+        const bBeforeOrOnPay = sb <= paySerial ? 1 : 0;
+        if (aBeforeOrOnPay !== bBeforeOrOnPay) return bBeforeOrOnPay - aBeforeOrOnPay;
+        if (sb !== sa) return sb - sa;
+        return b.idx - a.idx;
+      })
+      .map(x => x.r);
 
     for (const r of readings) {
       if (refundWater <= 0 && refundPenalty <= 0 && refundMaint <= 0) break;
 
-      if (refundPenalty > 0 && Number(r.paidPenaltyAmount || 0) > 0) {
-        let pRev = Math.min(Number(r.paidPenaltyAmount || 0), refundPenalty);
-        r.paidPenaltyAmount = paymentRound(Number(r.paidPenaltyAmount || 0) - pRev);
-        r.penaltyAmount = paymentRound(Number(r.penaltyAmount || 0) + pRev);
-        refundPenalty = paymentRound(refundPenalty - pRev);
+      if (refundWater > 0 && Number(r.paidAmount || 0) > 0) {
+        const wRev = Math.min(Number(r.paidAmount || 0), refundWater);
+        r.paidAmount = paymentRound(Number(r.paidAmount || 0) - wRev);
+        refundWater = paymentRound(refundWater - wRev);
       }
 
       if (refundMaint > 0 && Number(r.paidMaintAmount || 0) > 0) {
-        let mRev = Math.min(Number(r.paidMaintAmount || 0), refundMaint);
+        const mRev = Math.min(Number(r.paidMaintAmount || 0), refundMaint);
         r.paidMaintAmount = paymentRound(Number(r.paidMaintAmount || 0) - mRev);
         refundMaint = paymentRound(refundMaint - mRev);
       }
 
-      if (refundWater > 0 && Number(r.paidAmount || 0) > 0) {
-        let wRev = Math.min(Number(r.paidAmount || 0), refundWater);
-        r.paidAmount = paymentRound(Number(r.paidAmount || 0) - wRev);
-        refundWater = paymentRound(refundWater - wRev);
+      if (refundPenalty > 0 && Number(r.paidPenaltyAmount || 0) > 0) {
+        const pRev = Math.min(Number(r.paidPenaltyAmount || 0), refundPenalty);
+        r.paidPenaltyAmount = paymentRound(Number(r.paidPenaltyAmount || 0) - pRev);
+        r.penaltyAmount = paymentRound(Number(r.penaltyAmount || 0) + pRev);
+        refundPenalty = paymentRound(refundPenalty - pRev);
       }
     }
+
+    const customer = st.customers.find(c => c.id === payment.customerId);
+    if (customer && refundOpening > 0) {
+      customer.openingDue = paymentRound(Number(customer.openingDue || 0) + refundOpening);
+    }
   }
+}
+
+function rebuildCustomerBillingLedger(customerId) {
+  const st = window.ERP_STATE;
+  const customer = st.customers.find(c => c.id === customerId);
+  if (!customer) return false;
+
+  const custPayments = st.payments
+    .filter(p => p.customerId === customerId)
+    .slice()
+    .sort((a, b) => {
+      try {
+        const diff = bsToSerialDays(a.date) - bsToSerialDays(b.date);
+        if (diff !== 0) return diff;
+      } catch (_) {}
+      return String(a.receiptNo || a.id || "").localeCompare(String(b.receiptNo || b.id || ""));
+    });
+
+  const custReadings = st.readings
+    .filter(r => r.customerId === customerId)
+    .slice()
+    .sort((a, b) => {
+      const da = getNormalizedReadingDate(a);
+      const db = getNormalizedReadingDate(b);
+      try {
+        const diff = bsToSerialDays(da) - bsToSerialDays(db);
+        if (diff !== 0) return diff;
+      } catch (_) {}
+      return da.localeCompare(db);
+    });
+
+  // Restore original openingDue before remaining payments reduced it
+  const openingPaidSum = custPayments.reduce((sum, p) => sum + Number(p.openingPaid || 0), 0);
+  customer.openingDue = paymentRound(Math.max(0, Number(customer.openingDue || 0)) + openingPaidSum);
+  customer.advanceBalance = 0;
+
+  // Clear all payment and penalty latches on this customer's readings so they can be recomputed cleanly
+  custReadings.forEach(rd => {
+    rd.paidAmount = 0;
+    rd.paidMaintAmount = 0;
+    rd.paidPenaltyAmount = 0;
+    rd.penaltyAmount = 0;
+    rd.penaltyAssessedAmount = 0;
+    rd.status = "Unpaid";
+  });
+
+  // Replay each payment chronologically as of its actual payment date
+  for (const p of custPayments) {
+    const payDate = p.date || st.activeBSDate;
+    const paySerial = (() => { try { return bsToSerialDays(payDate); } catch (_) { return 0; } })();
+    const paidPenaltyBudget = Number(p.penaltyPaid || 0);
+
+    if (paidPenaltyBudget > 0) {
+      const pRule = getActivePenaltyRule(payDate);
+      let remBudget = paidPenaltyBudget;
+      for (const rd of custReadings) {
+        if (remBudget <= 0) break;
+        const rdDate = getNormalizedReadingDate(rd);
+        const rdSerial = (() => { try { return bsToSerialDays(rdDate); } catch (_) { return 0; } })();
+        if (paySerial && rdSerial && rdSerial > paySerial) continue;
+        const unpaidBase = getReadingRemaining(rd);
+        if (unpaidBase <= 0) continue;
+        const daysElapsed = diffDaysBS(rd.entryDate, payDate);
+        if (daysElapsed > Number(pRule.graceDays)) {
+          const rulePenalty = paymentRound(unpaidBase * Number(pRule.penaltyPercent) / 100);
+          const assessed = Math.min(rulePenalty, remBudget);
+          const newAssessed = Math.max(Number(rd.penaltyAssessedAmount || 0), assessed + Number(rd.paidPenaltyAmount || 0));
+          rd.penaltyAssessedAmount = newAssessed;
+          rd.penaltyAmount = paymentRound(Math.max(0, newAssessed - Number(rd.paidPenaltyAmount || 0)));
+          remBudget = paymentRound(remBudget - assessed);
+        }
+      }
+      if (remBudget > 0) {
+        for (const rd of custReadings) {
+          if (remBudget <= 0) break;
+          if (getReadingRemaining(rd) <= 0) continue;
+          rd.penaltyAssessedAmount = paymentRound(Number(rd.penaltyAssessedAmount || 0) + remBudget);
+          rd.penaltyAmount = paymentRound(Number(rd.penaltyAmount || 0) + remBudget);
+          remBudget = 0;
+        }
+      }
+    }
+
+    const paid = paymentRound(p.totalPaid);
+    if (paid > 0) {
+      const allocations = allocateCustomerPayment(customerId, paid, payDate, true);
+      p.allocations = allocations;
+      p.openingPaid = paymentRound(allocations.opening);
+      p.billPaid = paymentRound(allocations.readings.reduce((s, x) => s + Number(x.water || 0), 0));
+      p.maintPaid = paymentRound(allocations.readings.reduce((s, x) => s + Number(x.maintenance || 0), 0));
+      p.penaltyPaid = paymentRound(allocations.readings.reduce((s, x) => s + Number(x.penalty || 0), 0));
+      p.advancePaid = paymentRound(Number(allocations.advance || 0));
+      p.advanceRemaining = paymentRound(Number(allocations.advanceRemaining ?? allocations.advance ?? 0));
+    }
+  }
+
+  window.recalculateAllDynamicValues(false);
+  return true;
+}
+
+function repairSelectedCustomerLedger(custId) {
+  if (!custId) return showToast("कृपया ग्राहक छान्नुहोस्।", "error");
+  const st = window.ERP_STATE;
+  const cust = st.customers.find(c => c.id === custId);
+  if (!cust) return showToast("ग्राहक फेला परेन।", "error");
+  if (!confirm(`${cust.name} (${cust.id}) को सबै रसिद भुक्तानी मिति अनुसार क्रमैसँग मिलान गरी गलत जरिवाना हटाउने?`)) return;
+  rebuildCustomerBillingLedger(custId);
+  renderCurrentModule();
+  showToast(`${cust.name} को बिल, रसिद र जरिवाना सफलतापूर्वक मिलान गरियो!`, "success");
+}
+
+function repairAllCustomersLedger() {
+  const st = window.ERP_STATE;
+  if (!st.customers.length) return showToast("कुनै ग्राहक दर्ता छैन।", "info");
+  if (!confirm(`सबै ${st.customers.length} जना ग्राहकहरूको बिल, रसिद भुक्तानी र जरिवाना मिति अनुसार पुन: मिलान गर्ने?`)) return;
+  st.customers.forEach(c => rebuildCustomerBillingLedger(c.id));
+  renderCurrentModule();
+  showToast("सबै ग्राहकहरूको हिसाब र जरिवाना सफलतापूर्वक पुन: मिलान गरियो!", "success");
 }
 
 function createCustomerPayment(customerId, date, amount, mode) {
   const st = window.ERP_STATE;
   const paid = paymentRound(amount);
   if (!Number.isFinite(paid) || paid <= 0) throw new Error('शून्यभन्दा बढी मान्य रकम राख्नुहोस्।');
-  
   const parsedDate = parseBS(date);
   const normalizedDate = formatBS(parsedDate.y, parsedDate.m, parsedDate.d);
   if (normalizedDate !== date) throw new Error('रसिदको नेपाली मिति YYYY-MM-DD ढाँचामा सही राख्नुहोस्।');
-
   const due = getCustomerDueAsOf(customerId, normalizedDate);
   if (!due) throw new Error('ग्राहक फेला परेन।');
-
-  if (paid - due.total > 0.009) {
-    throw new Error(`बुझाएको रकम रसिद मितिसम्मको बाँकी (${fmtMoney(due.total)}) भन्दा बढी भयो।`);
-  }
-
-  const allocations = allocateCustomerPayment(customerId, paid, normalizedDate, false);
-
+  if (paid - due.total > 0.009) throw new Error(`बुझाएको रकम रसिद मितिसम्मको बाँकी ${fmtMoney(due.total)} भन्दा बढी भयो।`);
+  const allocations = allocateCustomerPayment(customerId, paid, normalizedDate);
   const year = parsedDate.y;
   const seq = Number(st.settings.receiptCounter || 1);
   const receiptNo = `REC-${year}-${seq}`;
   st.settings.receiptCounter = seq + 1;
-
   const payment = {
     id: 'PAY-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8),
-    receiptNo,
-    customerId,
-    date: normalizedDate,
-    month: st.activeBSDate,
-    openingPaid: paymentRound(allocations.opening),
+    receiptNo, customerId, date: normalizedDate, month: st.activeBSDate,
+    openingPaid: allocations.opening,
     billPaid: paymentRound(allocations.readings.reduce((sum, x) => sum + Number(x.water || 0), 0)),
     maintPaid: paymentRound(allocations.readings.reduce((sum, x) => sum + Number(x.maintenance || 0), 0)),
     penaltyPaid: paymentRound(allocations.readings.reduce((sum, x) => sum + Number(x.penalty || 0), 0)),
-    totalPaid: paid,
-    allocations,
-    mode: mode || 'नगद'
+    totalPaid: paid, allocations, mode: mode || 'नगद'
   };
-
   st.payments.push(payment);
   return payment;
 }
@@ -2743,6 +2880,7 @@ function modifyPaymentRecord(payId) {
 
   if (!confirm(`रसिद ${payment.receiptNo} संशोधनका लागि हटाउने?`)) return;
 
+  const isLegacy = !(payment.allocations && Array.isArray(payment.allocations.readings));
   try {
     reverseExactPayment(payment);
   } catch (error) {
@@ -2752,7 +2890,11 @@ function modifyPaymentRecord(payId) {
   st.payments.splice(index, 1);
   selectedSingleCustId = payment.customerId;
   amountEntryMode = 'single';
-  window.recalculateAllDynamicValues(false);
+  if (isLegacy) {
+    rebuildCustomerBillingLedger(payment.customerId);
+  } else {
+    window.recalculateAllDynamicValues(false);
+  }
   renderCurrentModule();
   showToast(`रसिद ${payment.receiptNo} हटाइयो। अब सही रकम पुनः इन्ट्री गर्नुहोस्।`, 'success');
 }
@@ -2765,6 +2907,7 @@ function deletePaymentRecord(payId) {
 
   if (!confirm(`रसिद ${payment.receiptNo} (${fmtMoney(payment.totalPaid)}) लाई स्थायी रूपमा Delete गर्ने?`)) return;
 
+  const isLegacy = !(payment.allocations && Array.isArray(payment.allocations.readings));
   try {
     reverseExactPayment(payment);
   } catch (error) {
@@ -2772,7 +2915,11 @@ function deletePaymentRecord(payId) {
   }
 
   st.payments.splice(index, 1);
-  window.recalculateAllDynamicValues(false);
+  if (isLegacy) {
+    rebuildCustomerBillingLedger(payment.customerId);
+  } else {
+    window.recalculateAllDynamicValues(false);
+  }
   renderCurrentModule();
   showToast(`रसिद ${payment.receiptNo} हटाइयो।`, 'success');
 }
@@ -2842,7 +2989,7 @@ function printWaterReceipt(payId) {
       </div>
     </div>
   `;
-  openPrintModal(`खानेपानी महसुल तथा रसिद - ${p.receiptNo}`, html);
+  openPrintModal(`खानेपानी महसुल तथा मर्मत रसिद - ${p.receiptNo}`, html);
 }
   
 // ============================================================================
@@ -4774,11 +4921,44 @@ function generateReportHTML(tab) {
         });
       });
 
+      // कुनै भुक्तानी रसिद रिडिङ महिनासँग मेल नखाएको भए अन्त्यमा देखाउने ताकि जम्मा बाँकी सधैं मिलोस्
+      const unmatchedPays = payments
+        .filter(p => !(p.id !== undefined && usedPayIds.has(p.id)))
+        .sort((a, b) => String(a.date || "").localeCompare(String(b.date || "")));
+      unmatchedPays.forEach(pay => {
+        const thisPaid = Number(pay.totalPaid || 0);
+        if (thisPaid <= 0) return;
+        runningDue = Math.max(0, Math.round((runningDue - thisPaid) * 100) / 100);
+        tPaid += thisPaid;
+        rows += `
+          <tr class="bg-emerald-50">
+            <td class="border border-slate-400 p-2 text-center">-</td>
+            <td colspan="10" class="border border-slate-400 p-2">
+              भुक्तानी मिति: <strong>${pay.date || '-'}</strong>
+            </td>
+            <td class="border border-slate-400 p-2 text-right font-bold text-emerald-700">
+              ${fmtMoney(thisPaid)}
+            </td>
+            <td class="border border-slate-400 p-2 text-right font-bold text-rose-700">
+              ${fmtMoney(runningDue)}
+            </td>
+            <td class="border border-slate-400 p-2 text-center font-bold text-indigo-900">
+              ${pay.receiptNo || '-'}
+            </td>
+          </tr>
+        `;
+      });
+
       return `
         ${header("सदस्यगत विस्तृत रिडिङ तथा महसुल स्टेटमेन्ट")}
         <div class="grid grid-cols-2 gap-2 text-xs bg-slate-50 p-3 rounded border border-slate-300 mb-4">
           <div><strong>ग्राहक आइडी:</strong> ${cust.id}</div>
-          <div><strong>फोन नं.:</strong> ${cust.phone || '-'}</div>
+          <div class="flex items-center justify-between gap-2">
+            <span><strong>फोन नं.:</strong> ${cust.phone || '-'}</span>
+            <button type="button" onclick="repairSelectedCustomerLedger('${cust.id}')" class="no-print px-2.5 py-1 bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300 rounded-lg text-[11px] font-semibold cursor-pointer">
+              🔧 हिसाब / जरिवाना मिलान
+            </button>
+          </div>
           <div><strong>ग्राहकको नाम:</strong> ${cust.name}</div>
           <div><strong>ठेगाना:</strong> ${cust.address || '-'} | <strong class="text-amber-800">हालको बाँकी:</strong> ${fmtMoney(getCustomerCurrentDue(cust.id)?.total || 0)} | <strong class="text-emerald-800">अग्रिम:</strong> ${fmtMoney(cust.advanceBalance || 0)}</div>
         </div>
