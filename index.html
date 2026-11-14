@@ -1868,7 +1868,7 @@ function renderAmountEntryModule() {
           <button onclick="amountEntryMode='single'; renderCurrentModule();" class="px-4 py-2 rounded-xl text-xs font-semibold transition cursor-pointer ${amountEntryMode === 'single' ? 'bg-teal-700 text-white' : 'bg-slate-100 text-slate-700'}">
             सिङ्गल अमाउन्ट इन्ट्री & रसिद प्रिन्ट
           </button>
-          <button onclick="amountEntryMode='bulk'; renderCurrentModule();" class="px-4 py-2 rounded-xl text-xs font-semibold transition cursor-pointer ${amountEntryMode === 'bulk' ? 'bg-teal-700 text-white' : 'bg-slate-100 text-slate-700'}">
+          <button onclick="amountEntryMode='bulk'; renderCurrentModule(); setTimeout(updateBulkTotalSum, 50);" class="px-4 py-2 rounded-xl text-xs font-semibold transition cursor-pointer ${amountEntryMode === 'bulk' ? 'bg-teal-700 text-white' : 'bg-slate-100 text-slate-700'}">
             बल्क अमाउन्ट इन्ट्री (Bulk Collection)
           </button>
         </div>
@@ -1961,8 +1961,11 @@ function renderAmountEntryModule() {
         </div>
       ` : `
         <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-4">
-          <div class="flex items-center justify-between">
-            <h3 class="text-base font-bold text-slate-800">बल्क अमाउन्ट इन्ट्री (एकैपटक धेरै ग्राहकको असुली - पुरानो महिनाबाट स्वतः मिलान हुने)</h3>
+          <div class="flex items-center justify-between flex-wrap gap-2">
+            <div>
+              <h3 class="text-base font-bold text-slate-800">बल्क अमाउन्ट इन्ट्री (एकैपटक धेरै ग्राहकको असुली - पुरानो महिनाबाट स्वतः मिलान हुने)</h3>
+              <p class="text-xs text-slate-500">तपाईले तल राख्नुभएको रकमको कुल योग तल स्वतः गणना हुनेछ।</p>
+            </div>
             <input type="text" id="bulk-amt-date" value="${st.activeBSDate}" class="w-28 text-xs font-bold border border-teal-300 bg-teal-50 rounded-xl px-3 py-1.5 text-center">
           </div>
           <div class="overflow-x-auto">
@@ -1999,16 +2002,22 @@ function renderAmountEntryModule() {
                       <td class="p-3 text-right tabular-nums text-red-600">${fmtMoney(penDue)}</td>
                       <td class="p-3 text-right font-bold tabular-nums">${fmtMoney(totalDue)}</td>
                       <td class="p-3 text-right">
-                        <input type="number" data-cust-id="${c.id}" placeholder="0" max="${totalDue}" step="0.01" class="bulk-pay-input w-28 text-right border border-slate-300 rounded-lg px-2 py-1 font-bold text-teal-900">
+                        <input type="number" data-cust-id="${c.id}" placeholder="0" max="${totalDue}" step="0.01" oninput="updateBulkTotalSum()" class="bulk-pay-input w-28 text-right border border-slate-300 rounded-lg px-2 py-1 font-bold text-teal-900">
                       </td>
                     </tr>
                   `;
                 }).join("") || `<tr><td colspan="8" class="p-6 text-center text-slate-400">कुनै बाँकी बक्यौता नरहेको वा सबै चुक्ता भइसकेको छ।</td></tr>`}
               </tbody>
+              <tfoot>
+                <tr class="bg-teal-50/80 font-bold border-t-2 border-teal-200">
+                  <td colspan="7" class="p-3 text-right text-teal-900 text-sm">कुल संकलन हुने जम्मा रकम (Grand Total):</td>
+                  <td class="p-3 text-right text-teal-950 tabular-nums text-sm" id="bulk-grand-total-display">रू. 0.00</td>
+                </tr>
+              </tfoot>
             </table>
           </div>
-          <div class="flex justify-end">
-            <button onclick="submitBulkAmountEntry()" class="bg-teal-700 hover:bg-teal-800 text-white text-xs font-semibold px-5 py-2.5 rounded-xl cursor-pointer flex items-center gap-2">
+          <div class="flex justify-end pt-2">
+            <button onclick="submitBulkAmountEntry()" class="bg-teal-700 hover:bg-teal-800 text-white text-xs font-semibold px-5 py-2.5 rounded-xl cursor-pointer flex items-center gap-2 shadow-sm">
               <i data-lucide="check" class="w-4 h-4"></i> सबै बल्क अमाउन्ट सुरक्षित गर्नुहोस्
             </button>
           </div>
@@ -2064,6 +2073,17 @@ function renderAmountEntryModule() {
       </div>
     </div>
   `;
+}
+
+function updateBulkTotalSum() {
+  let total = 0;
+  document.querySelectorAll(".bulk-pay-input").forEach(inp => {
+    total += Number(inp.value) || 0;
+  });
+  const el = document.getElementById("bulk-grand-total-display");
+  if (el) {
+    el.textContent = fmtMoney(total);
+  }
 }
 
 function generateCustomerDateRangeStatement() {
@@ -2183,25 +2203,47 @@ function submitSingleAmountEntry(e) {
   st.readings.filter(r => r.customerId === cid && getReadingRemaining(r) > 0).forEach(r => {
     if (remaining <= 0) return;
 
+    // 1. Penalty
     const pen = Number(r.penaltyAmount || 0);
-    const pApply = Math.min(remaining, pen);
-    penaltyPaid += pApply;
-    remaining = Math.round((remaining - pApply) * 100) / 100;
+    if (pen > 0) {
+      const pApply = Math.min(remaining, pen);
+      penaltyPaid += pApply;
+      r.penaltyAmount = Math.round((pen - pApply) * 100) / 100;
+      remaining = Math.round((remaining - pApply) * 100) / 100;
+    }
 
+    if (remaining <= 0) return;
+
+    // 2. Maintenance
     const maintDue = Math.max(0, Number(r.maintenanceAmount || 0) - Number(r.paidMaintAmount || 0));
-    const mApply = Math.min(remaining, maintDue);
-    r.paidMaintAmount = Number(r.paidMaintAmount || 0) + mApply;
-    maintPaid += mApply;
-    remaining = Math.round((remaining - mApply) * 100) / 100;
+    if (maintDue > 0) {
+      const mApply = Math.min(remaining, maintDue);
+      r.paidMaintAmount = Math.round((Number(r.paidMaintAmount || 0) + mApply) * 100) / 100;
+      maintPaid += mApply;
+      remaining = Math.round((remaining - mApply) * 100) / 100;
+    }
 
+    if (remaining <= 0) return;
+
+    // 3. Base Bill
     const baseDue = Math.max(0, (Number(r.billAmount) - Number(r.maintenanceAmount || 0)) - Number(r.paidAmount || 0));
-    const bApply = Math.min(remaining, baseDue);
-    r.paidAmount = Number(r.paidAmount || 0) + bApply;
-    billPaid += bApply;
-    remaining = Math.round((remaining - bApply) * 100) / 100;
+    if (baseDue > 0) {
+      const bApply = Math.min(remaining, baseDue);
+      r.paidAmount = Math.round((Number(r.paidAmount || 0) + bApply) * 100) / 100;
+      billPaid += bApply;
+      remaining = Math.round((remaining - bApply) * 100) / 100;
+    }
   });
 
-  if (remaining > 0) billPaid += remaining;
+  // Floating point tolerance check (preventing 0.01 leftover due mismatch)
+  if (remaining > 0) {
+    if (remaining < 1.0) {
+      billPaid = Math.round((billPaid + remaining) * 100) / 100;
+      remaining = 0;
+    } else {
+      billPaid += remaining;
+    }
+  }
 
   const payObj = {
     id: "PAY-" + Date.now(),
@@ -2251,25 +2293,46 @@ function submitBulkAmountEntry() {
     st.readings.filter(r => r.customerId === cid && getReadingRemaining(r) > 0).forEach(r => {
       if (remaining <= 0) return;
 
+      // 1. Penalty
       const pen = Number(r.penaltyAmount || 0);
-      const pApply = Math.min(remaining, pen);
-      penaltyPaid += pApply;
-      remaining = Math.round((remaining - pApply) * 100) / 100;
+      if (pen > 0) {
+        const pApply = Math.min(remaining, pen);
+        penaltyPaid += pApply;
+        r.penaltyAmount = Math.round((pen - pApply) * 100) / 100;
+        remaining = Math.round((remaining - pApply) * 100) / 100;
+      }
 
+      if (remaining <= 0) return;
+
+      // 2. Maintenance
       const maintDue = Math.max(0, Number(r.maintenanceAmount || 0) - Number(r.paidMaintAmount || 0));
-      const mApply = Math.min(remaining, maintDue);
-      r.paidMaintAmount = Number(r.paidMaintAmount || 0) + mApply;
-      maintPaid += mApply;
-      remaining = Math.round((remaining - mApply) * 100) / 100;
+      if (maintDue > 0) {
+        const mApply = Math.min(remaining, maintDue);
+        r.paidMaintAmount = Math.round((Number(r.paidMaintAmount || 0) + mApply) * 100) / 100;
+        maintPaid += mApply;
+        remaining = Math.round((remaining - mApply) * 100) / 100;
+      }
 
+      if (remaining <= 0) return;
+
+      // 3. Base Bill
       const baseDue = Math.max(0, (Number(r.billAmount) - Number(r.maintenanceAmount || 0)) - Number(r.paidAmount || 0));
-      const bApply = Math.min(remaining, baseDue);
-      r.paidAmount = Number(r.paidAmount || 0) + bApply;
-      billPaid += bApply;
-      remaining = Math.round((remaining - bApply) * 100) / 100;
+      if (baseDue > 0) {
+        const bApply = Math.min(remaining, baseDue);
+        r.paidAmount = Math.round((Number(r.paidAmount || 0) + bApply) * 100) / 100;
+        billPaid += bApply;
+        remaining = Math.round((remaining - bApply) * 100) / 100;
+      }
     });
 
-    if (remaining > 0) billPaid += remaining;
+    if (remaining > 0) {
+      if (remaining < 1.0) {
+        billPaid = Math.round((billPaid + remaining) * 100) / 100;
+        remaining = 0;
+      } else {
+        billPaid += remaining;
+      }
+    }
 
     const recNo = `REC-${parseBS(date).y}-${st.settings.receiptCounter++}`;
     st.payments.push({
@@ -2287,6 +2350,8 @@ function submitBulkAmountEntry() {
     });
     count++;
   });
+
+  if (count === 0) return showToast("कृपया कम्तिमा एउटा ग्राहकको रकम प्रविष्ट गर्नुहोस्।", "error");
 
   window.recalculateAllDynamicValues(false);
   renderCurrentModule();
@@ -2309,6 +2374,7 @@ function modifyPaymentRecord(payId) {
 
   let refundBill = Number(p.billPaid || 0);
   let refundMaint = Number(p.maintPaid || 0);
+  let refundPenalty = Number(p.penaltyPaid || 0);
 
   // २. रिडिङ/बिलहरूमा गएको भुक्तानी रकम घटाएर फेरि बाँकी देखाउने (Reverse गर्ने)
   st.readings.filter(r => r.customerId === p.customerId).reverse().forEach(r => {
@@ -2321,6 +2387,10 @@ function modifyPaymentRecord(payId) {
       const revM = Math.min(refundMaint, Number(r.paidMaintAmount));
       r.paidMaintAmount = Math.round((Number(r.paidMaintAmount) - revM) * 100) / 100;
       refundMaint = Math.round((refundMaint - revM) * 100) / 100;
+    }
+    if (refundPenalty > 0) {
+      r.penaltyAmount = Math.round((Number(r.penaltyAmount || 0) + refundPenalty) * 100) / 100;
+      refundPenalty = 0;
     }
   });
 
