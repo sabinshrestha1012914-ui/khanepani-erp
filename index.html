@@ -1843,7 +1843,7 @@ function sendNextWhatsappNow(continueLoop = false) {
 }
 
 // ============================================================================
-// 8. AMOUNT ENTRY & PRINTABLE RECEIPT (Fully Fixed & Optimized)
+// 8. AMOUNT ENTRY & PRINTABLE RECEIPT (Fully Updated with CSV Upload/Download)
 // ============================================================================
 let amountEntryMode = "single";
 let selectedSingleCustId = "";
@@ -1861,13 +1861,12 @@ function renderAmountEntryModule() {
   }
   selectedCust = selectedCust || { id: "", name: "", openingDue: 0 };
 
-  const custOpeningDue = Number(selectedCust.openingDue || 0);
-  const custBills = st.readings.filter(r => r.customerId === selectedSingleCustId && getReadingRemaining(r) > 0);
-
-  const dueBase = custBills.reduce((s, r) => s + Math.max(0, (Number(r.billAmount) - Number(r.maintenanceAmount || 0)) - Number(r.paidAmount || 0)), 0);
-  const dueMaint = custBills.reduce((s, r) => s + Math.max(0, Number(r.maintenanceAmount || 0) - Number(r.paidMaintAmount || 0)), 0);
-  const duePen = custBills.reduce((s, r) => s + Number(r.penaltyAmount || 0), 0);
-  const totalDue = Math.round((custOpeningDue + dueBase + dueMaint + duePen) * 100) / 100;
+  const selectedDue = getCustomerCurrentDue(selectedSingleCustId) || { opening: 0, water: 0, maintenance: 0, penalty: 0, total: 0, advanceBalance: 0 };
+  const custOpeningDue = selectedDue.opening;
+  const dueBase = selectedDue.water;
+  const dueMaint = selectedDue.maintenance;
+  const duePen = selectedDue.penalty;
+  const totalDue = selectedDue.total;
 
   return `
     <div class="space-y-6">
@@ -1876,7 +1875,7 @@ function renderAmountEntryModule() {
           <button onclick="amountEntryMode='single'; renderCurrentModule();" class="px-4 py-2 rounded-xl text-xs font-semibold transition cursor-pointer ${amountEntryMode === 'single' ? 'bg-teal-700 text-white' : 'bg-slate-100 text-slate-700'}">
             सिङ्गल अमाउन्ट इन्ट्री & रसिद प्रिन्ट
           </button>
-          <button onclick="amountEntryMode='bulk'; renderCurrentModule();" class="px-4 py-2 rounded-xl text-xs font-semibold transition cursor-pointer ${amountEntryMode === 'bulk' ? 'bg-teal-700 text-white' : 'bg-slate-100 text-slate-700'}">
+          <button onclick="amountEntryMode='bulk'; renderCurrentModule(); setTimeout(updateBulkTotalSum, 50);" class="px-4 py-2 rounded-xl text-xs font-semibold transition cursor-pointer ${amountEntryMode === 'bulk' ? 'bg-teal-700 text-white' : 'bg-slate-100 text-slate-700'}">
             बल्क अमाउन्ट इन्ट्री (Bulk Collection)
           </button>
         </div>
@@ -1907,6 +1906,10 @@ function renderAmountEntryModule() {
             <div class="bg-amber-50 p-3 rounded-xl border border-amber-200">
               <span class="text-amber-800 block">गत वर्षको ओपनिङ बक्यौता:</span>
               <strong class="text-sm text-amber-900 tabular-nums">${fmtMoney(custOpeningDue)}</strong>
+            </div>
+            <div class="bg-emerald-50 p-3 rounded-xl border border-emerald-200">
+              <span class="text-emerald-800 block">अग्रिम जम्मा रकम:</span>
+              <strong class="text-sm text-emerald-900 tabular-nums">${fmtMoney(selectedDue.advanceBalance || 0)}</strong>
             </div>
             <div class="bg-slate-50 p-3 rounded-xl border border-slate-200">
               <span class="text-slate-500 block">बाँकी महसुल रकम:</span>
@@ -1969,10 +1972,26 @@ function renderAmountEntryModule() {
         </div>
       ` : `
         <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-4">
-          <div class="flex items-center justify-between">
-            <h3 class="text-base font-bold text-slate-800">बल्क अमाउन्ट इन्ट्री (एकैपटक धेरै ग्राहकको असुली - पुरानो महिनाबाट स्वतः मिलान हुने)</h3>
-            <input type="text" id="bulk-amt-date" value="${st.activeBSDate}" class="w-28 text-xs font-bold border border-teal-300 bg-teal-50 rounded-xl px-3 py-1.5 text-center">
+          <div class="flex items-center justify-between flex-wrap gap-3">
+            <div>
+              <h3 class="text-base font-bold text-slate-800">बल्क अमाउन्ट इन्ट्री (एकैपटक धेरै ग्राहकको असुली)</h3>
+              <p class="text-xs text-slate-500">तपाईंले सीधै रकम राख्न वा CSV फाइल अपलोड गरेर एकैपटक भर्न सक्नुहुन्छ।</p>
+            </div>
+            
+            <div class="flex items-center gap-2 flex-wrap">
+              <button type="button" onclick="downloadBulkCSVTemplate()" class="bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold px-3 py-1.5 rounded-lg border border-slate-300 flex items-center gap-1.5 cursor-pointer shadow-sm">
+                <i data-lucide="download" class="w-3.5 h-3.5"></i> CSV टेम्प्लेट डाउनलोड
+              </button>
+              
+              <label class="bg-indigo-50 hover:bg-indigo-100 text-indigo-800 text-xs font-semibold px-3 py-1.5 rounded-lg border border-indigo-200 flex items-center gap-1.5 cursor-pointer shadow-sm">
+                <i data-lucide="upload" class="w-3.5 h-3.5"></i> CSV फाइल अपलोड
+                <input type="file" accept=".csv" onchange="handleBulkCSVUpload(event)" class="hidden">
+              </label>
+
+              <input type="text" id="bulk-amt-date" value="${st.activeBSDate}" class="w-28 text-xs font-bold border border-teal-300 bg-teal-50 rounded-xl px-3 py-1.5 text-center">
+            </div>
           </div>
+
           <div class="overflow-x-auto">
             <table class="w-full text-xs text-left">
               <thead class="bg-slate-50 border-b border-slate-200">
@@ -1989,34 +2008,40 @@ function renderAmountEntryModule() {
               </thead>
               <tbody class="divide-y divide-slate-100">
                 ${st.customers.map(c => {
-                  const opDue = Number(c.openingDue || 0);
-                  const custBills = st.readings.filter(r => r.customerId === c.id && getReadingRemaining(r) > 0);
-                  const baseDue = custBills.reduce((s, r) => s + Math.max(0, (Number(r.billAmount) - Number(r.maintenanceAmount || 0)) - Number(r.paidAmount || 0)), 0);
-                  const maintDue = custBills.reduce((s, r) => s + Math.max(0, Number(r.maintenanceAmount || 0) - Number(r.paidMaintAmount || 0)), 0);
-                  const penDue = custBills.reduce((s, r) => s + Number(r.penaltyAmount || 0), 0);
-                  const totalDue = Math.round((opDue + baseDue + maintDue + penDue) * 100) / 100;
+                  const dueSummary = getCustomerCurrentDue(c.id);
+                  const opDue = dueSummary?.opening || 0;
+                  const baseDue = dueSummary?.water || 0;
+                  const maintDue = dueSummary?.maintenance || 0;
+                  const penDue = dueSummary?.penalty || 0;
+                  const totalDue = dueSummary?.total || 0;
                   
                   if (totalDue <= 0) return '';
                   return `
                     <tr>
                       <td class="p-3 font-bold text-teal-800">${c.id}</td>
-                      <td class="p-3 font-semibold">${c.name}</td>
+                      <td class="p-3 font-semibold">${c.name}${Number(c.advanceBalance || 0) > 0 ? `<div class="text-[10px] text-emerald-700">अग्रिम: ${fmtMoney(c.advanceBalance)}</div>` : ""}</td>
                       <td class="p-3 text-right tabular-nums text-amber-700">${fmtMoney(opDue)}</td>
                       <td class="p-3 text-right tabular-nums">${fmtMoney(baseDue)}</td>
                       <td class="p-3 text-right tabular-nums text-amber-800">${fmtMoney(maintDue)}</td>
                       <td class="p-3 text-right tabular-nums text-red-600">${fmtMoney(penDue)}</td>
                       <td class="p-3 text-right font-bold tabular-nums">${fmtMoney(totalDue)}</td>
                       <td class="p-3 text-right">
-                        <input type="number" data-cust-id="${c.id}" placeholder="0" max="${totalDue}" step="0.01" class="bulk-pay-input w-28 text-right border border-slate-300 rounded-lg px-2 py-1 font-bold text-teal-900">
+                        <input type="number" data-cust-id="${c.id}" placeholder="0" max="${totalDue}" step="0.01" oninput="updateBulkTotalSum()" class="bulk-pay-input w-28 text-right border border-slate-300 rounded-lg px-2 py-1 font-bold text-teal-900">
                       </td>
                     </tr>
                   `;
                 }).join("") || `<tr><td colspan="8" class="p-6 text-center text-slate-400">कुनै बाँकी बक्यौता नरहेको वा सबै चुक्ता भइसकेको छ।</td></tr>`}
               </tbody>
+              <tfoot>
+                <tr class="bg-teal-50/80 font-bold border-t-2 border-teal-200">
+                  <td colspan="7" class="p-3 text-right text-teal-900 text-sm">कुल संकलन हुने जम्मा रकम (Grand Total):</td>
+                  <td class="p-3 text-right text-teal-950 tabular-nums text-sm" id="bulk-grand-total-display">रू. 0.00</td>
+                </tr>
+              </tfoot>
             </table>
           </div>
-          <div class="flex justify-end">
-            <button onclick="submitBulkAmountEntry()" class="bg-teal-700 hover:bg-teal-800 text-white text-xs font-semibold px-5 py-2.5 rounded-xl cursor-pointer flex items-center gap-2">
+          <div class="flex justify-end pt-2">
+            <button onclick="submitBulkAmountEntry()" class="bg-teal-700 hover:bg-teal-800 text-white text-xs font-semibold px-5 py-2.5 rounded-xl cursor-pointer flex items-center gap-2 shadow-sm">
               <i data-lucide="check" class="w-4 h-4"></i> सबै बल्क अमाउन्ट सुरक्षित गर्नुहोस्
             </button>
           </div>
@@ -2025,7 +2050,7 @@ function renderAmountEntryModule() {
 
       <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
         <div class="p-4 border-b border-slate-200 flex items-center justify-between">
-          <h3 class="text-sm font-bold text-slate-800">संकलित रसिदहरूको सूची (Modify तथा रसिद प्रिन्ट)</h3>
+          <h3 class="text-sm font-bold text-slate-800">संकलित रसिदहरूको सूची (Print / Modify / Delete)</h3>
         </div>
         <div class="overflow-x-auto">
           <table class="w-full text-xs text-left">
@@ -2039,7 +2064,7 @@ function renderAmountEntryModule() {
                 <th class="p-3 text-right">मर्मत</th>
                 <th class="p-3 text-right">जरिवाना</th>
                 <th class="p-3 text-right">कुल रकम</th>
-                <th class="p-3 text-center">कार्य (Print / Modify)</th>
+                <th class="p-3 text-center">कार्य (Print / Modify / Delete)</th>
               </tr>
             </thead>
             <tbody class="divide-y divide-slate-100">
@@ -2059,8 +2084,16 @@ function renderAmountEntryModule() {
                       <button onclick="printWaterReceipt('${p.id}')" class="px-2.5 py-1 bg-teal-50 hover:bg-teal-100 text-teal-800 border border-teal-200 rounded-lg font-semibold flex items-center gap-1 cursor-pointer">
                         <i data-lucide="printer" class="w-3.5 h-3.5"></i> प्रिन्ट
                       </button>
+                      ${p.allocations && Array.isArray(p.allocations.readings) ? '' : `
+                        <button onclick="reconcileLegacyPaymentAllocation('${p.id}')" class="px-2.5 py-1 bg-blue-50 hover:bg-blue-100 text-blue-800 border border-blue-200 rounded-lg font-semibold cursor-pointer">
+                          हिसाब मिलाउनुहोस्
+                        </button>
+                      `}
                       <button onclick="modifyPaymentRecord('${p.id}')" class="px-2.5 py-1 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 rounded-lg font-semibold cursor-pointer">
                         Modify
+                      </button>
+                      <button onclick="deletePaymentRecord('${p.id}')" class="px-2.5 py-1 bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 rounded-lg font-semibold cursor-pointer">
+                        Delete
                       </button>
                     </td>
                   </tr>
@@ -2072,6 +2105,75 @@ function renderAmountEntryModule() {
       </div>
     </div>
   `;
+}
+
+function updateBulkTotalSum() {
+  let total = 0;
+  document.querySelectorAll(".bulk-pay-input").forEach(inp => {
+    total += Number(inp.value) || 0;
+  });
+  const el = document.getElementById("bulk-grand-total-display");
+  if (el) {
+    el.textContent = fmtMoney(total);
+  }
+}
+
+function downloadBulkCSVTemplate() {
+  const st = window.ERP_STATE;
+  let csvContent = "CustomerId,CustomerName,AmountToPay\n";
+  st.customers.forEach(c => {
+    csvContent += `${c.id},"${c.name.replace(/"/g, '""')}",0\n`;
+  });
+  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.setAttribute('href', url);
+  a.setAttribute('download', `bulk_payment_template_${st.activeBSDate}.csv`);
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  showToast("CSV टेम्प्लेट सफलतापूर्वक डाउनलोड भयो!", "success");
+}
+
+function handleBulkCSVUpload(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    const text = e.target.result;
+    const lines = text.split(/\r\n|\n/);
+    let matchCount = 0;
+
+    for (let i = 0; i < lines.length; i++) {
+      let line = lines[i].trim();
+      if (!line) continue;
+      if (i === 0 && (line.toLowerCase().includes('customerid') || line.toLowerCase().includes('id'))) {
+        continue;
+      }
+      let parts = line.split(',');
+      if (parts.length >= 2) {
+        let cid = parts[0].trim().replace(/^["']|["']$/g, '');
+        let amountStr = parts[parts.length - 1].trim().replace(/^["']|["']$/g, '');
+        let amount = parseFloat(amountStr) || 0;
+
+        if (amount > 0) {
+          let inputElem = document.querySelector(`.bulk-pay-input[data-cust-id="${cid}"]`);
+          if (inputElem) {
+            inputElem.value = amount;
+            matchCount++;
+          }
+        }
+      }
+    }
+    updateBulkTotalSum();
+    showToast(`${matchCount} वटा ग्राहकको रकम फाइलबाट सफलतापूर्वक भरियो!`, "success");
+    event.target.value = '';
+  };
+  reader.onerror = function() {
+    showToast("फाइल पढ्नमा त्रुटि भयो। कृपया फेरि प्रयास गर्नुहोस्।", "error");
+  };
+  reader.readAsText(file);
 }
 
 function generateCustomerDateRangeStatement() {
@@ -2163,183 +2265,451 @@ function generateCustomerDateRangeStatement() {
   openPrintModal(`ग्राहक स्टेटमेन्ट - ${cust.name}`, html);
 }
 
+// ---------------------------------------------------------------------------
+// SAFE RECEIPT ALLOCATION
+// New receipts store exact reading-level allocations. This makes Modify/Delete
+// reversible without touching unrelated receipts or later payments.
+// Legacy receipts without allocations are intentionally protected from delete.
+// ---------------------------------------------------------------------------
+function paymentRound(value) {
+  return Math.round((Number(value) || 0) * 100) / 100;
+}
+
+function getCustomerCurrentDue(customerId) {
+  const st = window.ERP_STATE;
+  const customer = st.customers.find(c => c.id === customerId);
+  if (!customer) return null;
+  const readings = st.readings.filter(r => r.customerId === customerId);
+  let opening = Math.max(0, Number(customer.openingDue || 0));
+  let water = readings.reduce((sum, r) => sum + Math.max(0,
+    Number(r.billAmount || 0) - Number(r.maintenanceAmount || 0) - Number(r.paidAmount || 0)), 0);
+  let maintenance = readings.reduce((sum, r) => sum + Math.max(0,
+    Number(r.maintenanceAmount || 0) - Number(r.paidMaintAmount || 0)), 0);
+  let penalty = readings.reduce((sum, r) => sum + Math.max(0, Number(r.penaltyAmount || 0)), 0);
+
+  // Credit/advance is shown as a reduction of the oldest outstanding balance.
+  const advanceBalance = Math.max(0, Number(customer.advanceBalance || 0));
+  let credit = advanceBalance;
+  const applyCredit = value => {
+    const applied = paymentRound(Math.min(value, credit));
+    credit = paymentRound(credit - applied);
+    return paymentRound(value - applied);
+  };
+  opening = applyCredit(opening);
+  penalty = applyCredit(penalty);
+  maintenance = applyCredit(maintenance);
+  water = applyCredit(water);
+
+  const total = paymentRound(opening + water + maintenance + penalty);
+  return {
+    opening: paymentRound(opening), water: paymentRound(water),
+    maintenance: paymentRound(maintenance), penalty: paymentRound(penalty),
+    advanceBalance, advanceApplied: paymentRound(advanceBalance - credit),
+    total, grossTotal: paymentRound(opening + water + maintenance + penalty + advanceBalance - credit)
+  };
+}
+
+function allocateCustomerPayment(customerId, amount, asOfDate = null, allowAdvance = false) {
+  const st = window.ERP_STATE;
+  const customer = st.customers.find(c => c.id === customerId);
+  if (!customer) throw new Error('ग्राहक फेला परेन।');
+  let remaining = paymentRound(amount);
+  const allocation = { opening: 0, readings: [] };
+
+  // Oldest outstanding dues are settled first; opening balance precedes monthly bills.
+  const openingDue = Math.max(0, Number(customer.openingDue || 0));
+  if (openingDue && remaining > 0) {
+    const applied = paymentRound(Math.min(openingDue, remaining));
+    customer.openingDue = paymentRound(openingDue - applied);
+    allocation.opening = applied;
+    remaining = paymentRound(remaining - applied);
+  }
+
+  const ordered = st.readings
+    .filter(r => {
+      if (r.customerId !== customerId) return false;
+      if (!asOfDate) return true;
+      const readingDate = r.entryDate || r.date || "";
+      return !readingDate || bsToSerialDays(readingDate) <= bsToSerialDays(asOfDate);
+    })
+    .slice()
+    .sort((a, b) => {
+      const da = a.entryDate || a.date || '0000-00-00';
+      const db = b.entryDate || b.date || '0000-00-00';
+      try { return bsToSerialDays(da) - bsToSerialDays(db); }
+      catch (_) { return String(da).localeCompare(String(db)); }
+    });
+
+  for (const reading of ordered) {
+    if (remaining <= 0) break;
+    const item = { readingId: reading.id, penalty: 0, maintenance: 0, water: 0 };
+
+    const penaltyDue = Math.max(0, Number(reading.penaltyAmount || 0));
+    if (penaltyDue > 0 && remaining > 0) {
+      item.penalty = paymentRound(Math.min(penaltyDue, remaining));
+      reading.paidPenaltyAmount = paymentRound(Number(reading.paidPenaltyAmount || 0) + item.penalty);
+      reading.penaltyAmount = paymentRound(penaltyDue - item.penalty);
+      remaining = paymentRound(remaining - item.penalty);
+    }
+
+    const maintenanceDue = Math.max(0, Number(reading.maintenanceAmount || 0) - Number(reading.paidMaintAmount || 0));
+    if (maintenanceDue > 0 && remaining > 0) {
+      item.maintenance = paymentRound(Math.min(maintenanceDue, remaining));
+      reading.paidMaintAmount = paymentRound(Number(reading.paidMaintAmount || 0) + item.maintenance);
+      remaining = paymentRound(remaining - item.maintenance);
+    }
+
+    const waterDue = Math.max(0, Number(reading.billAmount || 0) - Number(reading.maintenanceAmount || 0) - Number(reading.paidAmount || 0));
+    if (waterDue > 0 && remaining > 0) {
+      item.water = paymentRound(Math.min(waterDue, remaining));
+      reading.paidAmount = paymentRound(Number(reading.paidAmount || 0) + item.water);
+      remaining = paymentRound(remaining - item.water);
+    }
+
+    if (item.penalty || item.maintenance || item.water) allocation.readings.push(item);
+  }
+
+  if (remaining > 0.009) {
+    if (!allowAdvance) throw new Error('बुझाएको रकम ग्राहकको कुल बाँकीभन्दा बढी भयो।');
+    customer.advanceBalance = paymentRound(Number(customer.advanceBalance || 0) + remaining);
+    allocation.advance = paymentRound(remaining);
+    allocation.advanceRemaining = paymentRound(remaining);
+    remaining = 0;
+  }
+  return allocation;
+}
+
+// Apply advance credit to outstanding readings in date order. Each application
+// is written back to the originating receipt allocation so Modify/Delete can
+// reverse the exact same amounts later.
+function applyCustomerAdvanceToReadings(customerId) {
+  const st = window.ERP_STATE;
+  const customer = st.customers.find(c => c.id === customerId);
+  if (!customer || Number(customer.advanceBalance || 0) <= 0) return 0;
+
+  let totalApplied = 0;
+  const sourcePayments = st.payments
+    .filter(p => p.customerId === customerId && p.allocations &&
+      Number(p.allocations.advanceRemaining ?? p.allocations.advance ?? 0) > 0)
+    .sort((a, b) => {
+      try { return bsToSerialDays(a.date) - bsToSerialDays(b.date); }
+      catch (_) { return String(a.date || "").localeCompare(String(b.date || "")); }
+    });
+
+  const orderedReadings = st.readings
+    .filter(r => r.customerId === customerId)
+    .slice()
+    .sort((a, b) => {
+      const da = a.entryDate || a.date || "0000-00-00";
+      const db = b.entryDate || b.date || "0000-00-00";
+      try { return bsToSerialDays(da) - bsToSerialDays(db); }
+      catch (_) { return String(da).localeCompare(String(db)); }
+    });
+
+  for (const source of sourcePayments) {
+    let available = paymentRound(Math.min(
+      Number(source.allocations.advanceRemaining ?? source.allocations.advance ?? 0),
+      Number(customer.advanceBalance || 0)
+    ));
+    if (available <= 0) continue;
+
+    for (const reading of orderedReadings) {
+      if (available <= 0) break;
+      const itemList = source.allocations.readings || (source.allocations.readings = []);
+      let item = itemList.find(x => String(x.readingId) === String(reading.id));
+      if (!item) {
+        item = { readingId: reading.id, penalty: 0, maintenance: 0, water: 0 };
+        itemList.push(item);
+      }
+
+      const penaltyDue = Math.max(0, Number(reading.penaltyAmount || 0));
+      if (penaltyDue > 0 && available > 0) {
+        const applied = paymentRound(Math.min(penaltyDue, available));
+        item.penalty = paymentRound(Number(item.penalty || 0) + applied);
+        reading.paidPenaltyAmount = paymentRound(Number(reading.paidPenaltyAmount || 0) + applied);
+        reading.penaltyAmount = paymentRound(penaltyDue - applied);
+        available = paymentRound(available - applied);
+        customer.advanceBalance = paymentRound(Number(customer.advanceBalance || 0) - applied);
+        source.allocations.advanceRemaining = paymentRound(Number(source.allocations.advanceRemaining ?? source.allocations.advance ?? 0) - applied);
+        totalApplied = paymentRound(totalApplied + applied);
+      }
+
+      const maintenanceDue = Math.max(0, Number(reading.maintenanceAmount || 0) - Number(reading.paidMaintAmount || 0));
+      if (maintenanceDue > 0 && available > 0) {
+        const applied = paymentRound(Math.min(maintenanceDue, available));
+        item.maintenance = paymentRound(Number(item.maintenance || 0) + applied);
+        reading.paidMaintAmount = paymentRound(Number(reading.paidMaintAmount || 0) + applied);
+        available = paymentRound(available - applied);
+        customer.advanceBalance = paymentRound(Number(customer.advanceBalance || 0) - applied);
+        source.allocations.advanceRemaining = paymentRound(Number(source.allocations.advanceRemaining ?? source.allocations.advance ?? 0) - applied);
+        totalApplied = paymentRound(totalApplied + applied);
+      }
+
+      const waterDue = Math.max(0, Number(reading.billAmount || 0) - Number(reading.maintenanceAmount || 0) - Number(reading.paidAmount || 0));
+      if (waterDue > 0 && available > 0) {
+        const applied = paymentRound(Math.min(waterDue, available));
+        item.water = paymentRound(Number(item.water || 0) + applied);
+        reading.paidAmount = paymentRound(Number(reading.paidAmount || 0) + applied);
+        available = paymentRound(available - applied);
+        customer.advanceBalance = paymentRound(Number(customer.advanceBalance || 0) - applied);
+        source.allocations.advanceRemaining = paymentRound(Number(source.allocations.advanceRemaining ?? source.allocations.advance ?? 0) - applied);
+        totalApplied = paymentRound(totalApplied + applied);
+      }
+
+      if (!item.penalty && !item.maintenance && !item.water) {
+        const idx = itemList.indexOf(item);
+        if (idx >= 0) itemList.splice(idx, 1);
+      }
+      if (available <= 0) break;
+    }
+
+    source.advanceRemaining = paymentRound(Number(source.allocations.advanceRemaining || 0));
+    source.billPaid = paymentRound((source.allocations.readings || []).reduce((s, x) => s + Number(x.water || 0), 0));
+    source.maintPaid = paymentRound((source.allocations.readings || []).reduce((s, x) => s + Number(x.maintenance || 0), 0));
+    source.penaltyPaid = paymentRound((source.allocations.readings || []).reduce((s, x) => s + Number(x.penalty || 0), 0));
+  }
+  return totalApplied;
+}
+
+function getCustomerDueAsOf(customerId, asOfDate) {
+  const st = window.ERP_STATE;
+  const customer = st.customers.find(c => c.id === customerId);
+  if (!customer) return null;
+  const eligible = st.readings.filter(r => {
+    if (r.customerId !== customerId) return false;
+    const d = r.entryDate || r.date || "";
+    return !d || bsToSerialDays(d) <= bsToSerialDays(asOfDate);
+  });
+  const opening = Math.max(0, Number(customer.openingDue || 0));
+  const water = eligible.reduce((sum, r) => sum + Math.max(0,
+    Number(r.billAmount || 0) - Number(r.maintenanceAmount || 0) - Number(r.paidAmount || 0)), 0);
+  const maintenance = eligible.reduce((sum, r) => sum + Math.max(0,
+    Number(r.maintenanceAmount || 0) - Number(r.paidMaintAmount || 0)), 0);
+  const penalty = eligible.reduce((sum, r) => sum + Math.max(0, Number(r.penaltyAmount || 0)), 0);
+  return {
+    opening: paymentRound(opening),
+    water: paymentRound(water),
+    maintenance: paymentRound(maintenance),
+    penalty: paymentRound(penalty),
+    total: paymentRound(opening + water + maintenance + penalty)
+  };
+}
+
+// Legacy receipts created before reading-level allocation was introduced have
+// valid payment records but no allocation map. This action migrates one receipt
+// only after checking that its full amount can be allocated to dues that existed
+// on that receipt date. It never creates a second receipt or changes totalPaid.
+function reconcileLegacyPaymentAllocation(payId) {
+  const st = window.ERP_STATE;
+  const payment = st.payments.find(p => p.id === payId);
+  if (!payment) return showToast("रसिद फेला परेन।", "error");
+  if (payment.allocations && Array.isArray(payment.allocations.readings)) {
+    return showToast("यो रसिदको हिसाब बाँडफाँट पहिले नै सुरक्षित छ।", "info");
+  }
+  if (!payment.date || !payment.customerId) {
+    return showToast("रसिदमा ग्राहक वा मिति नभएकाले सुरक्षित रूपमा मिलाउन सकिएन।", "error");
+  }
+
+  const amount = paymentRound(payment.totalPaid);
+  const due = getCustomerDueAsOf(payment.customerId, payment.date);
+  if (!due || amount <= 0) return showToast("रसिदको रकम वा ग्राहक विवरण मान्य छैन।", "error");
+  if (amount - due.total > 0.009) {
+    return showToast(
+      `यस रसिद मितिसम्मको बाँकी ${fmtMoney(due.total)} मात्र छ; रसिद ${fmtMoney(amount)} भएकाले स्वतः बाँडफाँट गरिएन।`,
+      "warning"
+    );
+  }
+
+  if (!confirm(
+    `रसिद ${payment.receiptNo} को ${fmtMoney(amount)} रकमलाई ${payment.date} सम्मका पुराना बाँकी Reading मा मिति क्रमअनुसार मिलाउने? रसिद नम्बर र भुक्तानी रकम परिवर्तन हुँदैन।`
+  )) return;
+
+  // Snapshot for rollback if allocation unexpectedly fails.
+  const customer = st.customers.find(c => c.id === payment.customerId);
+  const customerOpeningBefore = Number(customer?.openingDue || 0);
+  const customerAdvanceBefore = Number(customer?.advanceBalance || 0);
+  const readingSnapshot = st.readings
+    .filter(r => r.customerId === payment.customerId)
+    .map(r => ({
+      id: r.id,
+      paidAmount: Number(r.paidAmount || 0),
+      paidMaintAmount: Number(r.paidMaintAmount || 0),
+      paidPenaltyAmount: Number(r.paidPenaltyAmount || 0),
+      penaltyAmount: Number(r.penaltyAmount || 0)
+    }));
+
+  try {
+    const allocations = allocateCustomerPayment(payment.customerId, amount, payment.date, true);
+    payment.allocations = allocations;
+    payment.openingPaid = paymentRound(allocations.opening);
+    payment.billPaid = paymentRound(allocations.readings.reduce((s, x) => s + Number(x.water || 0), 0));
+    payment.maintPaid = paymentRound(allocations.readings.reduce((s, x) => s + Number(x.maintenance || 0), 0));
+    payment.penaltyPaid = paymentRound(allocations.readings.reduce((s, x) => s + Number(x.penalty || 0), 0));
+    payment.advancePaid = paymentRound(allocations.advance || 0);
+
+    window.recalculateAllDynamicValues(false);
+    window.cloudSync?.save();
+    renderCurrentModule();
+    showToast(
+      `रसिद ${payment.receiptNo} को ${fmtMoney(amount)} पुरानो बाँकीमा मिलाइयो। मूल रसिद सुरक्षित छ।`,
+      "success"
+    );
+  } catch (error) {
+    if (customer) { customer.openingDue = customerOpeningBefore; customer.advanceBalance = customerAdvanceBefore; }
+    readingSnapshot.forEach(snap => {
+      const r = st.readings.find(x => x.customerId === payment.customerId && String(x.id) === String(snap.id));
+      if (!r) return;
+      r.paidAmount = snap.paidAmount;
+      r.paidMaintAmount = snap.paidMaintAmount;
+      r.paidPenaltyAmount = snap.paidPenaltyAmount;
+      r.penaltyAmount = snap.penaltyAmount;
+    });
+    delete payment.allocations;
+    return showToast(error.message || "पुरानो रसिद मिलाउन सकिएन; कुनै परिवर्तन राखिएको छैन।", "error");
+  }
+}
+
+function reverseExactPayment(payment) {
+  const st = window.ERP_STATE;
+  if (!payment.allocations || !Array.isArray(payment.allocations.readings)) {
+    throw new Error('यो पुरानो रसिदमा कुन महिनाको रकम चुक्ता भएको थियो भन्ने Allocation सुरक्षित छैन। वास्तविक हिसाब सुरक्षित राख्न यो रसिद स्वतः हटाउन/संशोधन गर्न मिल्दैन।');
+  }
+  const allocatedItems = payment.allocations.readings || [];
+  const matchedReadings = allocatedItems.map(item => ({
+    item,
+    reading: st.readings.find(r => r.customerId === payment.customerId && String(r.id) === String(item.readingId))
+  }));
+  if (matchedReadings.some(x => !x.reading)) {
+    throw new Error('रसिदसँग सम्बन्धित पुरानो Reading फेला परेन। डेटा नमिलेकाले रसिद हटाइएको छैन।');
+  }
+  const customer = st.customers.find(c => c.id === payment.customerId);
+  if (customer) {
+    customer.openingDue = paymentRound(Number(customer.openingDue || 0) + Number(payment.allocations.opening || 0));
+    const unusedAdvance = Number(payment.allocations.advanceRemaining ?? payment.allocations.advance ?? 0);
+    customer.advanceBalance = paymentRound(Math.max(0, Number(customer.advanceBalance || 0) - unusedAdvance));
+  }
+  matchedReadings.forEach(({ item, reading }) => {
+    reading.paidAmount = paymentRound(Math.max(0, Number(reading.paidAmount || 0) - Number(item.water || 0)));
+    reading.paidMaintAmount = paymentRound(Math.max(0, Number(reading.paidMaintAmount || 0) - Number(item.maintenance || 0)));
+    reading.paidPenaltyAmount = paymentRound(Math.max(0, Number(reading.paidPenaltyAmount || 0) - Number(item.penalty || 0)));
+  });
+}
+
+function createCustomerPayment(customerId, date, amount, mode) {
+  const st = window.ERP_STATE;
+  const paid = paymentRound(amount);
+  if (!Number.isFinite(paid) || paid <= 0) throw new Error('शून्यभन्दा बढी मान्य रकम राख्नुहोस्।');
+  // Validate BS date before checking or changing any customer balance.
+  const parsedDate = parseBS(date);
+  const normalizedDate = formatBS(parsedDate.y, parsedDate.m, parsedDate.d);
+  if (normalizedDate !== date) throw new Error('रसिदको नेपाली मिति YYYY-MM-DD ढाँचामा सही राख्नुहोस्।');
+  const due = getCustomerDueAsOf(customerId, normalizedDate);
+  if (!due) throw new Error('ग्राहक फेला परेन।');
+  if (paid - due.total > 0.009) throw new Error(`बुझाएको रकम रसिद मितिसम्मको बाँकी ${fmtMoney(due.total)} भन्दा बढी भयो।`);
+  const allocations = allocateCustomerPayment(customerId, paid, normalizedDate);
+  const year = parsedDate.y;
+  const seq = Number(st.settings.receiptCounter || 1);
+  const receiptNo = `REC-${year}-${seq}`;
+  st.settings.receiptCounter = seq + 1;
+  const payment = {
+    id: 'PAY-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8),
+    receiptNo, customerId, date: normalizedDate, month: st.activeBSDate,
+    openingPaid: allocations.opening,
+    billPaid: paymentRound(allocations.readings.reduce((sum, x) => sum + Number(x.water || 0), 0)),
+    maintPaid: paymentRound(allocations.readings.reduce((sum, x) => sum + Number(x.maintenance || 0), 0)),
+    penaltyPaid: paymentRound(allocations.readings.reduce((sum, x) => sum + Number(x.penalty || 0), 0)),
+    totalPaid: paid, allocations, mode: mode || 'नगद'
+  };
+  st.payments.push(payment);
+  return payment;
+}
+
 function submitSingleAmountEntry(e) {
   e.preventDefault();
   const st = window.ERP_STATE;
-  const cid = selectedSingleCustId;
-  const cust = st.customers.find(c => c.id === cid);
-  if (!cust) return showToast("कृपया वैध ग्राहक छान्नुहोस्।", "error");
-
-  const date = document.getElementById("amt-date").value.trim() || st.activeBSDate;
-  const paid = Number(document.getElementById("amt-paid-input").value) || 0;
-  if (paid <= 0) return showToast("कृपया मान्य रकम राख्नुहोस्।", "error");
-
-  const recNo = `REC-${parseBS(date).y}-${st.settings.receiptCounter++}`;
-  let remaining = paid;
-  let openingPaid = 0;
-  let billPaid = 0;
-  let maintPaid = 0;
-  let penaltyPaid = 0;
-
-  if (Number(cust.openingDue || 0) > 0) {
-    const opApply = Math.min(remaining, Number(cust.openingDue));
-    openingPaid = opApply;
-    cust.openingDue = Math.round((Number(cust.openingDue) - opApply) * 100) / 100;
-    remaining = Math.round((remaining - opApply) * 100) / 100;
+  const customerId = selectedSingleCustId;
+  if (!st.customers.some(c => c.id === customerId)) return showToast('कृपया वैध ग्राहक छान्नुहोस्।', 'error');
+  const date = document.getElementById('amt-date').value.trim() || st.activeBSDate;
+  const paid = Number(document.getElementById('amt-paid-input').value) || 0;
+  try {
+    const payment = createCustomerPayment(customerId, date, paid, 'नगद');
+    window.recalculateAllDynamicValues(false);
+    renderCurrentModule();
+    printWaterReceipt(payment.id);
+    showToast(`रसिद नं. ${payment.receiptNo} सुरक्षित भयो!`, 'success');
+  } catch (error) {
+    showToast(error.message || 'भुक्तानी सुरक्षित गर्न सकिएन।', 'error');
   }
-
-  st.readings.filter(r => r.customerId === cid && getReadingRemaining(r) > 0).forEach(r => {
-    if (remaining <= 0) return;
-
-    const pen = Number(r.penaltyAmount || 0);
-    const pApply = Math.min(remaining, pen);
-    penaltyPaid += pApply;
-    remaining = Math.round((remaining - pApply) * 100) / 100;
-
-    const maintDue = Math.max(0, Number(r.maintenanceAmount || 0) - Number(r.paidMaintAmount || 0));
-    const mApply = Math.min(remaining, maintDue);
-    r.paidMaintAmount = Number(r.paidMaintAmount || 0) + mApply;
-    maintPaid += mApply;
-    remaining = Math.round((remaining - mApply) * 100) / 100;
-
-    const baseDue = Math.max(0, (Number(r.billAmount) - Number(r.maintenanceAmount || 0)) - Number(r.paidAmount || 0));
-    const bApply = Math.min(remaining, baseDue);
-    r.paidAmount = Number(r.paidAmount || 0) + bApply;
-    billPaid += bApply;
-    remaining = Math.round((remaining - bApply) * 100) / 100;
-  });
-
-  if (remaining > 0) billPaid += remaining;
-
-  const payObj = {
-    id: "PAY-" + Date.now(),
-    receiptNo: recNo,
-    customerId: cid,
-    date,
-    month: st.activeBSDate,
-    openingPaid,
-    billPaid,
-    maintPaid,
-    penaltyPaid,
-    totalPaid: paid,
-    mode: "नगद"
-  };
-  st.payments.push(payObj);
-  window.recalculateAllDynamicValues(false);
-  renderCurrentModule();
-  printWaterReceipt(payObj.id);
-  showToast(`रसिद नं. ${recNo} सुरक्षित भयो!`, "success");
 }
 
 function submitBulkAmountEntry() {
   const st = window.ERP_STATE;
-  const date = document.getElementById("bulk-amt-date").value.trim() || st.activeBSDate;
-  let count = 0;
+  const date = document.getElementById('bulk-amt-date').value.trim() || st.activeBSDate;
+  const entries = Array.from(document.querySelectorAll('.bulk-pay-input'))
+    .map(input => ({ customerId: input.dataset.custId, amount: Number(input.value) || 0 }))
+    .filter(x => x.amount > 0);
+  if (!entries.length) return showToast('कृपया कम्तिमा एउटा ग्राहकको रकम प्रविष्ट गर्नुहोस्।', 'error');
 
-  document.querySelectorAll(".bulk-pay-input").forEach(inp => {
-    const paid = Number(inp.value) || 0;
-    if (paid <= 0) return;
-    const cid = inp.dataset.custId;
-    const cust = st.customers.find(c => c.id === cid);
-    if (!cust) return;
+  // Validate all customers before changing any balance.
+  for (const entry of entries) {
+    const due = getCustomerCurrentDue(entry.customerId);
+    if (!due) return showToast(`${entry.customerId} ग्राहक फेला परेन।`, 'error');
+    if (entry.amount - due.total > 0.009) return showToast(`${entry.customerId} को रकम बाँकी ${fmtMoney(due.total)} भन्दा बढी भयो।`, 'error');
+  }
 
-    let remaining = paid;
-    let openingPaid = 0;
-    let billPaid = 0;
-    let maintPaid = 0;
-    let penaltyPaid = 0;
-
-    if (Number(cust.openingDue || 0) > 0) {
-      const opApply = Math.min(remaining, Number(cust.openingDue));
-      openingPaid = opApply;
-      cust.openingDue = Math.round((Number(cust.openingDue) - opApply) * 100) / 100;
-      remaining = Math.round((remaining - opApply) * 100) / 100;
+  const created = [];
+  try {
+    for (const entry of entries) created.push(createCustomerPayment(entry.customerId, date, entry.amount, 'नगद (Bulk)'));
+  } catch (error) {
+    // Roll back this batch only, using the exact allocation saved for each new receipt.
+    for (const payment of created.reverse()) {
+      reverseExactPayment(payment);
+      const index = st.payments.findIndex(p => p.id === payment.id);
+      if (index >= 0) st.payments.splice(index, 1);
     }
-
-    st.readings.filter(r => r.customerId === cid && getReadingRemaining(r) > 0).forEach(r => {
-      if (remaining <= 0) return;
-
-      const pen = Number(r.penaltyAmount || 0);
-      const pApply = Math.min(remaining, pen);
-      penaltyPaid += pApply;
-      remaining = Math.round((remaining - pApply) * 100) / 100;
-
-      const maintDue = Math.max(0, Number(r.maintenanceAmount || 0) - Number(r.paidMaintAmount || 0));
-      const mApply = Math.min(remaining, maintDue);
-      r.paidMaintAmount = Number(r.paidMaintAmount || 0) + mApply;
-      maintPaid += mApply;
-      remaining = Math.round((remaining - mApply) * 100) / 100;
-
-      const baseDue = Math.max(0, (Number(r.billAmount) - Number(r.maintenanceAmount || 0)) - Number(r.paidAmount || 0));
-      const bApply = Math.min(remaining, baseDue);
-      r.paidAmount = Number(r.paidAmount || 0) + bApply;
-      billPaid += bApply;
-      remaining = Math.round((remaining - bApply) * 100) / 100;
-    });
-
-    if (remaining > 0) billPaid += remaining;
-
-    const recNo = `REC-${parseBS(date).y}-${st.settings.receiptCounter++}`;
-    st.payments.push({
-      id: "PAY-" + Date.now() + "-" + count,
-      receiptNo: recNo,
-      customerId: cid,
-      date,
-      month: st.activeBSDate,
-      openingPaid,
-      billPaid,
-      maintPaid,
-      penaltyPaid,
-      totalPaid: paid,
-      mode: "नगद (Bulk)"
-    });
-    count++;
-  });
-
+    window.recalculateAllDynamicValues(false);
+    renderCurrentModule();
+    return showToast(error.message || 'Bulk Collection सुरक्षित गर्न सकिएन।', 'error');
+  }
   window.recalculateAllDynamicValues(false);
   renderCurrentModule();
-  showToast(`${count} जना ग्राहकको बल्क अमाउन्ट इन्ट्री सुरक्षित भयो!`, "success");
+  showToast(`${created.length} जना ग्राहकको बल्क अमाउन्ट सुरक्षित भयो।`, 'success');
 }
 
 function modifyPaymentRecord(payId) {
   const st = window.ERP_STATE;
-  const idx = st.payments.findIndex(p => p.id === payId);
-  if (idx < 0) return;
-  const p = st.payments[idx];
-
-  // १. ओपनिङ बक्यौता फिर्ता गर्ने
-  if (Number(p.openingPaid || 0) > 0) {
-    const cust = st.customers.find(c => c.id === p.customerId);
-    if (cust) {
-      cust.openingDue = Math.round((Number(cust.openingDue || 0) + Number(p.openingPaid)) * 100) / 100;
-    }
+  const index = st.payments.findIndex(p => p.id === payId);
+  if (index < 0) return showToast('रसिद फेला परेन।', 'error');
+  const payment = st.payments[index];
+  if (!payment.allocations || !Array.isArray(payment.allocations.readings)) {
+    return showToast('यो पुरानो रसिदको Allocation विवरण छैन। वास्तविक भुक्तानी नबिग्रियोस् भनेर Modify रोकिएको छ।', 'warning');
   }
-
-  let refundBill = Number(p.billPaid || 0);
-  let refundMaint = Number(p.maintPaid || 0);
-
-  // २. रिडिङ/बिलहरूमा गएको भुक्तानी रकम घटाएर फेरि बाँकी देखाउने (Reverse गर्ने)
-  st.readings.filter(r => r.customerId === p.customerId).reverse().forEach(r => {
-    if (refundBill > 0 && Number(r.paidAmount || 0) > 0) {
-      const rev = Math.min(refundBill, Number(r.paidAmount));
-      r.paidAmount = Math.round((Number(r.paidAmount) - rev) * 100) / 100;
-      refundBill = Math.round((refundBill - rev) * 100) / 100;
-    }
-    if (refundMaint > 0 && Number(r.paidMaintAmount || 0) > 0) {
-      const revM = Math.min(refundMaint, Number(r.paidMaintAmount));
-      r.paidMaintAmount = Math.round((Number(r.paidMaintAmount) - revM) * 100) / 100;
-      refundMaint = Math.round((refundMaint - revM) * 100) / 100;
-    }
-  });
-
-  // ३. payments सूचीबाट यो रसिद हटाउने
-  st.payments.splice(idx, 1);
-  selectedSingleCustId = p.customerId;
-  amountEntryMode = "single";
-  
+  if (!confirm(`रसिद ${payment.receiptNo} संशोधनका लागि हटाउने? रकम पुरानै ग्राहकको बाँकीमा फिर्ता जोडिनेछ।`)) return;
+  try { reverseExactPayment(payment); }
+  catch (error) { return showToast(error.message, 'error'); }
+  st.payments.splice(index, 1);
+  selectedSingleCustId = payment.customerId;
+  amountEntryMode = 'single';
   window.recalculateAllDynamicValues(false);
   renderCurrentModule();
-  showToast(`रसिद ${p.receiptNo} संशोधनका लागि हटाइयो। बक्यौता रकम पुन: जोडिएको छ।`, "info");
+  showToast(`रसिद ${payment.receiptNo} संशोधनका लागि हटाइयो। अब सही रकम पुनः इन्ट्री गर्नुहोस्।`, 'success');
+}
+
+function deletePaymentRecord(payId) {
+  const st = window.ERP_STATE;
+  const index = st.payments.findIndex(p => p.id === payId);
+  if (index < 0) return showToast('रसिद फेला परेन।', 'error');
+  const payment = st.payments[index];
+  if (!payment.allocations || !Array.isArray(payment.allocations.readings)) {
+    return showToast('यो पुरानो रसिदको Reading Allocation सुरक्षित छैन। वास्तविक भुक्तानी नबिग्रियोस् भनेर Delete रोकिएको छ।', 'warning');
+  }
+  if (!confirm(`रसिद ${payment.receiptNo} स्थायी रूपमा Delete गर्ने? ${fmtMoney(payment.totalPaid)} रकम ग्राहकको बक्यौतामा फिर्ता जोडिनेछ।`)) return;
+  try { reverseExactPayment(payment); }
+  catch (error) { return showToast(error.message, 'error'); }
+  st.payments.splice(index, 1);
+  window.recalculateAllDynamicValues(false);
+  renderCurrentModule();
+  showToast(`रसिद ${payment.receiptNo} हटाइयो र रकम बक्यौतामा फिर्ता जोडियो।`, 'success');
 }
 
 function printWaterReceipt(payId) {
