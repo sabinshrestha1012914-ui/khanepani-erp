@@ -2360,6 +2360,20 @@ function allocateCustomerPayment(customerId, amount, asOfDate = null) {
   return allocation;
 }
 
+function getPaymentAllocationCutoffDate(payment) {
+  // Bulk receipts store the active billing date in `month`, while `date`
+  // stores the actual cash-receipt date. If the bulk bill was generated on
+  // the active date and collected on an earlier day in that same cycle,
+  // include that same-cycle reading when reconciling the legacy receipt.
+  const candidates = [payment?.date, payment?.month]
+    .filter(v => typeof v === "string" && /^\\d{4}-\\d{2}-\\d{2}$/.test(v));
+  if (!candidates.length) return payment?.date || "";
+  return candidates.sort((a, b) => {
+    try { return bsToSerialDays(a) - bsToSerialDays(b); }
+    catch (_) { return a.localeCompare(b); }
+  }).at(-1);
+}
+
 function getCustomerDueAsOf(customerId, asOfDate) {
   const st = window.ERP_STATE;
   const customer = st.customers.find(c => c.id === customerId);
@@ -2400,17 +2414,18 @@ function reconcileLegacyPaymentAllocation(payId) {
   }
 
   const amount = paymentRound(payment.totalPaid);
-  const due = getCustomerDueAsOf(payment.customerId, payment.date);
+  const allocationCutoff = getPaymentAllocationCutoffDate(payment);
+  const due = getCustomerDueAsOf(payment.customerId, allocationCutoff);
   if (!due || amount <= 0) return showToast("रसिदको रकम वा ग्राहक विवरण मान्य छैन।", "error");
   if (amount - due.total > 0.009) {
     return showToast(
-      `यस रसिद मितिसम्मको बाँकी ${fmtMoney(due.total)} मात्र छ; रसिद ${fmtMoney(amount)} भएकाले स्वतः बाँडफाँट गरिएन।`,
+      `रसिदको वास्तविक मिति ${payment.date} र Bulk हिसाब मिति ${allocationCutoff} सम्मको बाँकी ${fmtMoney(due.total)} मात्र छ; रसिद ${fmtMoney(amount)} भएकाले स्वतः बाँडफाँट गरिएन।`,
       "warning"
     );
   }
 
   if (!confirm(
-    `रसिद ${payment.receiptNo} को ${fmtMoney(amount)} रकमलाई ${payment.date} सम्मका पुराना बाँकी Reading मा मिति क्रमअनुसार मिलाउने? रसिद नम्बर र भुक्तानी रकम परिवर्तन हुँदैन।`
+    `रसिद ${payment.receiptNo} को ${fmtMoney(amount)} रकमलाई ${allocationCutoff} सम्मका बाँकी Reading मा पुरानोदेखि नयाँ क्रमअनुसार मिलाउने? नगद भुक्तानी मिति ${payment.date} र रसिद नम्बर परिवर्तन हुँदैन।`
   )) return;
 
   // Snapshot for rollback if allocation unexpectedly fails.
@@ -2427,7 +2442,7 @@ function reconcileLegacyPaymentAllocation(payId) {
     }));
 
   try {
-    const allocations = allocateCustomerPayment(payment.customerId, amount, payment.date);
+    const allocations = allocateCustomerPayment(payment.customerId, amount, allocationCutoff);
     payment.allocations = allocations;
     payment.openingPaid = paymentRound(allocations.opening);
     payment.billPaid = paymentRound(allocations.readings.reduce((s, x) => s + Number(x.water || 0), 0));
