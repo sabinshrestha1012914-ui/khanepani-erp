@@ -870,7 +870,7 @@ function getNepaliMonthNumber(monthStr) {
     "आषाढ": 3, "अषाढ": 3,
     "श्रावण": 4,
     "भाद्र": 5, "भदौँ": 5,
-    "आश्विन": 6, "अश्विन": 6,
+    "आश्विन": 6, "अश्विन": 6, "अशोज": 6,
     "कात्तिक": 7,
     "मङ्सिर": 8, "मार्ग": 8, "मार्गशीर्ष": 8,
     "पुस": 9, "पौष": 9,
@@ -7030,8 +7030,1341 @@ function executeClearDemoRecords() {
 }
 </script>
 
-<script src="/erp-extensions.js"></script>
-<script src="/erp-letters.js"></script>
+<script>
+// ============================================================================
+// ERP EXTENSIONS (INLINE FOR SELF-CONTAINED DEPLOYMENT)
+// ============================================================================
+const DEFAULT_COMMITTEE_MEMBERS = [
+  { role: "अध्यक्ष", name: "मोहन कृष्ण श्रेष्ठ", phone: "९८४१९३९३२२" },
+  { role: "उपाध्यक्ष", name: "बाबुकाजी श्रेष्ठ", phone: "९८४३५२८०३९" },
+  { role: "कोषाध्यक्ष", name: "हरिनारायण श्रेष्ठ", phone: "९८४१००८३४६" },
+  { role: "सचिव", name: "पञ्चमाया श्रेष्ठ", phone: "९८४९९४१४८८" },
+  { role: "सदस्य", name: "सहदेव गौतम", phone: "९८४९३४६१९५" },
+  { role: "सदस्य", name: "रोशन श्रेष्ठ", phone: "९८०३४२०९७१" },
+  { role: "सदस्य", name: "विमला सापकोटा", phone: "९८६४२८६७३६" },
+  { role: "व्यवस्थापक", name: "सबिन श्रेष्ठ", phone: "९८१३३११३१९" }
+];
+
+function ensureExtensionState() {
+  const st = window.ERP_STATE;
+  if (!st) return;
+  if (!Array.isArray(st.dartaBook)) st.dartaBook = [];
+  if (!Array.isArray(st.chalaniBook)) st.chalaniBook = [];
+  if (!st.settings) st.settings = {};
+  const s = st.settings;
+  if (s.panNo === undefined) s.panNo = "६२४९४४५८६";
+  if (s.regNo === undefined) s.regNo = "१७६";
+  if (s.estYear === undefined) s.estYear = "२०५६";
+  if (s.patraSankhya === undefined) s.patraSankhya = "२०८३/०८४";
+  if (s.chalaniCounter === undefined) s.chalaniCounter = 1;
+  if (s.dartaCounter === undefined) s.dartaCounter = 1;
+  if (!Array.isArray(s.committeeMembers) || s.committeeMembers.length === 0) {
+    s.committeeMembers = JSON.parse(JSON.stringify(DEFAULT_COMMITTEE_MEMBERS));
+  }
+}
+
+function toNepaliDigits(input) {
+  const map = ["०", "१", "२", "३", "४", "५", "६", "७", "८", "९"];
+  return String(input ?? "").replace(/\d/g, d => map[Number(d)]);
+}
+
+function formatNepaliMoney(num) {
+  const formatted = Number(num || 0).toLocaleString("en-IN", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  });
+  return "रू. " + toNepaliDigits(formatted);
+}
+
+function formatCleanAmount(val) {
+  const num = Math.round((Number(val) || 0) * 100) / 100;
+  return Number.isInteger(num) ? String(num) : num.toFixed(2);
+}
+
+function escapeHtmlSafe(val) {
+  return String(val ?? "").replace(/[&<>"']/g, ch => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+  }[ch]));
+}
+
+function getCustomerPreviousDueForMonth(customerId, monthName, currentReading = null) {
+  const st = window.ERP_STATE;
+  const c = st.customers.find(x => x.id === customerId);
+  if (!c) return 0;
+
+  let prevDue = Math.max(0, Number(c.openingDue || 0));
+  const targetMonthNum = getNepaliMonthNumber(monthName);
+  const targetYear = currentReading
+    ? (Number(currentReading.year) || parseBS(currentReading.entryDate || st.activeBSDate).y)
+    : parseBS(st.activeBSDate).y;
+  const targetYM = targetMonthNum > 0 ? (targetYear * 12 + targetMonthNum) : 0;
+
+  st.readings.forEach(r => {
+    if (r.customerId !== customerId) return;
+    if (currentReading && String(r.id) === String(currentReading.id)) return;
+    if (!currentReading && String(r.month || "").trim() === String(monthName || "").trim()) {
+      const rYr = Number(r.year) || parseBS(r.entryDate || st.activeBSDate).y;
+      if (rYr === targetYear) return;
+    }
+
+    const rMonthNum = getNepaliMonthNumber(r.month);
+    const rYear = Number(r.year) || parseBS(r.entryDate || st.activeBSDate).y;
+    const rYM = rMonthNum > 0 ? (rYear * 12 + rMonthNum) : 0;
+
+    let isEarlier = false;
+    if (targetYM > 0 && rYM > 0) {
+      isEarlier = rYM < targetYM;
+    } else if (currentReading?.entryDate && r.entryDate) {
+      isEarlier = bsToSerialDays(r.entryDate) < bsToSerialDays(currentReading.entryDate);
+    } else {
+      isEarlier = String(r.month || "").trim() !== String(monthName || "").trim();
+    }
+
+    if (isEarlier) {
+      prevDue += getReadingRemaining(r) + Number(r.penaltyAmount || 0);
+    }
+  });
+
+  return Math.round(prevDue * 100) / 100;
+}
+
+function buildReadingWhatsappMessage(c, r) {
+  const st = window.ERP_STATE;
+  const maintTotal = Number(r.maintenanceAmount || 0);
+  const waterBillTotal = Math.max(0, Number(r.billAmount || 0) - maintTotal);
+  const prevDue = getCustomerPreviousDueForMonth(c.id, r.month, r);
+  const curPenalty = Number(r.penaltyAmount || 0);
+  const bakyauta = Math.round((prevDue + curPenalty) * 100) / 100;
+  const advApplied = getReadingAdvanceApplied(r.id);
+  const currentRem = getReadingRemaining(r) + curPenalty;
+  const totalPayable = Math.max(0, Math.round((currentRem + prevDue) * 100) / 100);
+  const committeeTitle = st.settings.committeeName && st.settings.committeeName !== "तपाईंको समितिको नाम"
+    ? st.settings.committeeName
+    : "प्रगती जल उपभोक्ता समिति";
+
+  const advLine = advApplied > 0 ? `\nअग्रिम मिलान (-): ${formatCleanAmount(advApplied)}` : "";
+
+  return [
+    `खानेपानी विल`,
+    ``,
+    `ग्राहक नं. ${c.id}`,
+    `नाम: ${c.name}`,
+    `महिना: ${r.month}`,
+    `युनिट: ${r.units}`,
+    `विल रकम: ${formatCleanAmount(waterBillTotal)}`,
+    `बक्यौता: ${formatCleanAmount(bakyauta)}`,
+    `मर्मत: ${formatCleanAmount(maintTotal)}${advLine}`,
+    `जम्मा रकम : ${formatCleanAmount(totalPayable)}`,
+    `कृपया समयमा पानीको विल भुक्तानी गर्नुहोला ।`,
+    ``,
+    committeeTitle
+  ].join("\n");
+}
+
+function sendSingleReadingWhatsapp(custId, month) {
+  const st = window.ERP_STATE;
+  const c = st.customers.find(x => x.id === custId);
+  const r = st.readings.find(x => x.customerId === custId && x.month === month);
+  if (!c || !r) return showToast("यो महिनाको रिडिङ भेटिएन।", "error");
+  const phoneClean = (c.phone || "").replace(/\D/g, "");
+  if (!phoneClean) return showToast(`${c.name} को फोन नम्बर दर्ता छैन।`, "error");
+  const fullPhone = phoneClean.startsWith("977") ? phoneClean : "977" + phoneClean;
+  window.open(`https://wa.me/${fullPhone}?text=${encodeURIComponent(buildReadingWhatsappMessage(c, r))}`, "_blank");
+}
+
+window.openBulkWhatsappModal = function(month) {
+  const st = window.ERP_STATE;
+  const list = st.readings.filter(r => r.month === month);
+  if (!list.length) return showToast(`${month} महिनाको रिडिङ इन्ट्री भेटिएन। पहिले युनिट इन्ट्री गर्नुहोस्।`, "error");
+
+  waQueue = list.map(r => {
+    const c = st.customers.find(x => x.id === r.customerId) || { id: r.customerId, name: r.customerId, phone: "" };
+    return { customer: c, msg: buildReadingWhatsappMessage(c, r), sent: false };
+  });
+  waIndex = 0;
+  clearInterval(waTimerHandle);
+  updateWhatsappModalUI();
+  document.getElementById("whatsapp-modal").classList.remove("hidden");
+  document.getElementById("whatsapp-modal").classList.add("flex");
+};
+
+window.renderUnitEntryModule = function() {
+  const st = window.ERP_STATE;
+  const activeRule = getActiveTariffRule(st.activeBSDate);
+  const monthReadings = st.readings.filter(r => r.month === selectedUnitMonth);
+
+  return `
+    <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-4">
+      <div class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 pb-4">
+        <div>
+          <h3 class="text-base font-bold text-slate-800">मासिक बल्क युनिट इन्ट्री तथा मर्मत शुल्क (Bulk Reading & Maintenance)</h3>
+          <p class="text-xs text-slate-500">लागू दर: न्यूनतम ${activeRule.minUnits} युनिट सम्म ${fmtMoney(activeRule.minAmount)}, अतिरिक्त रु. ${activeRule.extraRate}/युनिट</p>
+        </div>
+        <div class="flex flex-wrap items-center gap-2">
+          <div>
+            <label class="block text-[10px] font-semibold text-slate-500">महिना छान्नुहोस्</label>
+            <select id="unit-month-select" onchange="selectedUnitMonth = this.value; renderCurrentModule();" class="text-xs font-bold border border-slate-300 rounded-xl px-3 py-2 bg-slate-50">
+              ${NEPALI_MONTHS.map(m => `<option value="${m}" ${m === selectedUnitMonth ? 'selected' : ''}>${m}</option>`).join("")}
+            </select>
+          </div>
+          <div>
+            <label class="block text-[10px] font-semibold text-slate-500">इन्ट्री मिति (Auto BS)</label>
+            <input type="text" id="unit-entry-date" value="${st.activeBSDate}" class="w-28 text-xs font-bold border border-teal-300 bg-teal-50 text-teal-950 rounded-xl px-3 py-2">
+          </div>
+          <div>
+            <label class="block text-[10px] font-semibold text-slate-500">ग्राहक स्टेटमेन्ट</label>
+            <select id="header-customer-select" class="text-xs font-bold border border-indigo-300 rounded-xl px-3 py-2 bg-indigo-50/50 text-indigo-950">
+              ${st.customers.length ? st.customers.map(c => `<option value="${c.id}">${c.id} - ${c.name}</option>`).join("") : `<option value="">-- ग्राहक छैन --</option>`}
+            </select>
+          </div>
+          <div class="pt-4">
+            <button onclick="openCustomerHistoryModal(document.getElementById('header-customer-select').value)" class="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold px-3 py-2 rounded-xl shadow-sm flex items-center gap-1">
+              📊 स्टेटमेन्ट
+            </button>
+          </div>
+          <div class="pt-4">
+            <button onclick="openBulkWhatsappModal('${selectedUnitMonth}')" class="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold px-4 py-2 rounded-xl shadow-sm flex items-center gap-1.5">
+              <i data-lucide="message-circle" class="w-4 h-4"></i> Bulk WhatsApp (${monthReadings.length})
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div class="overflow-x-auto">
+        <table class="w-full text-xs text-left">
+          <thead class="bg-slate-50 text-slate-700 font-semibold border-b border-slate-200">
+            <tr>
+              <th class="p-3">आइडी</th>
+              <th class="p-3">ग्राहकको नाम (फोन)</th>
+              <th class="p-3 text-right">साविक अङ्क</th>
+              <th class="p-3 w-28 text-right">हालको अङ्क *</th>
+              <th class="p-3 w-28 text-right">मर्मत खर्च (रु.)</th>
+              <th class="p-3 text-right">खपत युनिट</th>
+              <th class="p-3 text-right">जम्मा बिल / अग्रिम (-)</th>
+              <th class="p-3 text-right">तिर्नुपर्ने (बाँकी)</th>
+              <th class="p-3 text-center">अवस्था / WhatsApp</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-slate-100">
+            ${st.customers.map(c => {
+              const existing = monthReadings.find(r => r.customerId === c.id);
+              const prev = existing ? existing.prevReading : c.lastReading;
+              const curr = existing ? existing.currReading : "";
+              const maint = existing ? (existing.maintenanceAmount || 0) : "";
+              const units = existing ? existing.units : 0;
+              const bill = existing ? Number(existing.billAmount || 0) : 0;
+              const advApplied = existing ? getReadingAdvanceApplied(existing.id) : 0;
+              const directPaid = existing ? Math.max(0, Math.round((getReadingPaidTotal(existing) - advApplied) * 100) / 100) : 0;
+              const custRemAdv = Math.max(0, Number(c.advanceBalance || 0));
+              const totalAvailAdv = Math.round((custRemAdv + advApplied) * 100) / 100;
+              const shownAdv = existing ? advApplied : 0;
+              const prevDue = getCustomerPreviousDueForMonth(c.id, selectedUnitMonth, existing || null);
+              const netPayable = existing ? Math.max(0, Math.round((getReadingRemaining(existing) + Number(existing.penaltyAmount || 0)) * 100) / 100) : 0;
+              return `
+                <tr class="hover:bg-slate-50" data-avail-adv="${totalAvailAdv}" data-direct-paid="${directPaid}" data-penalty="${existing ? Number(existing.penaltyAmount || 0) : 0}">
+                  <td class="p-3 font-bold text-teal-800">${escapeHtmlSafe(c.id)}</td>
+                  <td class="p-3 font-semibold">
+                    ${escapeHtmlSafe(c.name)}
+                    <div class="text-[10px] text-slate-400">${escapeHtmlSafe(c.phone)}</div>
+                    ${custRemAdv > 0 ? `<div class="text-[10px] font-bold text-emerald-700">बाँकी अग्रिम: -${fmtMoney(custRemAdv)}</div>` : ''}
+                    ${prevDue > 0 ? `<div class="text-[10px] font-bold text-rose-700">पहिलेको बाँकी: +${fmtMoney(prevDue)}</div>` : ''}
+                  </td>
+                  <td class="p-3 text-right font-mono font-semibold" id="prev-${c.id}">${prev}</td>
+                  <td class="p-3 text-right">
+                    <input type="number" min="${prev}" value="${curr}" data-cust-id="${c.id}" data-prev="${prev}"
+                      oninput="previewRowReading(this)"
+                      class="bulk-reading-input w-24 text-right font-bold border border-slate-300 rounded-lg px-2 py-1.5 focus:ring-2 focus:ring-teal-600 outline-none">
+                  </td>
+                  <td class="p-3 text-right">
+                    <input type="number" min="0" value="${maint}" data-cust-id="${c.id}" data-prev="${prev}"
+                      oninput="previewRowReading(this)"
+                      class="bulk-maint-input w-24 text-right font-bold border border-amber-300 bg-amber-50/40 rounded-lg px-2 py-1.5 focus:ring-2 focus:ring-amber-600 outline-none" placeholder="0">
+                  </td>
+                  <td class="p-3 text-right font-bold tabular-nums text-slate-700" id="units-${c.id}">${units}</td>
+                  <td class="p-3 text-right tabular-nums" id="bill-${c.id}">
+                    <div class="font-bold text-teal-800">${fmtMoney(bill)}</div>
+                    ${shownAdv > 0 ? `<div class="text-[10px] font-bold text-emerald-700">- ${fmtMoney(shownAdv)} (अग्रिम)</div>` : (custRemAdv > 0 && !existing ? `<div class="text-[10px] font-semibold text-emerald-700">अग्रिम: -${fmtMoney(custRemAdv)}</div>` : '')}
+                  </td>
+                  <td class="p-3 text-right font-bold tabular-nums ${netPayable > 0 ? 'text-rose-700' : 'text-emerald-700'}" id="net-${c.id}">
+                    ${existing ? fmtMoney(netPayable) : (custRemAdv > 0 ? `<span class="text-[11px] text-emerald-700">बिल - अग्रिम</span>` : fmtMoney(0))}
+                  </td>
+                  <td class="p-3 text-center">
+                    <div class="inline-flex items-center gap-1">
+                      ${existing
+                        ? `<span class="px-2 py-0.5 rounded-full text-[10px] font-semibold ${netPayable <= 0 ? 'bg-emerald-100 text-emerald-800' : 'bg-teal-100 text-teal-800'}">${netPayable <= 0 ? 'चुक्ता' : 'सुरक्षित'}</span>
+                           <button type="button" onclick="sendSingleReadingWhatsapp('${c.id}','${selectedUnitMonth}')" title="WhatsApp पठाउनुहोस्" class="px-2 py-0.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-[10px] font-semibold">WA</button>`
+                        : `<span class="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-slate-100 text-slate-500">बाँकी</span>`
+                      }
+                    </div>
+                  </td>
+                </tr>
+              `;
+            }).join("") || `<tr><td colspan="9" class="p-6 text-center text-slate-400">पहिले KYC मेनुबाट ग्राहक दर्ता गर्नुहोस्।</td></tr>`}
+          </tbody>
+        </table>
+      </div>
+
+      <div class="flex justify-end pt-2">
+        <button onclick="saveBulkReadings()" class="bg-teal-700 hover:bg-teal-800 text-white text-xs font-semibold px-6 py-2.5 rounded-xl shadow-md flex items-center gap-2">
+          <i data-lucide="check-circle-2" class="w-4 h-4"></i> ${selectedUnitMonth} महिनाको बल्क रिडिङ र मर्मत शुल्क सेभ / अपडेट गर्नुहोस्
+        </button>
+      </div>
+    </div>
+  `;
+};
+
+function formatAdvOrPrevDueCell(advShown, prevDue, compact = false) {
+  const parts = [];
+  if (advShown > 0) parts.push(`<span class="text-emerald-700 font-bold">अग्रिम: -${fmtMoney(advShown)}</span>`);
+  if (prevDue > 0) parts.push(`<span class="text-rose-700 font-bold">बाँकी: +${fmtMoney(prevDue)}</span>`);
+  if (parts.length === 0) return "-";
+  return compact ? parts.join("<br>") : parts.join("<div></div>");
+}
+
+window.renderReadingPrintModule = function() {
+  const st = window.ERP_STATE;
+  const s = st.settings;
+
+  return `
+    <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-5">
+      <div class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 pb-4">
+        <div>
+          <h3 class="text-base font-bold text-slate-800">मिटर रिडिङ रजिस्टर सिट तथा ग्राहक रिडिङ बिल प्रिन्ट (A4)</h3>
+          <p class="text-xs text-slate-500">अग्रिम भुक्तानी वा पहिलेको तिर्न बाँकी रकम एउटै स्तम्भमा स्पष्ट देखिन्छ।</p>
+        </div>
+        <div class="flex flex-wrap items-center gap-2">
+          <select onchange="printReadingMonth=this.value; renderCurrentModule();" class="text-xs font-bold border border-slate-300 rounded-xl px-3 py-2 bg-slate-50">
+            ${NEPALI_MONTHS.map(m => `<option value="${m}" ${m === printReadingMonth ? 'selected' : ''}>${m} महिना</option>`).join("")}
+          </select>
+          <button onclick="openA4FieldReadingSheet()" class="bg-teal-700 hover:bg-teal-800 text-white text-xs font-semibold px-4 py-2 rounded-xl flex items-center gap-1.5">
+            <i data-lucide="table" class="w-4 h-4"></i> A4 फिल्ड रिडिङ सिट प्रिन्ट
+          </button>
+          <button onclick="openBulkCustomerReadingSlips()" class="bg-sky-700 hover:bg-sky-800 text-white text-xs font-semibold px-4 py-2 rounded-xl flex items-center gap-1.5">
+            <i data-lucide="scissors" class="w-4 h-4"></i> बल्क ग्राहक रिडिङ बिल प्रिन्ट
+          </button>
+          <button onclick="switchModule('notice-letter')" class="bg-amber-600 hover:bg-amber-700 text-white text-xs font-semibold px-4 py-2 rounded-xl flex items-center gap-1.5">
+            <i data-lucide="file-text" class="w-4 h-4"></i> ७ दिने सूचना चिठी
+          </button>
+        </div>
+      </div>
+
+      <div class="border border-slate-300 rounded-xl p-5 bg-slate-50">
+        <div class="text-center mb-4">
+          <h4 class="font-bold text-base text-slate-900">${escapeHtmlSafe(s.committeeName)}</h4>
+          <p class="text-xs text-slate-600">${escapeHtmlSafe(s.address)} | मिटर रिडिङ फिल्ड रजिस्टर (${printReadingMonth} महिना - ${parseBS(st.activeBSDate).y})</p>
+        </div>
+        <div class="overflow-x-auto bg-white rounded-lg border border-slate-300">
+          <table class="w-full text-xs border-collapse">
+            <thead>
+              <tr class="bg-slate-100 border-b border-slate-300">
+                <th class="border-r border-slate-300 p-2 text-center w-12">क्र.सं.</th>
+                <th class="border-r border-slate-300 p-2 text-left w-24">ग्राहक आइडी</th>
+                <th class="border-r border-slate-300 p-2 text-left">ग्राहकको नाम</th>
+                <th class="border-r border-slate-300 p-2 text-right w-24">साविक अङ्क</th>
+                <th class="border-r border-slate-300 p-2 text-center w-24">हालको अङ्क</th>
+                <th class="border-r border-slate-300 p-2 text-center w-20">खपत युनिट</th>
+                <th class="border-r border-slate-300 p-2 text-right w-24">बिल रकम</th>
+                <th class="border-r border-slate-300 p-2 text-right w-36">अग्रिम (-) / पहिलेको बाँकी (+)</th>
+                <th class="p-2 text-right w-28">कुल तिर्नुपर्ने (रू.)</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-200">
+              ${st.customers.map((c, i) => {
+                const rd = st.readings.find(r => r.customerId === c.id && r.month === printReadingMonth);
+                const advApplied = rd ? getReadingAdvanceApplied(rd.id) : 0;
+                const custAdv = Number(c.advanceBalance || 0);
+                const advShown = rd ? advApplied : custAdv;
+                const prevDue = getCustomerPreviousDueForMonth(c.id, printReadingMonth, rd || null);
+                const totalPayable = rd
+                  ? Math.round((getReadingRemaining(rd) + Number(rd.penaltyAmount || 0) + prevDue) * 100) / 100
+                  : null;
+                return `
+                <tr>
+                  <td class="border-r border-slate-300 p-2 text-center">${i + 1}</td>
+                  <td class="border-r border-slate-300 p-2 font-bold">${escapeHtmlSafe(c.id)}</td>
+                  <td class="border-r border-slate-300 p-2 font-semibold">${escapeHtmlSafe(c.name)}</td>
+                  <td class="border-r border-slate-300 p-2 text-right font-mono font-bold">${rd ? rd.prevReading : c.lastReading}</td>
+                  <td class="border-r border-slate-300 p-2 text-right font-mono">${rd ? rd.currReading : ''}</td>
+                  <td class="border-r border-slate-300 p-2 text-right">${rd ? rd.units : ''}</td>
+                  <td class="border-r border-slate-300 p-2 text-right">${rd ? fmtMoney(rd.billAmount) : ''}</td>
+                  <td class="border-r border-slate-300 p-2 text-right">${formatAdvOrPrevDueCell(advShown, prevDue, false)}</td>
+                  <td class="p-2 text-right font-bold ${totalPayable !== null && totalPayable > 0 ? 'text-rose-700' : 'text-emerald-700'}">
+                    ${totalPayable !== null ? fmtMoney(totalPayable) : (prevDue > 0 ? `<span class="text-rose-700 text-[11px]">${fmtMoney(prevDue)} + नयाॅ</span>` : '')}
+                  </td>
+                </tr>
+              `;
+              }).join("")}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  `;
+};
+
+window.openA4FieldReadingSheet = function() {
+  const st = window.ERP_STATE;
+  const s = st.settings;
+  const n = st.customers.length;
+  let fontSizePx = 10.5, cellPad = "3.5px 5px", lineHeight = "1.2", zoomScale = 1;
+  if (n > 26 && n <= 38) { fontSizePx = 9.5; cellPad = "2.2px 4px"; lineHeight = "1.15"; }
+  else if (n > 38 && n <= 52) { fontSizePx = 9; cellPad = "1.4px 4px"; lineHeight = "1.1"; }
+  else if (n > 52) {
+    fontSizePx = 8.5; cellPad = "1px 3px"; lineHeight = "1.05";
+    const estHeight = 110 + n * 14;
+    if (estHeight > 940) zoomScale = Math.max(0.5, Math.floor((940 / estHeight) * 100) / 100);
+  }
+
+  const tdStyle = `padding:${cellPad};line-height:${lineHeight};`;
+  const html = `
+    <div class="field-sheet-onepage" style="font-size:${fontSizePx}px;${zoomScale < 1 ? `zoom:${zoomScale};` : ''}">
+      <div class="text-center border-b-2 border-slate-800 pb-1.5 mb-2">
+        <h2 class="text-base font-bold leading-tight">${escapeHtmlSafe(s.committeeName)}</h2>
+        <p class="text-[11px] leading-tight">${escapeHtmlSafe(s.address)} | फोन: ${escapeHtmlSafe(s.phone)}</p>
+        <div class="mt-0.5 font-bold text-xs underline">फिल्ड मिटर रिडिङ लगत सिट - ${printReadingMonth} महिना (${parseBS(st.activeBSDate).y})</div>
+      </div>
+      <table class="w-full border-collapse border border-slate-800" style="font-size:${fontSizePx}px;">
+        <thead>
+          <tr class="bg-slate-100">
+            <th class="border border-slate-800 text-center whitespace-nowrap" style="${tdStyle}width:28px;">क्र.सं.</th>
+            <th class="border border-slate-800 text-center whitespace-nowrap" style="${tdStyle}width:54px;">आइडी</th>
+            <th class="border border-slate-800 text-left" style="${tdStyle}">ग्राहकको नाम</th>
+            <th class="border border-slate-800 text-right whitespace-nowrap" style="${tdStyle}width:48px;">साविक</th>
+            <th class="border border-slate-800 text-center whitespace-nowrap" style="${tdStyle}width:58px;">हालको अङ्क</th>
+            <th class="border border-slate-800 text-center whitespace-nowrap" style="${tdStyle}width:42px;">युनिट</th>
+            <th class="border border-slate-800 text-right whitespace-nowrap" style="${tdStyle}width:62px;">बिल रकम</th>
+            <th class="border border-slate-800 text-right whitespace-nowrap" style="${tdStyle}width:88px;">अग्रिम / पहिलेको बाँकी</th>
+            <th class="border border-slate-800 text-right whitespace-nowrap" style="${tdStyle}width:68px;">कुल तिर्नुपर्ने</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${st.customers.map((c, idx) => {
+            const rd = st.readings.find(r => r.customerId === c.id && r.month === printReadingMonth);
+            const advApplied = rd ? getReadingAdvanceApplied(rd.id) : 0;
+            const advShown = rd ? advApplied : Number(c.advanceBalance || 0);
+            const prevDue = getCustomerPreviousDueForMonth(c.id, printReadingMonth, rd || null);
+            const totalPayable = rd ? Math.round((getReadingRemaining(rd) + Number(rd.penaltyAmount || 0) + prevDue) * 100) / 100 : null;
+            return `
+            <tr>
+              <td class="border border-slate-800 text-center tabular-nums whitespace-nowrap" style="${tdStyle}">${idx + 1}</td>
+              <td class="border border-slate-800 font-bold text-center whitespace-nowrap" style="${tdStyle}">${escapeHtmlSafe(c.id)}</td>
+              <td class="border border-slate-800 font-semibold whitespace-nowrap overflow-hidden" style="${tdStyle}">${escapeHtmlSafe(c.name)}</td>
+              <td class="border border-slate-800 text-right font-bold tabular-nums whitespace-nowrap" style="${tdStyle}">${rd ? rd.prevReading : c.lastReading}</td>
+              <td class="border border-slate-800 text-right tabular-nums whitespace-nowrap" style="${tdStyle}">${rd ? rd.currReading : ''}</td>
+              <td class="border border-slate-800 text-right tabular-nums whitespace-nowrap" style="${tdStyle}">${rd ? rd.units : ''}</td>
+              <td class="border border-slate-800 text-right tabular-nums whitespace-nowrap" style="${tdStyle}">${rd ? fmtMoney(rd.billAmount) : ''}</td>
+              <td class="border border-slate-800 text-right tabular-nums whitespace-nowrap" style="${tdStyle}">${formatAdvOrPrevDueCell(advShown, prevDue, true)}</td>
+              <td class="border border-slate-800 text-right font-bold tabular-nums whitespace-nowrap" style="${tdStyle}">${totalPayable !== null ? fmtMoney(totalPayable) : ''}</td>
+            </tr>
+          `;
+          }).join("")}
+        </tbody>
+      </table>
+      <div class="flex justify-between pt-3 text-[11px]">
+        <div>मिटर रिडरको सही: ___________________</div>
+        <div>प्रमाणित गर्ने: ___________________</div>
+      </div>
+    </div>
+  `;
+  openPrintModal(`A4 फिल्ड मिटर रिडिङ सिट - ${printReadingMonth} (१ पृष्ठ)`, html);
+};
+
+window.openBulkCustomerReadingSlips = function() {
+  const st = window.ERP_STATE;
+  const s = st.settings;
+  const perPage = 8;
+  const totalPages = Math.max(1, Math.ceil(st.customers.length / perPage));
+  const pages = [];
+
+  for (let p = 0; p < st.customers.length; p += perPage) {
+    const chunk = st.customers.slice(p, p + perPage);
+    const pageNum = Math.floor(p / perPage) + 1;
+    pages.push(`
+      <div class="bulk-slip-page ${pageNum > 1 ? 'mt-4 pt-4 border-t-2 border-dotted border-slate-300 print:mt-0 print:pt-0 print:border-0' : ''}">
+        <div class="no-print text-[10px] font-semibold text-slate-500 mb-2 flex justify-between">
+          <span>A4 प्रिन्ट पृष्ठ ${pageNum} / ${totalPages}</span>
+          <span>प्रति पृष्ठ अधिकतम ${perPage} बिल (नखप्टिने लेआउट)</span>
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          ${chunk.map(c => {
+            const rd = st.readings.find(r => r.customerId === c.id && r.month === printReadingMonth);
+            const advApplied = rd ? getReadingAdvanceApplied(rd.id) : 0;
+            const custAdv = Number(c.advanceBalance || 0);
+            const advShown = rd ? advApplied : custAdv;
+            const prevDue = getCustomerPreviousDueForMonth(c.id, printReadingMonth, rd || null);
+            const totalPayable = rd ? Math.round((getReadingRemaining(rd) + Number(rd.penaltyAmount || 0) + prevDue) * 100) / 100 : null;
+            return `
+            <div class="bulk-slip-card border-2 border-dashed border-slate-600 p-3 rounded-lg text-[11px] leading-snug space-y-1 bg-white">
+              <div class="font-bold text-center border-b border-slate-400 pb-1 text-xs truncate">${escapeHtmlSafe(s.committeeName)}</div>
+              <div class="flex justify-between"><span><strong>महिना:</strong> ${printReadingMonth}</span><span><strong>आइडी:</strong> ${escapeHtmlSafe(c.id)}</span></div>
+              <div class="truncate"><strong>ग्राहकको नाम:</strong> ${escapeHtmlSafe(c.name)}</div>
+              <div class="text-[10px] text-slate-700 truncate"><strong>ठेगाना:</strong> ${escapeHtmlSafe(c.address || '-')}</div>
+              <div class="grid grid-cols-2 gap-x-2 gap-y-0.5 pt-1 border-t border-slate-300">
+                <div><strong>साविक अङ्क:</strong> ${rd ? rd.prevReading : c.lastReading}</div>
+                <div><strong>हालको अङ्क:</strong> ${rd ? rd.currReading : '________'}</div>
+                <div><strong>खपत युनिट:</strong> ${rd ? rd.units : '________'}</div>
+                <div><strong>उठेको बिल:</strong> ${rd ? fmtMoney(rd.billAmount) : '________'}</div>
+                <div class="col-span-2"><strong>अग्रिम (-) / पहिलेको बाँकी (+):</strong> ${formatAdvOrPrevDueCell(advShown, prevDue, true)}</div>
+                <div class="col-span-2"><strong>खुद तिर्नुपर्ने:</strong> <span class="font-bold">${totalPayable !== null ? fmtMoney(totalPayable) : '________'}</span></div>
+              </div>
+              <div class="text-[10px] text-right pt-1">रिडर सही: ____________</div>
+            </div>
+          `;
+          }).join("")}
+        </div>
+      </div>
+    `);
+  }
+
+  openPrintModal(`बल्क ग्राहक मिटर रिडिङ बिल - ${printReadingMonth}`, pages.length > 0 ? pages.join("") : `<div class="p-6 text-center text-xs text-slate-500">कुनै ग्राहक दर्ता छैन।</div>`);
+};
+
+const _origRenderSettingsModule = window.renderSettingsModule;
+window.renderSettingsModule = function() {
+  ensureExtensionState();
+  const baseHtml = _origRenderSettingsModule();
+  const s = window.ERP_STATE.settings;
+
+  const extraCard = `
+    <div class="bg-white p-5 rounded-2xl border border-blue-200 shadow-sm space-y-4">
+      <div class="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3">
+        <div>
+          <h3 class="text-base font-bold text-blue-900">पत्र हेडर, पान/दर्ता नं. तथा कार्यसमिति नामावली (७ दिने सूचना चिठी र दर्ता-चलानीको लागि)</h3>
+          <p class="text-[11px] text-slate-500">यहाँ राखिएको पान नं., दर्ता नं., स्थापना वर्ष र कार्यसमिति विवरण ७ दिने सूचना चिठीमा बायाँ तर्फ स्वतः प्रिन्ट हुन्छ।</p>
+        </div>
+        <button type="button" onclick="addCommitteeMemberRow()" class="bg-blue-50 hover:bg-blue-100 text-blue-800 border border-blue-200 text-xs font-semibold px-3 py-1.5 rounded-xl">+ पदाधिकारी थप्नुहोस्</button>
+      </div>
+      <form onsubmit="saveLetterheadSettings(event)" class="space-y-4 text-xs">
+        <div class="grid grid-cols-2 sm:grid-cols-6 gap-3">
+          <div><label class="font-semibold text-slate-600 block mb-1">पान नं. (PAN)</label><input type="text" id="set-pan-no" value="${escapeHtmlSafe(s.panNo)}" class="w-full border border-slate-300 rounded-xl px-3 py-2 font-semibold"></div>
+          <div><label class="font-semibold text-slate-600 block mb-1">जि.ज.स. दर्ता नं.</label><input type="text" id="set-reg-no" value="${escapeHtmlSafe(s.regNo)}" class="w-full border border-slate-300 rounded-xl px-3 py-2 font-semibold"></div>
+          <div><label class="font-semibold text-slate-600 block mb-1">स्थापना वर्ष</label><input type="text" id="set-est-year" value="${escapeHtmlSafe(s.estYear)}" class="w-full border border-slate-300 rounded-xl px-3 py-2 font-semibold"></div>
+          <div><label class="font-semibold text-slate-600 block mb-1">पत्र संख्या (आ.व.)</label><input type="text" id="set-patra-sankhya" value="${escapeHtmlSafe(s.patraSankhya)}" class="w-full border border-slate-300 rounded-xl px-3 py-2 font-semibold"></div>
+          <div><label class="font-semibold text-slate-600 block mb-1">अर्को चलानी नं.</label><input type="number" id="set-chalani-counter" value="${Number(s.chalaniCounter || 1)}" min="1" class="w-full border border-slate-300 rounded-xl px-3 py-2 font-bold text-blue-800"></div>
+          <div><label class="font-semibold text-slate-600 block mb-1">अर्को दर्ता नं.</label><input type="number" id="set-darta-counter" value="${Number(s.dartaCounter || 1)}" min="1" class="w-full border border-slate-300 rounded-xl px-3 py-2 font-bold text-teal-800"></div>
+        </div>
+        <div class="overflow-x-auto border border-slate-200 rounded-xl">
+          <table class="w-full text-xs text-left">
+            <thead class="bg-slate-50 border-b border-slate-200">
+              <tr><th class="p-2">पद</th><th class="p-2">नाम</th><th class="p-2">फोन नम्बर</th><th class="p-2 w-12 text-center">हटाउनुहोस्</th></tr>
+            </thead>
+            <tbody class="divide-y divide-slate-100">
+              ${s.committeeMembers.map((m, idx) => `
+                <tr>
+                  <td class="p-2"><input type="text" value="${escapeHtmlSafe(m.role)}" onchange="updateCommitteeMember(${idx},'role',this.value)" class="w-full border border-slate-200 rounded-lg px-2 py-1 font-semibold"></td>
+                  <td class="p-2"><input type="text" value="${escapeHtmlSafe(m.name)}" onchange="updateCommitteeMember(${idx},'name',this.value)" class="w-full border border-slate-200 rounded-lg px-2 py-1"></td>
+                  <td class="p-2"><input type="text" value="${escapeHtmlSafe(m.phone)}" onchange="updateCommitteeMember(${idx},'phone',this.value)" class="w-full border border-slate-200 rounded-lg px-2 py-1"></td>
+                  <td class="p-2 text-center"><button type="button" onclick="removeCommitteeMember(${idx})" class="text-rose-600 font-bold">✕</button></td>
+                </tr>
+              `).join("")}
+            </tbody>
+          </table>
+        </div>
+        <div class="flex justify-end">
+          <button type="submit" class="bg-blue-700 hover:bg-blue-800 text-white font-semibold px-5 py-2 rounded-xl cursor-pointer">चिठी तथा कार्यसमिति विवरण सेभ गर्नुहोस्</button>
+        </div>
+      </form>
+    </div>
+  `;
+
+  return baseHtml.replace(`<div class="space-y-6">`, `<div class="space-y-6">${extraCard}`);
+};
+
+function saveLetterheadSettings(e) {
+  e.preventDefault();
+  ensureExtensionState();
+  const s = window.ERP_STATE.settings;
+  s.panNo = document.getElementById("set-pan-no").value.trim();
+  s.regNo = document.getElementById("set-reg-no").value.trim();
+  s.estYear = document.getElementById("set-est-year").value.trim();
+  s.patraSankhya = document.getElementById("set-patra-sankhya").value.trim();
+  s.chalaniCounter = Math.max(1, Number(document.getElementById("set-chalani-counter").value) || 1);
+  s.dartaCounter = Math.max(1, Number(document.getElementById("set-darta-counter").value) || 1);
+  window.cloudSync?.save();
+  showToast("चिठी हेडर तथा कार्यसमिति विवरण सुरक्षित गरियो!", "success");
+}
+
+function updateCommitteeMember(idx, key, val) {
+  ensureExtensionState();
+  window.ERP_STATE.settings.committeeMembers[idx][key] = val.trim();
+  window.cloudSync?.save();
+}
+
+function addCommitteeMemberRow() {
+  ensureExtensionState();
+  window.ERP_STATE.settings.committeeMembers.push({ role: "सदस्य", name: "", phone: "" });
+  window.cloudSync?.save();
+  renderCurrentModule();
+}
+
+function removeCommitteeMember(idx) {
+  ensureExtensionState();
+  if (window.ERP_STATE.settings.committeeMembers.length <= 1) return showToast("कम्तिमा एक पदाधिकारी हुनुपर्छ।", "error");
+  window.ERP_STATE.settings.committeeMembers.splice(idx, 1);
+  window.cloudSync?.save();
+  renderCurrentModule();
+}
+</script>
+<script>
+// ============================================================================
+// ERP LETTERS & REGISTERS (INLINE FOR SELF-CONTAINED DEPLOYMENT):
+// 1. 7-Day Notice Letter Auto-Generator
+// 2. Darta Book & Chalani Book
+// ============================================================================
+let selectedNoticeCustId = "";
+let noticePatraSankhya = "";
+let noticeChalaniNo = "";
+let noticeDateBS = "";
+let noticeMinMonths = 1;
+let activeDartaChalaniTab = "chalani";
+let dcSearchQuery = "";
+let dcFromBS = "2083-01-01";
+let dcToBS = "2083-12-30";
+
+function getCommitteeDisplayProfile() {
+  ensureExtensionState();
+  const s = window.ERP_STATE.settings;
+  const name = (!s.committeeName || s.committeeName === "तपाईंको समितिको नाम")
+    ? "प्रगति जल उपभोक्ता समिति"
+    : s.committeeName;
+  const address = (!s.address || s.address === "ठेगाना, जिल्ला")
+    ? "नमोबुद्ध न.पा.–१०, पुरानागाउँ, दाप्चा, काभ्रेपलाञ्चोक"
+    : s.address;
+  const manager = (!s.authorizedPerson || s.authorizedPerson === "अधिकारीको नाम")
+    ? (s.committeeMembers.find(m => m.role.includes("व्यवस्थापक"))?.name || "सबिन श्रेष्ठ")
+    : s.authorizedPerson;
+  return {
+    name,
+    address,
+    manager,
+    panNo: s.panNo || "६२४९४४५८६",
+    regNo: s.regNo || "१७६",
+    estYear: s.estYear || "२०५६",
+    patraSankhya: s.patraSankhya || "२०८३/०८४",
+    members: s.committeeMembers || DEFAULT_COMMITTEE_MEMBERS,
+    logoDataUrl: s.logoDataUrl || ""
+  };
+}
+
+function getCommitteeSealSVG(profile) {
+  if (profile.logoDataUrl) {
+    return `<img src="${profile.logoDataUrl}" alt="Logo" style="width:76px;height:76px;object-fit:contain;" />`;
+  }
+  return `
+    <svg viewBox="0 0 120 120" width="76" height="76" xmlns="http://www.w3.org/2000/svg" aria-label="Committee Stamp">
+      <defs>
+        <path id="sealTopArc" d="M 18,60 A 42,42 0 1,1 102,60" />
+        <path id="sealBottomArc" d="M 14,62 A 46,46 0 0,0 106,62" />
+      </defs>
+      <circle cx="60" cy="60" r="56" fill="#ffffff" stroke="#1e40af" stroke-width="2.5" />
+      <circle cx="60" cy="60" r="35" fill="none" stroke="#1e40af" stroke-width="1.2" />
+      <text fill="#1e40af" font-size="9.5" font-weight="700" font-family="'Noto Sans Devanagari', sans-serif">
+        <textPath href="#sealTopArc" startOffset="50%" text-anchor="middle">${escapeHtmlSafe(profile.name)}</textPath>
+      </text>
+      <text fill="#1e40af" font-size="7.5" font-weight="600" font-family="'Noto Sans Devanagari', sans-serif">
+        <textPath href="#sealBottomArc" startOffset="50%" text-anchor="middle">नमोबुद्ध-१०, दाप्चा, काभ्रे</textPath>
+      </text>
+      <text x="19" y="64" fill="#1e40af" font-size="9">★</text>
+      <text x="93" y="64" fill="#1e40af" font-size="9">★</text>
+      <path d="M47 47 h20 v5 h-7 v4 h6 v6 h-5 c-3 0 -5 2 -5 5 v2 h-5 v-5 c0-3 2-5 5-5 h1 v-4 h-10 z" fill="#1e40af"/>
+      <path d="M51 73 c0-3 3-6 3-6 s3 3 3 6 a3 3 0 1 1 -6 0 z" fill="#0284c7"/>
+      <text x="60" y="87" text-anchor="middle" fill="#1e40af" font-size="10" font-weight="700">${escapeHtmlSafe(toNepaliDigits(profile.estYear))}</text>
+    </svg>
+  `;
+}
+
+function getCustomerUnpaidBreakdown(customerId) {
+  const st = window.ERP_STATE;
+  const c = st.customers.find(x => x.id === customerId);
+  if (!c) return { customer: null, rows: [], monthCount: 0, hasOpening: false, totalBill: 0, totalPenalty: 0, grandTotal: 0 };
+
+  const rows = [];
+  const openingDue = Math.round(Math.max(0, Number(c.openingDue || 0)) * 100) / 100;
+  if (openingDue > 0) {
+    rows.push({
+      label: "गत वर्षको बाँकी बक्यौता",
+      bill: openingDue,
+      penalty: 0,
+      total: openingDue,
+      isOpening: true
+    });
+  }
+
+  const custReadings = st.readings
+    .filter(r => r.customerId === customerId && (getReadingRemaining(r) + Number(r.penaltyAmount || 0)) > 0)
+    .slice()
+    .sort((a, b) => {
+      const ya = (Number(a.year) || parseBS(a.entryDate || st.activeBSDate).y) * 12 + getNepaliMonthNumber(a.month);
+      const yb = (Number(b.year) || parseBS(b.entryDate || st.activeBSDate).y) * 12 + getNepaliMonthNumber(b.month);
+      return ya - yb;
+    });
+
+  custReadings.forEach(rd => {
+    const billRem = getReadingRemaining(rd);
+    const penRem = Math.round(Math.max(0, Number(rd.penaltyAmount || 0)) * 100) / 100;
+    const rowTot = Math.round((billRem + penRem) * 100) / 100;
+    const yr = rd.year || parseBS(rd.entryDate || st.activeBSDate).y;
+    const maintTag = Number(rd.maintenanceAmount || 0) > 0 ? " (मर्मत सहित)" : "";
+    rows.push({
+      label: `${rd.month} ${toNepaliDigits(yr)}${maintTag}`,
+      bill: billRem,
+      penalty: penRem,
+      total: rowTot,
+      isOpening: false
+    });
+  });
+
+  const totalBill = Math.round(rows.reduce((s, r) => s + r.bill, 0) * 100) / 100;
+  const totalPenalty = Math.round(rows.reduce((s, r) => s + r.penalty, 0) * 100) / 100;
+  const grandTotal = Math.round(rows.reduce((s, r) => s + r.total, 0) * 100) / 100;
+
+  return {
+    customer: c,
+    rows,
+    monthCount: custReadings.length,
+    hasOpening: openingDue > 0,
+    totalBill,
+    totalPenalty,
+    grandTotal
+  };
+}
+
+function buildNoticeLetterHTML(customerId, opts = {}) {
+  const st = window.ERP_STATE;
+  const profile = getCommitteeDisplayProfile();
+  const data = getCustomerUnpaidBreakdown(customerId);
+  if (!data.customer) {
+    return `<div class="p-8 text-center text-sm text-slate-500">कृपया माथिबाट सदस्य छान्नुहोस्।</div>`;
+  }
+
+  const c = data.customer;
+  const patra = opts.patraSankhya ?? (noticePatraSankhya || profile.patraSankhya);
+  const chalani = opts.chalaniNo ?? (noticeChalaniNo || String(st.settings.chalaniCounter || 1));
+  const dateBS = opts.dateBS ?? (noticeDateBS || st.activeBSDate);
+
+  const monthSummaryBadge = data.monthCount > 0
+    ? `(जम्मा ${toNepaliDigits(data.monthCount)} महिना${data.hasOpening ? ' तथा पुरानो बक्यौता' : ''}को बाँकी विवरण)`
+    : (data.hasOpening ? '(गत वर्षको बाँकी बक्यौता विवरण)' : '(बाँकी रकम नरहेको)');
+
+  const tableRowsHtml = data.rows.length > 0
+    ? data.rows.map(r => `
+        <tr>
+          <td class="border border-slate-800 px-2.5 py-1.5 font-medium">${escapeHtmlSafe(r.label)}</td>
+          <td class="border border-slate-800 px-2.5 py-1.5 text-right tabular-nums">${formatNepaliMoney(r.bill)}</td>
+          <td class="border border-slate-800 px-2.5 py-1.5 text-right tabular-nums">${formatNepaliMoney(r.penalty)}</td>
+          <td class="border border-slate-800 px-2.5 py-1.5 text-right font-semibold tabular-nums">${formatNepaliMoney(r.total)}</td>
+        </tr>
+      `).join("") + `
+        <tr class="bg-slate-100 font-bold">
+          <td class="border border-slate-800 px-2.5 py-1.5">जम्मा (${data.monthCount > 0 ? `${toNepaliDigits(data.monthCount)} महिना` : 'कुल'})</td>
+          <td class="border border-slate-800 px-2.5 py-1.5 text-right tabular-nums">${formatNepaliMoney(data.totalBill)}</td>
+          <td class="border border-slate-800 px-2.5 py-1.5 text-right tabular-nums">${formatNepaliMoney(data.totalPenalty)}</td>
+          <td class="border border-slate-800 px-2.5 py-1.5 text-right tabular-nums text-blue-900">${formatNepaliMoney(data.grandTotal)}</td>
+        </tr>
+      `
+    : `
+        <tr>
+          <td colspan="4" class="border border-slate-800 p-3 text-center text-slate-500">यस सदस्यको कुनै पनि महसुल बाँकी देखिएको छैन।</td>
+        </tr>
+      `;
+
+  return `
+    <div class="bg-white text-slate-900 p-4 sm:p-6 mx-auto" style="max-width: 210mm; font-family: 'Noto Sans Devanagari', sans-serif; line-height: 1.55;">
+      <div class="flex justify-between items-center text-[11px] font-semibold text-slate-800 mb-1">
+        <div>पान नं. ${escapeHtmlSafe(toNepaliDigits(profile.panNo))}</div>
+        <div>जि.ज.स.दर्ता नं. ${escapeHtmlSafe(toNepaliDigits(profile.regNo))}</div>
+      </div>
+
+      <div class="flex items-center gap-3 pb-2">
+        <div class="shrink-0">${getCommitteeSealSVG(profile)}</div>
+        <div class="flex-1 text-center pr-12">
+          <h1 class="text-2xl sm:text-[26px] font-bold tracking-tight" style="color: #1d4ed8;">${escapeHtmlSafe(profile.name)}</h1>
+          <div class="text-xs sm:text-[13px] font-bold mt-0.5" style="color: #1e3a8a;">${escapeHtmlSafe(profile.address)}</div>
+          <div class="text-xs font-bold mt-0.5" style="color: #1e3a8a;">स्थापना : ${escapeHtmlSafe(toNepaliDigits(profile.estYear))}</div>
+        </div>
+      </div>
+
+      <div class="flex justify-between items-end text-xs font-semibold pt-1 pb-1.5 border-b-2" style="border-color: #1d4ed8; color: #1e3a8a;">
+        <div class="space-y-0.5">
+          <div>पत्र संख्या : <span class="text-slate-900 font-bold">${escapeHtmlSafe(toNepaliDigits(patra))}</span></div>
+          <div>चलानी नं : <span class="text-slate-900 font-bold">${escapeHtmlSafe(toNepaliDigits(chalani))}</span></div>
+        </div>
+        <div>मिति: <span class="text-slate-900 font-bold">${escapeHtmlSafe(toNepaliDigits(dateBS))}</span></div>
+      </div>
+
+      <div class="flex mt-0">
+        <div class="w-[26%] pr-3 pt-4 pb-4 border-r-2 text-center space-y-3 text-[11px] leading-snug shrink-0" style="border-color: #1d4ed8;">
+          ${profile.members.map(m => `
+            <div>
+              <div class="font-semibold text-slate-800">${escapeHtmlSafe(m.role)}</div>
+              <div class="font-bold text-slate-900">${escapeHtmlSafe(m.name)}</div>
+              <div class="tabular-nums text-slate-700">${escapeHtmlSafe(toNepaliDigits(m.phone))}</div>
+            </div>
+          `).join("")}
+        </div>
+
+        <div class="w-[74%] pl-5 pt-4 pb-4 flex flex-col justify-between text-[13px]">
+          <div class="space-y-3">
+            <div class="space-y-1 text-[13px]">
+              <div>श्री <span class="font-bold border-b border-dotted border-slate-700 px-1">${escapeHtmlSafe(c.name)}</span> <span class="text-[11px] text-slate-600">(ग्राहक नं. ${escapeHtmlSafe(toNepaliDigits(c.id))})</span></div>
+              <div>ठेगाना: <span class="font-semibold border-b border-dotted border-slate-700 px-1">${escapeHtmlSafe(c.address || '-')}</span></div>
+            </div>
+
+            <div class="text-center font-bold underline py-1.5 text-[14px]">
+              विषय: खानेपानी महसुल भुक्तानी गर्ने सम्बन्धमा ७ दिने सूचना।
+            </div>
+
+            <div class="space-y-2.5 text-justify text-[12.5px] leading-relaxed">
+              <p>महोदय,</p>
+              <p>
+                उपर्युक्त सम्बन्धमा यस समितिबाट वितरण हुँदै आएको खानेपानी सेवा उपभोग गरेबापत यहाँले बुझाउनुपर्ने खानेपानी महसुल हालसम्म भुक्तानी गर्न बाँकी रहेको देखिएकोले यो पत्र प्राप्त भएको मितिले ७ (सात) दिनभित्र सम्पूर्ण बाँकी महसुल रकम भुक्तानी गर्नुहुन जानकारी गराइन्छ।
+              </p>
+              <p>
+                तोकिएको ७ दिनभित्र बाँकी महसुल भुक्तानी नगरेमा समितिको प्रचलित नियम तथा विनियमअनुसार खानेपानी सेवा बन्द गर्ने तथा धारा जडानमा प्रयोग भएको पाइप लाइन काट्ने लगायतका आवश्यक कारबाही अगाडि बढाउनुपर्ने हुन सक्ने व्यहोरा समेत यसै पत्रमार्फत सूचित गरिन्छ।
+              </p>
+              <p>
+                समयमै महसुल भुक्तानी गरी खानेपानी सेवा नियमित राख्न सहयोग गरिदिनुहुन हार्दिक अनुरोध गर्दछौँ।
+              </p>
+            </div>
+
+            <div class="pt-1">
+              <div class="text-[11px] font-bold text-slate-700 mb-1">${monthSummaryBadge}</div>
+              <table class="w-full text-[12px] border-collapse border border-slate-800">
+                <thead>
+                  <tr class="bg-slate-50 font-bold">
+                    <th class="border border-slate-800 px-2.5 py-1.5 text-left">महिना</th>
+                    <th class="border border-slate-800 px-2.5 py-1.5 text-right">विल रकम</th>
+                    <th class="border border-slate-800 px-2.5 py-1.5 text-right">जरीवाना</th>
+                    <th class="border border-slate-800 px-2.5 py-1.5 text-right">जम्मा रकम</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${tableRowsHtml}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="flex justify-end pt-14 pr-4">
+            <div class="text-center text-[12.5px] min-w-[160px]">
+              <div class="border-t border-dotted border-slate-800 pt-1 font-bold">${escapeHtmlSafe(profile.manager)}</div>
+              <div class="text-slate-700">व्यवस्थापक</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function renderNoticeLetterModule() {
+  ensureExtensionState();
+  const st = window.ERP_STATE;
+  const profile = getCommitteeDisplayProfile();
+
+  const dueSummaries = st.customers.map(c => getCustomerUnpaidBreakdown(c.id));
+  const overdueMembers = dueSummaries.filter(d => d.grandTotal > 0 && (d.monthCount >= noticeMinMonths || d.hasOpening));
+  const anyUnpaidMembers = dueSummaries.filter(d => d.grandTotal > 0);
+
+  if (!selectedNoticeCustId || !st.customers.some(c => c.id === selectedNoticeCustId)) {
+    selectedNoticeCustId = (overdueMembers[0]?.customer.id || anyUnpaidMembers[0]?.customer.id || st.customers[0]?.id || "");
+  }
+  if (!noticePatraSankhya) noticePatraSankhya = profile.patraSankhya;
+  if (!noticeChalaniNo) noticeChalaniNo = String(st.settings.chalaniCounter || 1);
+  if (!noticeDateBS) noticeDateBS = st.activeBSDate;
+
+  const activeSummary = selectedNoticeCustId ? getCustomerUnpaidBreakdown(selectedNoticeCustId) : null;
+
+  return `
+    <div class="space-y-5">
+      <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-4">
+        <div class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 pb-3">
+          <div>
+            <h3 class="text-base font-bold text-slate-800">७ दिने खानेपानी महसुल भुक्तानी सूचना चिठी (Auto Generator)</h3>
+            <p class="text-xs text-slate-500">सदस्य छान्नासाथ बाँकी महिना, बिल रकम र जरिवाना सहित आधिकारिक चिठी स्वतः तयार हुन्छ — सिधै प्रिन्ट मात्र गर्नुहोस्।</p>
+          </div>
+          <div class="text-xs font-semibold text-rose-700 bg-rose-50 border border-rose-200 px-3 py-1.5 rounded-xl">
+            महसुल बाँकी रहेका सदस्य: ${anyUnpaidMembers.length} जना
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 text-xs">
+          <div class="lg:col-span-2">
+            <label class="font-semibold text-slate-600 block mb-1">सदस्य / ग्राहक छान्नुहोस् (बाँकी सहित) *</label>
+            <select id="notice-cust-select" onchange="selectedNoticeCustId=this.value; renderCurrentModule();" class="w-full border-2 border-teal-500 bg-teal-50/40 rounded-xl px-3 py-2 font-bold text-slate-900">
+              ${st.customers.length === 0 ? `<option value="">-- ग्राहक दर्ता छैन --</option>` : ''}
+              ${anyUnpaidMembers.length > 0 ? `<optgroup label="महसुल बाँकी रहेका सदस्यहरू (${anyUnpaidMembers.length})">
+                ${anyUnpaidMembers.map(d => `<option value="${d.customer.id}" ${d.customer.id === selectedNoticeCustId ? 'selected' : ''}>${escapeHtmlSafe(d.customer.id)} - ${escapeHtmlSafe(d.customer.name)} (${d.monthCount} महिना${d.hasOpening ? '+ओपनिङ' : ''} | बाँकी ${fmtMoney(d.grandTotal)})</option>`).join("")}
+              </optgroup>` : ''}
+              <optgroup label="सबै ग्राहकहरू">
+                ${dueSummaries.map(d => `<option value="${d.customer.id}" ${d.customer.id === selectedNoticeCustId ? 'selected' : ''}>${escapeHtmlSafe(d.customer.id)} - ${escapeHtmlSafe(d.customer.name)} (${d.grandTotal > 0 ? `${d.monthCount} महिना - ${fmtMoney(d.grandTotal)}` : 'चुक्ता'})</option>`).join("")}
+              </optgroup>
+            </select>
+          </div>
+          <div>
+            <label class="font-semibold text-slate-600 block mb-1">पत्र संख्या</label>
+            <input type="text" value="${escapeHtmlSafe(noticePatraSankhya)}" oninput="noticePatraSankhya=this.value; updateNoticePreviewOnly();" class="w-full border border-slate-300 rounded-xl px-3 py-2 font-semibold">
+          </div>
+          <div>
+            <label class="font-semibold text-slate-600 block mb-1">चलानी नं.</label>
+            <input type="text" value="${escapeHtmlSafe(noticeChalaniNo)}" oninput="noticeChalaniNo=this.value; updateNoticePreviewOnly();" class="w-full border border-slate-300 rounded-xl px-3 py-2 font-bold text-blue-800">
+          </div>
+          <div>
+            <label class="font-semibold text-slate-600 block mb-1">चिठी मिति (BS)</label>
+            <input type="text" value="${escapeHtmlSafe(noticeDateBS)}" oninput="noticeDateBS=this.value; updateNoticePreviewOnly();" class="w-full bg-teal-50 border border-teal-300 rounded-xl px-3 py-2 font-bold">
+          </div>
+        </div>
+
+        <div class="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-slate-100">
+          <div class="flex flex-wrap items-center gap-2 text-xs">
+            <label class="font-semibold text-slate-600">कति महिना वा सोभन्दा बढी बाँकी छान्ने (Bulk Print):</label>
+            <select onchange="noticeMinMonths=Number(this.value); renderCurrentModule();" class="border border-slate-300 rounded-lg px-2.5 py-1.5 font-bold">
+              <option value="1" ${noticeMinMonths === 1 ? 'selected' : ''}>१ महिना वा बढी</option>
+              <option value="2" ${noticeMinMonths === 2 ? 'selected' : ''}>२ महिना वा बढी</option>
+              <option value="3" ${noticeMinMonths === 3 ? 'selected' : ''}>३ महिना वा बढी</option>
+              <option value="6" ${noticeMinMonths === 6 ? 'selected' : ''}>६ महिना वा बढी</option>
+            </select>
+            <span class="text-slate-500">(${overdueMembers.length} जना छानिए)</span>
+          </div>
+          <div class="flex flex-wrap gap-2">
+            <button type="button" onclick="printSingleNoticeLetter(false)" ${!selectedNoticeCustId ? 'disabled' : ''} class="bg-teal-700 hover:bg-teal-800 disabled:opacity-50 text-white text-xs font-semibold px-4 py-2 rounded-xl flex items-center gap-1.5 cursor-pointer">
+              <i data-lucide="printer" class="w-4 h-4"></i> प्रिन्ट गर्नुहोस् (Print)
+            </button>
+            <button type="button" onclick="printSingleNoticeLetter(true)" ${!selectedNoticeCustId ? 'disabled' : ''} class="bg-blue-700 hover:bg-blue-800 disabled:opacity-50 text-white text-xs font-semibold px-4 py-2 rounded-xl flex items-center gap-1.5 cursor-pointer">
+              <i data-lucide="book-marked" class="w-4 h-4"></i> चलानी किताबमा दर्ता गरी प्रिन्ट
+            </button>
+            <button type="button" onclick="printBulkNoticeLetters()" ${overdueMembers.length === 0 ? 'disabled' : ''} class="bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white text-xs font-semibold px-4 py-2 rounded-xl flex items-center gap-1.5 cursor-pointer">
+              <i data-lucide="files" class="w-4 h-4"></i> सबैको एकैपटक प्रिन्ट (${overdueMembers.length})
+            </button>
+          </div>
+        </div>
+      </div>
+
+      ${activeSummary && activeSummary.grandTotal === 0 && activeSummary.customer ? `
+        <div class="bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl px-4 py-3 text-xs font-semibold">
+          नोट: छानिएका सदस्य (${escapeHtmlSafe(activeSummary.customer.name)}) को हाल कुनै महसुल भुक्तानी बाँकी छैन। माथिको सूचीबाट बक्यौता भएका सदस्य छान्नुहोस्।
+        </div>
+      ` : ''}
+
+      <div id="notice-letter-live-preview" class="bg-white rounded-2xl border border-slate-300 shadow-sm p-2 sm:p-4 overflow-x-auto">
+        ${selectedNoticeCustId ? buildNoticeLetterHTML(selectedNoticeCustId) : `<div class="p-8 text-center text-xs text-slate-400">पहिले KYC मेनुबाट सदस्य दर्ता गर्नुहोस्।</div>`}
+      </div>
+    </div>
+  `;
+}
+
+function updateNoticePreviewOnly() {
+  const box = document.getElementById("notice-letter-live-preview");
+  if (box && selectedNoticeCustId) {
+    box.innerHTML = buildNoticeLetterHTML(selectedNoticeCustId);
+  }
+}
+
+function recordChalaniForNotice(customerId, chalaniNoStr, patra, dateBS, monthCount, grandTotal) {
+  ensureExtensionState();
+  const st = window.ERP_STATE;
+  const c = st.customers.find(x => x.id === customerId);
+  if (!c) return;
+  st.chalaniBook.push({
+    id: "CH-" + Date.now() + "-" + Math.random().toString(36).slice(2, 6),
+    chalaniNo: chalaniNoStr,
+    date: dateBS,
+    patraSankhya: patra,
+    recipient: `${c.name} (${c.id})`,
+    address: c.address || "-",
+    subject: `खानेपानी महसुल भुक्तानी गर्ने सम्बन्धमा ७ दिने सूचना (${monthCount} महिना, रू. ${grandTotal})`,
+    dispatchMode: "हातैमा / सूचना पत्र",
+    remarks: `७ दिने सूचना स्वचालित चलानी`
+  });
+  const numericChalani = parseInt(String(chalaniNoStr).replace(/\D/g, ""), 10);
+  if (Number.isFinite(numericChalani) && numericChalani >= Number(st.settings.chalaniCounter || 1)) {
+    st.settings.chalaniCounter = numericChalani + 1;
+  } else {
+    st.settings.chalaniCounter = Number(st.settings.chalaniCounter || 1) + 1;
+  }
+}
+
+function printSingleNoticeLetter(logToChalani = false) {
+  if (!selectedNoticeCustId) return showToast("कृपया सदस्य छान्नुहोस्।", "error");
+  const st = window.ERP_STATE;
+  const profile = getCommitteeDisplayProfile();
+  const patra = noticePatraSankhya || profile.patraSankhya;
+  const chalani = noticeChalaniNo || String(st.settings.chalaniCounter || 1);
+  const dateBS = noticeDateBS || st.activeBSDate;
+  const data = getCustomerUnpaidBreakdown(selectedNoticeCustId);
+
+  if (logToChalani) {
+    recordChalaniForNotice(selectedNoticeCustId, chalani, patra, dateBS, data.monthCount, data.grandTotal);
+    noticeChalaniNo = String(st.settings.chalaniCounter);
+    window.cloudSync?.save();
+    renderCurrentModule();
+    showToast(`चलानी नं. ${chalani} मा दर्ता भई चिठी प्रिन्टका लागि तयार भयो!`, "success");
+  }
+
+  const html = buildNoticeLetterHTML(selectedNoticeCustId, { patraSankhya: patra, chalaniNo: chalani, dateBS });
+  openPrintModal(`७ दिने सूचना - ${data.customer?.name || selectedNoticeCustId}`, html);
+}
+
+function printBulkNoticeLetters() {
+  const st = window.ERP_STATE;
+  const profile = getCommitteeDisplayProfile();
+  const overdueMembers = st.customers
+    .map(c => getCustomerUnpaidBreakdown(c.id))
+    .filter(d => d.grandTotal > 0 && (d.monthCount >= noticeMinMonths || d.hasOpening));
+
+  if (!overdueMembers.length) return showToast("तोकिएको महिना अनुसार कुनै बाँकी सदस्य भेटिएन।", "error");
+
+  const logChalani = confirm(`कुल ${overdueMembers.length} जना सदस्यको ७ दिने सूचना तयार हुँदैछ।\n\nके सबै पत्रहरूलाई क्रमैसँग चलानी किताबमा पनि दर्ता (Record) गर्ने?\n(OK = चलानी किताबमा दर्ता सहित प्रिन्ट, Cancel = दर्ता नगरी प्रिन्ट मात्र)`);
+
+  let startChalani = parseInt(String(noticeChalaniNo || st.settings.chalaniCounter || 1).replace(/\D/g, ""), 10) || 1;
+  const patra = noticePatraSankhya || profile.patraSankhya;
+  const dateBS = noticeDateBS || st.activeBSDate;
+
+  const pagesHtml = overdueMembers.map((d, idx) => {
+    const chNo = String(startChalani + idx);
+    if (logChalani) {
+      recordChalaniForNotice(d.customer.id, chNo, patra, dateBS, d.monthCount, d.grandTotal);
+    }
+    return `
+      <div class="bulk-slip-page ${idx > 0 ? 'mt-6 pt-6 border-t-2 border-dashed border-slate-300 print:mt-0 print:pt-0 print:border-0' : ''}">
+        ${buildNoticeLetterHTML(d.customer.id, { patraSankhya: patra, chalaniNo: chNo, dateBS })}
+      </div>
+    `;
+  }).join("");
+
+  if (logChalani) {
+    noticeChalaniNo = String(st.settings.chalaniCounter);
+    window.cloudSync?.save();
+    renderCurrentModule();
+    showToast(`${overdueMembers.length} वटै पत्र चलानी किताबमा दर्ता भई प्रिन्ट तयार भयो!`, "success");
+  }
+
+  openPrintModal(`बल्क ७ दिने सूचना चिठी (${overdueMembers.length} जना)`, pagesHtml);
+}
+// ============================================================================
+// 2. DARTA BOOK & CHALANI BOOK MODULE
+// ============================================================================
+function renderDartaChalaniModule() {
+  ensureExtensionState();
+  const st = window.ERP_STATE;
+  const s = st.settings;
+  const isChalani = activeDartaChalaniTab === "chalani";
+  const records = isChalani ? st.chalaniBook : st.dartaBook;
+
+  const filtered = records.filter(r => {
+    const inRange = isDateBetweenBS(r.date, dcFromBS || null, dcToBS || null);
+    if (!inRange) return false;
+    if (!dcSearchQuery) return true;
+    const hay = `${r.chalaniNo || r.dartaNo || ''} ${r.recipient || r.sender || ''} ${r.subject || ''} ${r.date || ''} ${r.remarks || ''}`.toLowerCase();
+    return hay.includes(dcSearchQuery.toLowerCase());
+  });
+
+  const nextNo = isChalani ? Number(s.chalaniCounter || 1) : Number(s.dartaCounter || 1);
+
+  return `
+    <div class="space-y-5">
+      <div class="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex flex-wrap items-center justify-between gap-3">
+        <div class="flex gap-2">
+          <button onclick="activeDartaChalaniTab='chalani'; renderCurrentModule();" class="px-4 py-2 rounded-xl text-xs font-semibold transition cursor-pointer ${isChalani ? 'bg-blue-700 text-white shadow-sm' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'}">
+            चलानी किताब (Outgoing - ${st.chalaniBook.length})
+          </button>
+          <button onclick="activeDartaChalaniTab='darta'; renderCurrentModule();" class="px-4 py-2 rounded-xl text-xs font-semibold transition cursor-pointer ${!isChalani ? 'bg-teal-700 text-white shadow-sm' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'}">
+            दर्ता किताब (Incoming - ${st.dartaBook.length})
+          </button>
+        </div>
+        <div class="flex flex-wrap items-center gap-2 text-xs">
+          <button onclick="printDartaChalaniRegister('${activeDartaChalaniTab}')" class="bg-slate-900 hover:bg-slate-800 text-white font-semibold px-4 py-2 rounded-xl flex items-center gap-1.5 cursor-pointer">
+            <i data-lucide="printer" class="w-4 h-4"></i> ${isChalani ? 'A4 चलानी किताब प्रिन्ट' : 'A4 दर्ता किताब प्रिन्ट'}
+          </button>
+        </div>
+      </div>
+
+      <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
+        <h3 class="text-base font-bold text-slate-800 mb-3 flex items-center gap-2">
+          <i data-lucide="book-marked" class="w-5 h-5 ${isChalani ? 'text-blue-700' : 'text-teal-700'}"></i>
+          <span id="dc-form-title">${isChalani ? 'नयाँ पत्र चलानी इन्ट्री (Chalani Book)' : 'नयाँ पत्र दर्ता इन्ट्री (Darta Book)'}</span>
+        </h3>
+        <form onsubmit="saveDartaChalaniEntry(event)" class="grid grid-cols-1 sm:grid-cols-4 gap-3 text-xs">
+          <input type="hidden" id="dc-edit-id" value="">
+          <div>
+            <label class="font-semibold text-slate-600 block mb-1">${isChalani ? 'चलानी नं.' : 'दर्ता नं.'} *</label>
+            <input type="text" id="dc-no" value="${nextNo}" required class="w-full border border-slate-300 rounded-xl px-3 py-2 font-bold ${isChalani ? 'text-blue-800' : 'text-teal-800'}">
+          </div>
+          <div>
+            <label class="font-semibold text-slate-600 block mb-1">${isChalani ? 'चलानी मिति (BS)' : 'दर्ता मिति (BS)'} *</label>
+            <input type="text" id="dc-date" value="${st.activeBSDate}" required class="w-full bg-teal-50 border border-teal-300 rounded-xl px-3 py-2 font-bold">
+          </div>
+          <div>
+            <label class="font-semibold text-slate-600 block mb-1">${isChalani ? 'पत्र संख्या (आ.व.)' : 'प्राप्त पत्रको मिति (BS)'}</label>
+            <input type="text" id="dc-ref" value="${isChalani ? escapeHtmlSafe(s.patraSankhya || '२०८३/०८४') : st.activeBSDate}" class="w-full border border-slate-300 rounded-xl px-3 py-2">
+          </div>
+          <div>
+            <label class="font-semibold text-slate-600 block mb-1">${isChalani ? 'पठाउने माध्यम / बुझिलिने' : 'पठाउनेको पत्र/चलानी नं.'}</label>
+            <input type="text" id="dc-extra" placeholder="${isChalani ? 'हातैमा / हुलाक / WhatsApp' : 'पत्र सं. / च.नं.'}" class="w-full border border-slate-300 rounded-xl px-3 py-2">
+          </div>
+
+          <div class="sm:col-span-2">
+            <label class="font-semibold text-slate-600 block mb-1">${isChalani ? 'पत्र पाउने व्यक्ति / कार्यालय / सदस्य *' : 'पत्र पठाउने कार्यालय / व्यक्ति *'}</label>
+            <input type="text" id="dc-party" list="dc-party-suggestions" required placeholder="${isChalani ? 'सदस्यको नाम वा कार्यालय' : 'पठाउने कार्यालय वा व्यक्तिको नाम'}" class="w-full border border-slate-300 rounded-xl px-3 py-2 font-semibold">
+            <datalist id="dc-party-suggestions">
+              ${st.customers.map(c => `<option value="${escapeHtmlSafe(c.name)} (${escapeHtmlSafe(c.id)})">`).join("")}
+            </datalist>
+          </div>
+          <div>
+            <label class="font-semibold text-slate-600 block mb-1">${isChalani ? 'ठेगाना' : 'बुझिलिने व्यक्ति / शाखा'}</label>
+            <input type="text" id="dc-addr" placeholder="${isChalani ? 'वडा / टोल' : 'व्यवस्थापक / सचिव'}" class="w-full border border-slate-300 rounded-xl px-3 py-2">
+          </div>
+          <div>
+            <label class="font-semibold text-slate-600 block mb-1">कैफियत</label>
+            <input type="text" id="dc-remarks" placeholder="अतिरिक्त विवरण" class="w-full border border-slate-300 rounded-xl px-3 py-2">
+          </div>
+
+          <div class="sm:col-span-3">
+            <label class="font-semibold text-slate-600 block mb-1">पत्रको विषय *</label>
+            <input type="text" id="dc-subject" list="dc-subject-presets" required placeholder="विषय लेख्नुहोस्" class="w-full border border-slate-300 rounded-xl px-3 py-2 font-semibold">
+            <datalist id="dc-subject-presets">
+              <option value="खानेपानी महसुल भुक्तानी गर्ने सम्बन्धमा ७ दिने सूचना">
+              <option value="नयाँ धारा जडान सिफारिस सम्बन्धमा">
+              <option value="धारा नामसारी / मर्मत सम्बन्धमा">
+              <option value="वार्षिक साधारण सभा सूचना सम्बन्धमा">
+              <option value="बजेट तथा अनुदान माग सम्बन्धमा">
+            </datalist>
+          </div>
+          <div class="flex items-end gap-2">
+            <button type="submit" class="flex-1 ${isChalani ? 'bg-blue-700 hover:bg-blue-800' : 'bg-teal-700 hover:bg-teal-800'} text-white font-semibold py-2.5 px-4 rounded-xl cursor-pointer">
+              <span id="dc-submit-text">${isChalani ? 'चलानी सुरक्षित गर्नुहोस्' : 'दर्ता सुरक्षित गर्नुहोस्'}</span>
+            </button>
+            <button type="button" id="dc-cancel-btn" onclick="renderCurrentModule()" class="hidden bg-slate-200 hover:bg-slate-300 text-slate-700 font-semibold py-2.5 px-3 rounded-xl cursor-pointer">रद्द</button>
+          </div>
+        </form>
+      </div>
+
+      <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+        <div class="p-4 border-b border-slate-200 flex flex-wrap items-center justify-between gap-2">
+          <h3 class="text-sm font-bold text-slate-800">${isChalani ? 'चलानी किताब अभिलेख (Chalani Register)' : 'दर्ता किताब अभिलेख (Darta Register)'} — ${filtered.length} अभिलेख</h3>
+          <div class="flex flex-wrap items-center gap-2 text-xs">
+            <input type="text" value="${escapeHtmlSafe(dcFromBS)}" onchange="dcFromBS=this.value; renderCurrentModule();" class="w-24 border border-slate-300 rounded-xl px-2 py-1.5 text-center">
+            <span>देखि</span>
+            <input type="text" value="${escapeHtmlSafe(dcToBS)}" onchange="dcToBS=this.value; renderCurrentModule();" class="w-24 border border-slate-300 rounded-xl px-2 py-1.5 text-center">
+            <input type="text" value="${escapeHtmlSafe(dcSearchQuery)}" oninput="dcSearchQuery=this.value; renderCurrentModule();" placeholder="नाम, विषय वा नं. खोज्नुहोस्..." class="border border-slate-300 rounded-xl px-3 py-1.5 w-48">
+          </div>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-xs text-left">
+            <thead class="bg-slate-50 border-b border-slate-200">
+              <tr>
+                <th class="p-3">${isChalani ? 'चलानी नं.' : 'दर्ता नं.'}</th>
+                <th class="p-3">मिति (BS)</th>
+                <th class="p-3">${isChalani ? 'पत्र संख्या' : 'पत्र मिति / च.नं.'}</th>
+                <th class="p-3">${isChalani ? 'पाउने व्यक्ति / कार्यालय' : 'पठाउने कार्यालय / व्यक्ति'}</th>
+                <th class="p-3">विषय</th>
+                <th class="p-3">${isChalani ? 'माध्यम / ठेगाना' : 'बुझिलिने'}</th>
+                <th class="p-3">कैफियत</th>
+                <th class="p-3 text-center">कार्य</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-100">
+              ${filtered.slice().reverse().map(r => `
+                <tr class="hover:bg-slate-50">
+                  <td class="p-3 font-bold ${isChalani ? 'text-blue-800' : 'text-teal-800'}">${escapeHtmlSafe(isChalani ? r.chalaniNo : r.dartaNo)}</td>
+                  <td class="p-3 tabular-nums">${escapeHtmlSafe(r.date)}</td>
+                  <td class="p-3">${escapeHtmlSafe(isChalani ? (r.patraSankhya || '-') : `${r.letterDate || '-'} ${r.senderRef ? `(${r.senderRef})` : ''}`)}</td>
+                  <td class="p-3 font-semibold">${escapeHtmlSafe(isChalani ? r.recipient : r.sender)}</td>
+                  <td class="p-3">${escapeHtmlSafe(r.subject)}</td>
+                  <td class="p-3 text-slate-600">${escapeHtmlSafe(isChalani ? `${r.dispatchMode || '-'} ${r.address ? `/ ${r.address}` : ''}` : (r.receivedBy || '-'))}</td>
+                  <td class="p-3 text-slate-500">${escapeHtmlSafe(r.remarks || '-')}</td>
+                  <td class="p-3 text-center whitespace-nowrap space-x-1">
+                    <button onclick="editDartaChalaniEntry('${activeDartaChalaniTab}','${r.id}')" class="px-2 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-lg text-[10px] font-semibold cursor-pointer">Modify</button>
+                    <button onclick="deleteDartaChalaniEntry('${activeDartaChalaniTab}','${r.id}')" class="px-2 py-1 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-lg text-[10px] font-semibold cursor-pointer">Delete</button>
+                  </td>
+                </tr>
+              `).join("") || `<tr><td colspan="8" class="p-6 text-center text-slate-400">यस अवधिमा कुनै ${isChalani ? 'चलानी' : 'दर्ता'} अभिलेख छैन।</td></tr>`}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function saveDartaChalaniEntry(e) {
+  e.preventDefault();
+  ensureExtensionState();
+  const st = window.ERP_STATE;
+  const isChalani = activeDartaChalaniTab === "chalani";
+  const editId = document.getElementById("dc-edit-id").value;
+  const noVal = document.getElementById("dc-no").value.trim();
+  const dateVal = document.getElementById("dc-date").value.trim() || st.activeBSDate;
+  const refVal = document.getElementById("dc-ref").value.trim();
+  const extraVal = document.getElementById("dc-extra").value.trim();
+  const partyVal = document.getElementById("dc-party").value.trim();
+  const addrVal = document.getElementById("dc-addr").value.trim();
+  const subjVal = document.getElementById("dc-subject").value.trim();
+  const remVal = document.getElementById("dc-remarks").value.trim();
+
+  const arr = isChalani ? st.chalaniBook : st.dartaBook;
+
+  if (editId) {
+    const item = arr.find(x => x.id === editId);
+    if (!item) return;
+    item.date = dateVal;
+    item.subject = subjVal;
+    item.remarks = remVal;
+    if (isChalani) {
+      item.chalaniNo = noVal;
+      item.patraSankhya = refVal;
+      item.dispatchMode = extraVal;
+      item.recipient = partyVal;
+      item.address = addrVal;
+    } else {
+      item.dartaNo = noVal;
+      item.letterDate = refVal;
+      item.senderRef = extraVal;
+      item.sender = partyVal;
+      item.receivedBy = addrVal;
+    }
+    showToast(`${isChalani ? 'चलानी' : 'दर्ता'} विवरण अपडेट गरियो!`, "success");
+  } else {
+    if (isChalani) {
+      arr.push({
+        id: "CH-" + Date.now(),
+        chalaniNo: noVal,
+        date: dateVal,
+        patraSankhya: refVal,
+        recipient: partyVal,
+        address: addrVal,
+        subject: subjVal,
+        dispatchMode: extraVal || "हातैमा",
+        remarks: remVal
+      });
+      const num = parseInt(noVal.replace(/\D/g, ""), 10);
+      if (Number.isFinite(num) && num >= Number(st.settings.chalaniCounter || 1)) {
+        st.settings.chalaniCounter = num + 1;
+      } else {
+        st.settings.chalaniCounter = Number(st.settings.chalaniCounter || 1) + 1;
+      }
+    } else {
+      arr.push({
+        id: "DR-" + Date.now(),
+        dartaNo: noVal,
+        date: dateVal,
+        letterDate: refVal,
+        senderRef: extraVal,
+        sender: partyVal,
+        receivedBy: addrVal,
+        subject: subjVal,
+        remarks: remVal
+      });
+      const num = parseInt(noVal.replace(/\D/g, ""), 10);
+      if (Number.isFinite(num) && num >= Number(st.settings.dartaCounter || 1)) {
+        st.settings.dartaCounter = num + 1;
+      } else {
+        st.settings.dartaCounter = Number(st.settings.dartaCounter || 1) + 1;
+      }
+    }
+    showToast(`नयाँ ${isChalani ? 'चलानी' : 'दर्ता'} नं. ${noVal} सुरक्षित भयो!`, "success");
+  }
+
+  window.cloudSync?.save();
+  renderCurrentModule();
+}
+
+function editDartaChalaniEntry(tab, id) {
+  ensureExtensionState();
+  const isChalani = tab === "chalani";
+  const item = (isChalani ? window.ERP_STATE.chalaniBook : window.ERP_STATE.dartaBook).find(x => x.id === id);
+  if (!item) return;
+
+  document.getElementById("dc-edit-id").value = item.id;
+  document.getElementById("dc-no").value = isChalani ? item.chalaniNo : item.dartaNo;
+  document.getElementById("dc-date").value = item.date;
+  document.getElementById("dc-ref").value = isChalani ? (item.patraSankhya || "") : (item.letterDate || "");
+  document.getElementById("dc-extra").value = isChalani ? (item.dispatchMode || "") : (item.senderRef || "");
+  document.getElementById("dc-party").value = isChalani ? item.recipient : item.sender;
+  document.getElementById("dc-addr").value = isChalani ? (item.address || "") : (item.receivedBy || "");
+  document.getElementById("dc-subject").value = item.subject || "";
+  document.getElementById("dc-remarks").value = item.remarks || "";
+
+  document.getElementById("dc-form-title").textContent = `${isChalani ? 'चलानी' : 'दर्ता'} विवरण सच्याउँदै (${isChalani ? item.chalaniNo : item.dartaNo})`;
+  document.getElementById("dc-submit-text").textContent = "अपडेट सुरक्षित गर्नुहोस्";
+  document.getElementById("dc-cancel-btn").classList.remove("hidden");
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
+function deleteDartaChalaniEntry(tab, id) {
+  if (!verifyAdminPasswordBeforeDelete()) return;
+  const isChalani = tab === "chalani";
+  if (!confirm(`के तपाईं यो ${isChalani ? 'चलानी' : 'दर्ता'} अभिलेख डिलिट गर्न चाहनुहुन्छ?`)) return;
+  if (isChalani) {
+    window.ERP_STATE.chalaniBook = window.ERP_STATE.chalaniBook.filter(x => x.id !== id);
+  } else {
+    window.ERP_STATE.dartaBook = window.ERP_STATE.dartaBook.filter(x => x.id !== id);
+  }
+  window.cloudSync?.save();
+  renderCurrentModule();
+  showToast("अभिलेख सफलतापूर्वक हटाइयो!", "info");
+}
+
+function printDartaChalaniRegister(tab) {
+  ensureExtensionState();
+  const st = window.ERP_STATE;
+  const profile = getCommitteeDisplayProfile();
+  const isChalani = tab === "chalani";
+  const records = (isChalani ? st.chalaniBook : st.dartaBook)
+    .filter(r => isDateBetweenBS(r.date, dcFromBS || null, dcToBS || null));
+
+  const html = `
+    <div class="space-y-4 text-xs" style="font-family: 'Noto Sans Devanagari', sans-serif;">
+      <div class="text-center border-b-2 border-slate-800 pb-3">
+        <h2 class="text-lg font-bold">${escapeHtmlSafe(profile.name)}</h2>
+        <p class="text-xs text-slate-600">${escapeHtmlSafe(profile.address)} | फोन: ${escapeHtmlSafe(st.settings.phone)}</p>
+        <div class="text-sm font-bold mt-1 underline">${isChalani ? 'पत्र चलानी किताब (Outgoing Letter Register)' : 'पत्र दर्ता किताब (Incoming Letter Register)'}</div>
+        <div class="text-[11px] text-slate-500">अवधि: ${escapeHtmlSafe(toNepaliDigits(dcFromBS))} देखि ${escapeHtmlSafe(toNepaliDigits(dcToBS))} सम्म</div>
+      </div>
+
+      <table class="w-full text-[11px] border-collapse border border-slate-800">
+        <thead class="bg-slate-100">
+          <tr>
+            <th class="border border-slate-800 p-1.5 text-center">${isChalani ? 'चलानी नं.' : 'दर्ता नं.'}</th>
+            <th class="border border-slate-800 p-1.5 text-center">मिति</th>
+            <th class="border border-slate-800 p-1.5 text-left">${isChalani ? 'पत्र संख्या' : 'पत्र मिति / च.नं.'}</th>
+            <th class="border border-slate-800 p-1.5 text-left">${isChalani ? 'पठाएको कार्यालय / व्यक्ति' : 'पठाउने कार्यालय / व्यक्ति'}</th>
+            <th class="border border-slate-800 p-1.5 text-left">विषय</th>
+            <th class="border border-slate-800 p-1.5 text-left">${isChalani ? 'माध्यम / ठेगाना' : 'बुझिलिने'}</th>
+            <th class="border border-slate-800 p-1.5 text-left">कैफियत</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${records.map(r => `
+            <tr>
+              <td class="border border-slate-800 p-1.5 text-center font-bold">${escapeHtmlSafe(toNepaliDigits(isChalani ? r.chalaniNo : r.dartaNo))}</td>
+              <td class="border border-slate-800 p-1.5 text-center tabular-nums">${escapeHtmlSafe(toNepaliDigits(r.date))}</td>
+              <td class="border border-slate-800 p-1.5">${escapeHtmlSafe(toNepaliDigits(isChalani ? (r.patraSankhya || '-') : `${r.letterDate || '-'} ${r.senderRef ? `(${r.senderRef})` : ''}`))}</td>
+              <td class="border border-slate-800 p-1.5 font-semibold">${escapeHtmlSafe(isChalani ? r.recipient : r.sender)}</td>
+              <td class="border border-slate-800 p-1.5">${escapeHtmlSafe(r.subject)}</td>
+              <td class="border border-slate-800 p-1.5">${escapeHtmlSafe(isChalani ? `${r.dispatchMode || '-'} ${r.address ? `/ ${r.address}` : ''}` : (r.receivedBy || '-'))}</td>
+              <td class="border border-slate-800 p-1.5">${escapeHtmlSafe(r.remarks || '-')}</td>
+            </tr>
+          `).join("") || `<tr><td colspan="7" class="border border-slate-800 p-4 text-center">यस अवधिमा कुनै अभिलेख छैन।</td></tr>`}
+        </tbody>
+      </table>
+
+      <div class="flex justify-between pt-8 text-xs">
+        <div>तयार गर्नेको सही: ___________________</div>
+        <div>प्रमाणित गर्ने (${escapeHtmlSafe(profile.manager)}): ___________________</div>
+      </div>
+    </div>
+  `;
+  openPrintModal(isChalani ? "A4 चलानी किताब प्रिन्ट" : "A4 दर्ता किताब प्रिन्ट", html);
+}
+
+ensureExtensionState();
+const _origRenderCurrentModuleForExt = window.renderCurrentModule;
+window.renderCurrentModule = function() {
+  ensureExtensionState();
+  return _origRenderCurrentModuleForExt();
+};
+</script>
 <div id="root" class="hidden"></div>
 <script type="module" src="/src/main.tsx"></script>
 
