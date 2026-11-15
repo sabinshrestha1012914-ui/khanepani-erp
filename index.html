@@ -5799,9 +5799,434 @@ function addAccountingVoucher(e){
   st.accountingVoucherCounter=seq+1;window.cloudSync?.save();renderCurrentModule();showToast("दोहोरो लेखा भौचर सुरक्षित भयो।","success");
 }
 let accountingTab="journal", accountingFrom="2083-01-01", accountingTo="2083-12-30", accountingLedgerAccount="1001";
+
+function getAccountingTabTitle(tabId) {
+  const map = {
+    journal: "जर्नल / भौचर अभिलेख (Journal Register)",
+    ledger: "खातावही विवरण (General Ledger)",
+    trial: "सन्तुलन परीक्षण (Trial Balance)",
+    pl: "आय-व्यय विवरण (Income & Expenditure)",
+    bs: "वासलात (Balance Sheet)",
+    cash: "नगद तथा बैंक प्रवाह (Cash & Bank Flow)"
+  };
+  return map[tabId] || "दोहोरो लेखा प्रतिवेदन";
+}
+
+function buildAccountingPrintShell(title, bodyHtml, subtitleExtra = "") {
+  const st = window.ERP_STATE;
+  const s = st.settings || {};
+  const prof = typeof getCommitteeDisplayProfile === "function"
+    ? getCommitteeDisplayProfile()
+    : { name: s.committeeName || "प्रगति जल उपभोक्ता समिति", address: s.address || "", panNo: s.panNo || "", regNo: s.regNo || "" };
+
+  return `
+    <div class="space-y-4 text-xs text-slate-950" style="font-family: 'Noto Sans Devanagari', sans-serif;">
+      <div class="text-center border-b-2 border-slate-800 pb-2.5">
+        <h2 class="text-lg font-bold">${accountingEscape(prof.name)}</h2>
+        <p class="text-[11px] text-slate-700">${accountingEscape(prof.address)}${s.phone ? ` | फोन: ${accountingEscape(s.phone)}` : ""}${prof.panNo ? ` | पान नं.: ${accountingEscape(prof.panNo)}` : ""}</p>
+        <div class="text-sm font-bold mt-1 underline text-teal-950">${accountingEscape(title)}</div>
+        ${subtitleExtra ? `<div class="text-[11px] font-semibold text-slate-800 mt-0.5">${subtitleExtra}</div>` : ""}
+        <div class="text-[11px] text-slate-600 mt-0.5">अवधि: ${accountingEscape(accountingFrom)} देखि ${accountingEscape(accountingTo)} सम्म | तयार मिति (BS): ${accountingEscape(st.activeBSDate)}</div>
+      </div>
+
+      ${bodyHtml}
+
+      <div class="grid grid-cols-3 gap-6 pt-10 text-[11px] text-center">
+        <div>
+          <div class="border-t border-slate-700 pt-1 font-semibold">तयार गर्ने (लेखापाल / कर्मचारी)</div>
+        </div>
+        <div>
+          <div class="border-t border-slate-700 pt-1 font-semibold">जाँच गर्ने (कोषाध्यक्ष)</div>
+        </div>
+        <div>
+          <div class="border-t border-slate-700 pt-1 font-semibold">स्वीकृत गर्ने (अध्यक्ष)</div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function computeAccountingData() {
+  const journal = getAccountingJournal();
+  const period = journal.filter(j => (j.source === "opening") || (j.date >= accountingFrom && j.date <= accountingTo));
+  const allBalances = getAccountBalances(journal, null, accountingTo);
+  const periodBalances = getAccountBalances(journal.filter(j => j.source !== "opening"), accountingFrom, accountingTo);
+  return { journal, period, allBalances, periodBalances };
+}
+
+function buildAccountingLedgerData(journal, acctId) {
+  const a = accountById(acctId);
+  const entries = [];
+  let openDr = 0, openCr = 0, openNet = 0, periodDr = 0, periodCr = 0, run = 0;
+  journal.filter(j => j.date <= accountingTo).forEach(j => (j.lines || []).filter(l => l.accountId === a.id).forEach(l => {
+    const d = Number(l.debit || 0), c = Number(l.credit || 0), net = accountingAccountNet(a, { debit: d, credit: c });
+    run = accountingMoney(run + net);
+    if (j.source === "opening" || j.date < accountingFrom) {
+      openDr = accountingMoney(openDr + d);
+      openCr = accountingMoney(openCr + c);
+      openNet = accountingMoney(openNet + net);
+    } else {
+      periodDr = accountingMoney(periodDr + d);
+      periodCr = accountingMoney(periodCr + c);
+      entries.push({ date: j.date, ref: j.ref || j.id, description: j.description, debit: d, credit: c, run });
+    }
+  }));
+  const totalDr = accountingMoney(openDr + periodDr);
+  const totalCr = accountingMoney(openCr + periodCr);
+  return { a, entries, openDr, openCr, openNet, periodDr, periodCr, totalDr, totalCr, closing: run };
+}
+
+function buildAccountingPrintableHTML(tabId, ctx = null) {
+  const { journal, period, allBalances, periodBalances } = ctx || computeAccountingData();
+
+  if (tabId === "journal") {
+    let sumDr = 0, sumCr = 0;
+    const rows = period.map((j, idx) => {
+      const dr = accountingMoney((j.lines || []).reduce((a, l) => a + Number(l.debit || 0), 0));
+      const cr = accountingMoney((j.lines || []).reduce((a, l) => a + Number(l.credit || 0), 0));
+      sumDr = accountingMoney(sumDr + dr);
+      sumCr = accountingMoney(sumCr + cr);
+      const drAccts = (j.lines || []).filter(l => l.debit > 0).map(l => `${l.accountId} ${accountById(l.accountId).name} (${fmtMoney(l.debit)})`).join(", ");
+      const crAccts = (j.lines || []).filter(l => l.credit > 0).map(l => `${l.accountId} ${accountById(l.accountId).name} (${fmtMoney(l.credit)})`).join(", ");
+      const srcLabel = j.source === "opening" ? "सुरु मौज्दात" : (j.source === "manual" ? "म्यानुअल" : "अटो पोस्ट");
+      return `
+        <tr>
+          <td class="border border-slate-700 p-1.5 text-center">${idx + 1}</td>
+          <td class="border border-slate-700 p-1.5 tabular-nums whitespace-nowrap">${j.source === "opening" ? `सुरु (${accountingEscape(getOpeningDateBS())})` : accountingEscape(j.date)}</td>
+          <td class="border border-slate-700 p-1.5">${accountingEscape(j.ref || j.id)}</td>
+          <td class="border border-slate-700 p-1.5">
+            <div class="font-semibold">${accountingEscape(j.description)}</div>
+            <div class="text-[10px] text-slate-700">Dr: ${accountingEscape(drAccts)} | Cr: ${accountingEscape(crAccts)}</div>
+          </td>
+          <td class="border border-slate-700 p-1.5 text-center">${srcLabel}</td>
+          <td class="border border-slate-700 p-1.5 text-right tabular-nums">${fmtMoney(dr)}</td>
+          <td class="border border-slate-700 p-1.5 text-right tabular-nums">${fmtMoney(cr)}</td>
+        </tr>
+      `;
+    }).join("");
+    const body = `
+      <table class="w-full text-[11px] border-collapse border border-slate-800">
+        <thead class="bg-slate-100 font-bold">
+          <tr>
+            <th class="border border-slate-800 p-1.5 text-center w-10">क्र.सं.</th>
+            <th class="border border-slate-800 p-1.5 text-left">मिति (BS)</th>
+            <th class="border border-slate-800 p-1.5 text-left">भौचर / Ref</th>
+            <th class="border border-slate-800 p-1.5 text-left">विवरण तथा खाता शीर्षक</th>
+            <th class="border border-slate-800 p-1.5 text-center">स्रोत</th>
+            <th class="border border-slate-800 p-1.5 text-right">डेबिट (रू.)</th>
+            <th class="border border-slate-800 p-1.5 text-right">क्रेडिट (रू.)</th>
+          </tr>
+        </thead>
+        <tbody>${rows || `<tr><td colspan="7" class="border border-slate-700 p-4 text-center">यस अवधिमा कारोबार छैन।</td></tr>`}</tbody>
+        <tfoot class="bg-slate-100 font-bold">
+          <tr>
+            <td colspan="5" class="border border-slate-800 p-1.5 text-right">कुल योग (${period.length} भौचर):</td>
+            <td class="border border-slate-800 p-1.5 text-right tabular-nums">${fmtMoney(sumDr)}</td>
+            <td class="border border-slate-800 p-1.5 text-right tabular-nums">${fmtMoney(sumCr)}</td>
+          </tr>
+        </tfoot>
+      </table>
+    `;
+    return buildAccountingPrintShell(getAccountingTabTitle("journal"), body);
+  }
+
+  if (tabId === "ledger") {
+    const ld = buildAccountingLedgerData(journal, accountingLedgerAccount);
+    const hasOpen = ld.openDr > 0 || ld.openCr > 0 || Math.abs(ld.openNet) > 0.009;
+    const openingRow = hasOpen ? `
+      <tr class="bg-amber-50 font-semibold">
+        <td class="border border-slate-700 p-1.5">सुरु (${accountingEscape(getOpeningDateBS())})</td>
+        <td class="border border-slate-700 p-1.5">Opening B/F</td>
+        <td class="border border-slate-700 p-1.5">प्रारम्भिक मौज्दात / अघिल्लो अवधि बाँकी</td>
+        <td class="border border-slate-700 p-1.5 text-right tabular-nums">${ld.openDr ? fmtMoney(ld.openDr) : "—"}</td>
+        <td class="border border-slate-700 p-1.5 text-right tabular-nums">${ld.openCr ? fmtMoney(ld.openCr) : "—"}</td>
+        <td class="border border-slate-700 p-1.5 text-right tabular-nums">${fmtMoney(ld.openNet)}</td>
+      </tr>
+    ` : "";
+    const rows = ld.entries.map(en => `
+      <tr>
+        <td class="border border-slate-700 p-1.5 tabular-nums">${accountingEscape(en.date)}</td>
+        <td class="border border-slate-700 p-1.5">${accountingEscape(en.ref)}</td>
+        <td class="border border-slate-700 p-1.5">${accountingEscape(en.description)}</td>
+        <td class="border border-slate-700 p-1.5 text-right tabular-nums">${en.debit ? fmtMoney(en.debit) : "—"}</td>
+        <td class="border border-slate-700 p-1.5 text-right tabular-nums">${en.credit ? fmtMoney(en.credit) : "—"}</td>
+        <td class="border border-slate-700 p-1.5 text-right font-semibold tabular-nums">${fmtMoney(Math.abs(en.run))} ${en.run >= 0 ? "" : "(उल्टो)"}</td>
+      </tr>
+    `).join("");
+    const body = `
+      <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 bg-slate-50 border border-slate-400 rounded p-2 text-[11px] font-semibold">
+        <div>प्रारम्भिक मौज्दात: ${fmtMoney(ld.openNet)}</div>
+        <div>कुल डेबिट: ${fmtMoney(ld.totalDr)}</div>
+        <div>कुल क्रेडिट: ${fmtMoney(ld.totalCr)}</div>
+        <div>अन्तिम मौज्दात: <span class="underline">${fmtMoney(ld.closing)}</span></div>
+      </div>
+      <table class="w-full text-[11px] border-collapse border border-slate-800">
+        <thead class="bg-slate-100 font-bold">
+          <tr>
+            <th class="border border-slate-800 p-1.5 text-left">मिति (BS)</th>
+            <th class="border border-slate-800 p-1.5 text-left">Ref</th>
+            <th class="border border-slate-800 p-1.5 text-left">विवरण</th>
+            <th class="border border-slate-800 p-1.5 text-right">डेबिट (Dr)</th>
+            <th class="border border-slate-800 p-1.5 text-right">क्रेडिट (Cr)</th>
+            <th class="border border-slate-800 p-1.5 text-right">चल्ती मौज्दात</th>
+          </tr>
+        </thead>
+        <tbody>${openingRow}${rows || (!hasOpen ? `<tr><td colspan="6" class="border border-slate-700 p-4 text-center">यस खातामा कारोबार छैन।</td></tr>` : "")}</tbody>
+        <tfoot class="bg-slate-100 font-bold">
+          <tr>
+            <td colspan="3" class="border border-slate-800 p-1.5 text-right">कुल योग र अन्तिम मौज्दात (Closing Balance):</td>
+            <td class="border border-slate-800 p-1.5 text-right tabular-nums">${fmtMoney(ld.totalDr)}</td>
+            <td class="border border-slate-800 p-1.5 text-right tabular-nums">${fmtMoney(ld.totalCr)}</td>
+            <td class="border border-slate-800 p-1.5 text-right tabular-nums">${fmtMoney(ld.closing)}</td>
+          </tr>
+        </tfoot>
+      </table>
+    `;
+    return buildAccountingPrintShell(getAccountingTabTitle("ledger"), body, `खाता शीर्षक: ${accountingEscape(ld.a.id)} - ${accountingEscape(ld.a.name)}`);
+  }
+
+  if (tabId === "trial") {
+    const rows = ACCOUNT_CHART.map(a => {
+      const b = allBalances[a.id] || { debit: 0, credit: 0 };
+      const net = accountingAccountNet(a, b);
+      return `
+        <tr>
+          <td class="border border-slate-700 p-1.5 font-semibold">${accountingEscape(a.id)}</td>
+          <td class="border border-slate-700 p-1.5">${accountingEscape(a.name)}</td>
+          <td class="border border-slate-700 p-1.5 text-right tabular-nums">${b.debit ? fmtMoney(b.debit) : "—"}</td>
+          <td class="border border-slate-700 p-1.5 text-right tabular-nums">${b.credit ? fmtMoney(b.credit) : "—"}</td>
+          <td class="border border-slate-700 p-1.5 text-right font-semibold tabular-nums">${fmtMoney(Math.abs(net))} ${net < 0 ? "(Cr)" : "(Dr)"}</td>
+        </tr>
+      `;
+    }).join("");
+    const dr = ACCOUNT_CHART.reduce((a, x) => a + (allBalances[x.id]?.debit || 0), 0);
+    const cr = ACCOUNT_CHART.reduce((a, x) => a + (allBalances[x.id]?.credit || 0), 0);
+    const body = `
+      <table class="w-full text-[11px] border-collapse border border-slate-800">
+        <thead class="bg-slate-100 font-bold">
+          <tr>
+            <th class="border border-slate-800 p-1.5 text-left w-20">खाता नं.</th>
+            <th class="border border-slate-800 p-1.5 text-left">खाताको नाम</th>
+            <th class="border border-slate-800 p-1.5 text-right">डेबिट (रू.)</th>
+            <th class="border border-slate-800 p-1.5 text-right">क्रेडिट (रू.)</th>
+            <th class="border border-slate-800 p-1.5 text-right">खुद मौज्दात</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+        <tfoot class="bg-slate-100 font-bold">
+          <tr>
+            <td colspan="2" class="border border-slate-800 p-1.5 text-right">जम्मा (Total):</td>
+            <td class="border border-slate-800 p-1.5 text-right tabular-nums">${fmtMoney(dr)}</td>
+            <td class="border border-slate-800 p-1.5 text-right tabular-nums">${fmtMoney(cr)}</td>
+            <td class="border border-slate-800 p-1.5 text-right">${Math.abs(dr - cr) < 0.01 ? "मिलेको (Balanced)" : `फरक ${fmtMoney(Math.abs(dr - cr))}`}</td>
+          </tr>
+        </tfoot>
+      </table>
+    `;
+    return buildAccountingPrintShell(getAccountingTabTitle("trial"), body);
+  }
+
+  if (tabId === "pl") {
+    const inc = ACCOUNT_CHART.filter(a => a.type === "income").map(a => ({ a, v: accountingAccountNet(a, periodBalances[a.id] || { debit: 0, credit: 0 }) }));
+    const exp = ACCOUNT_CHART.filter(a => a.type === "expense").map(a => ({ a, v: accountingAccountNet(a, periodBalances[a.id] || { debit: 0, credit: 0 }) }));
+    const ti = inc.reduce((x, y) => x + y.v, 0), te = exp.reduce((x, y) => x + y.v, 0);
+    const body = `
+      <div class="grid grid-cols-2 gap-4 items-start">
+        <table class="w-full text-[11px] border-collapse border border-slate-800">
+          <thead class="bg-slate-100 font-bold">
+            <tr><th colspan="2" class="border border-slate-800 p-1.5 text-left">आम्दानी विवरण (Income)</th></tr>
+          </thead>
+          <tbody>
+            ${inc.map(x => `<tr><td class="border border-slate-700 p-1.5">${accountingEscape(x.a.id)} - ${accountingEscape(x.a.name)}</td><td class="border border-slate-700 p-1.5 text-right tabular-nums font-semibold">${fmtMoney(x.v)}</td></tr>`).join("")}
+          </tbody>
+          <tfoot class="bg-slate-100 font-bold">
+            <tr><td class="border border-slate-800 p-1.5">कुल आम्दानी</td><td class="border border-slate-800 p-1.5 text-right tabular-nums">${fmtMoney(ti)}</td></tr>
+          </tfoot>
+        </table>
+        <table class="w-full text-[11px] border-collapse border border-slate-800">
+          <thead class="bg-slate-100 font-bold">
+            <tr><th colspan="2" class="border border-slate-800 p-1.5 text-left">खर्च विवरण (Expenditure)</th></tr>
+          </thead>
+          <tbody>
+            ${exp.map(x => `<tr><td class="border border-slate-700 p-1.5">${accountingEscape(x.a.id)} - ${accountingEscape(x.a.name)}</td><td class="border border-slate-700 p-1.5 text-right tabular-nums font-semibold">${fmtMoney(x.v)}</td></tr>`).join("")}
+          </tbody>
+          <tfoot class="bg-slate-100 font-bold">
+            <tr><td class="border border-slate-800 p-1.5">कुल खर्च</td><td class="border border-slate-800 p-1.5 text-right tabular-nums">${fmtMoney(te)}</td></tr>
+          </tfoot>
+        </table>
+      </div>
+      <div class="border-2 border-slate-800 bg-slate-50 p-2.5 flex justify-between font-bold text-xs">
+        <span>अवधिगत खुद बचत / (घाटा) (Net Surplus / Deficit):</span>
+        <span class="tabular-nums">${fmtMoney(ti - te)}</span>
+      </div>
+    `;
+    return buildAccountingPrintShell(getAccountingTabTitle("pl"), body);
+  }
+
+  if (tabId === "bs") {
+    const bal = allBalances, groups = ["asset", "liability", "equity"], tot = {};
+    groups.forEach(t => { tot[t] = ACCOUNT_CHART.filter(a => a.type === t).reduce((z, a) => z + accountingAccountNet(a, bal[a.id] || { debit: 0, credit: 0 }), 0); });
+    const surplus = ACCOUNT_CHART.filter(a => a.type === "income" || a.type === "expense").reduce((z, a) => z + accountingAccountNet(a, bal[a.id] || { debit: 0, credit: 0 }) * (a.type === "income" ? 1 : -1), 0);
+    const rhs = tot.liability + tot.equity + surplus;
+    const body = `
+      <div class="grid grid-cols-2 gap-4 items-start">
+        <table class="w-full text-[11px] border-collapse border border-slate-800">
+          <thead class="bg-slate-100 font-bold">
+            <tr><th colspan="2" class="border border-slate-800 p-1.5 text-left">सम्पत्ति (Assets)</th></tr>
+          </thead>
+          <tbody>
+            ${ACCOUNT_CHART.filter(a => a.type === "asset").map(a => `<tr><td class="border border-slate-700 p-1.5">${accountingEscape(a.id)} - ${accountingEscape(a.name)}</td><td class="border border-slate-700 p-1.5 text-right tabular-nums font-semibold">${fmtMoney(accountingAccountNet(a, bal[a.id] || { debit: 0, credit: 0 }))}</td></tr>`).join("")}
+          </tbody>
+          <tfoot class="bg-slate-100 font-bold">
+            <tr><td class="border border-slate-800 p-1.5">कुल सम्पत्ति</td><td class="border border-slate-800 p-1.5 text-right tabular-nums">${fmtMoney(tot.asset)}</td></tr>
+          </tfoot>
+        </table>
+        <table class="w-full text-[11px] border-collapse border border-slate-800">
+          <thead class="bg-slate-100 font-bold">
+            <tr><th colspan="2" class="border border-slate-800 p-1.5 text-left">दायित्व तथा कोष (Liabilities &amp; Equity)</th></tr>
+          </thead>
+          <tbody>
+            ${ACCOUNT_CHART.filter(a => a.type === "liability" || a.type === "equity").map(a => `<tr><td class="border border-slate-700 p-1.5">${accountingEscape(a.id)} - ${accountingEscape(a.name)}</td><td class="border border-slate-700 p-1.5 text-right tabular-nums font-semibold">${fmtMoney(accountingAccountNet(a, bal[a.id] || { debit: 0, credit: 0 }))}</td></tr>`).join("")}
+            <tr><td class="border border-slate-700 p-1.5">चालु अवधिसम्मको सञ्चित बचत/(घाटा)</td><td class="border border-slate-700 p-1.5 text-right tabular-nums font-semibold">${fmtMoney(surplus)}</td></tr>
+          </tbody>
+          <tfoot class="bg-slate-100 font-bold">
+            <tr><td class="border border-slate-800 p-1.5">कुल दायित्व तथा कोष</td><td class="border border-slate-800 p-1.5 text-right tabular-nums">${fmtMoney(rhs)}</td></tr>
+          </tfoot>
+        </table>
+      </div>
+      <div class="border-2 border-slate-800 bg-slate-50 p-2.5 text-center font-bold text-xs">
+        वासलात स्थिति: ${Math.abs(tot.asset - rhs) < 0.01 ? "सम्पत्ति र दायित्व/कोष शतप्रतिशत मिलेको छ" : "मिलेको छैन"} (फरक: ${fmtMoney(Math.abs(tot.asset - rhs))})
+      </div>
+    `;
+    return buildAccountingPrintShell(getAccountingTabTitle("bs"), body);
+  }
+
+  const cashLines = period.flatMap(j => (j.lines || []).filter(l => ["1001", "1002"].includes(l.accountId)).map(l => ({ date: j.date, desc: j.description, account: l.accountId, debit: Number(l.debit || 0), credit: Number(l.credit || 0) }))).sort((a, b) => a.date.localeCompare(b.date));
+  const totalIn = cashLines.reduce((z, l) => z + l.debit, 0);
+  const totalOut = cashLines.reduce((z, l) => z + l.credit, 0);
+  const net = totalIn - totalOut;
+  const body = `
+    <div class="grid grid-cols-3 gap-2 bg-slate-50 border border-slate-400 rounded p-2 text-[11px] font-semibold">
+      <div>कुल आगमन (Inflow): ${fmtMoney(totalIn)}</div>
+      <div>कुल बहिर्गमन (Outflow): ${fmtMoney(totalOut)}</div>
+      <div>खुद नगद/बैंक मौज्दात: <span class="underline">${fmtMoney(net)}</span></div>
+    </div>
+    <table class="w-full text-[11px] border-collapse border border-slate-800">
+      <thead class="bg-slate-100 font-bold">
+        <tr>
+          <th class="border border-slate-800 p-1.5 text-left">मिति (BS)</th>
+          <th class="border border-slate-800 p-1.5 text-left">विवरण</th>
+          <th class="border border-slate-800 p-1.5 text-center">खाता</th>
+          <th class="border border-slate-800 p-1.5 text-right">आगमन (Dr)</th>
+          <th class="border border-slate-800 p-1.5 text-right">बहिर्गमन (Cr)</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${cashLines.map(l => `
+          <tr>
+            <td class="border border-slate-700 p-1.5 tabular-nums">${l.date === "0000-01-01" ? `सुरु (${accountingEscape(getOpeningDateBS())})` : accountingEscape(l.date)}</td>
+            <td class="border border-slate-700 p-1.5">${accountingEscape(l.desc)}</td>
+            <td class="border border-slate-700 p-1.5 text-center">${l.account === "1001" ? "नगद (1001)" : "बैंक (1002)"}</td>
+            <td class="border border-slate-700 p-1.5 text-right tabular-nums">${l.debit ? fmtMoney(l.debit) : "—"}</td>
+            <td class="border border-slate-700 p-1.5 text-right tabular-nums">${l.credit ? fmtMoney(l.credit) : "—"}</td>
+          </tr>
+        `).join("") || `<tr><td colspan="5" class="border border-slate-700 p-4 text-center">यस अवधिमा नगद/बैंक कारोबार छैन।</td></tr>`}
+      </tbody>
+      <tfoot class="bg-slate-100 font-bold">
+        <tr>
+          <td colspan="3" class="border border-slate-800 p-1.5 text-right">कुल योग र खुद मौज्दात:</td>
+          <td class="border border-slate-800 p-1.5 text-right tabular-nums">${fmtMoney(totalIn)}</td>
+          <td class="border border-slate-800 p-1.5 text-right tabular-nums">${fmtMoney(totalOut)}</td>
+        </tr>
+      </tfoot>
+    </table>
+  `;
+  return buildAccountingPrintShell(getAccountingTabTitle("cash"), body);
+}
+
+window.printAccountingSection = function(tabId) {
+  const html = buildAccountingPrintableHTML(tabId || accountingTab);
+  openPrintModal(getAccountingTabTitle(tabId || accountingTab), html);
+};
+
+window.printAllAccountingSections = function() {
+  const ctx = computeAccountingData();
+  const order = ["journal", "ledger", "trial", "pl", "bs", "cash"];
+  const html = order.map(t => `<div class="doc-page-break">${buildAccountingPrintableHTML(t, ctx)}</div>`).join("");
+  openPrintModal("सम्पूर्ण दोहोरो लेखा प्रणाली प्रतिवेदन (All 6 Reports)", html);
+};
+
+window.printAllAccountingLedgers = function() {
+  const ctx = computeAccountingData();
+  const activeAccounts = ACCOUNT_CHART.filter(a => {
+    const ld = buildAccountingLedgerData(ctx.journal, a.id);
+    return ld.entries.length > 0 || ld.openDr > 0 || ld.openCr > 0 || Math.abs(ld.openNet) > 0.009;
+  });
+  if (!activeAccounts.length) return showToast("कुनै पनि खातामा कारोबार भेटिएन।", "info");
+  const prevAcc = accountingLedgerAccount;
+  const html = activeAccounts.map(a => {
+    accountingLedgerAccount = a.id;
+    return `<div class="doc-page-break">${buildAccountingPrintableHTML("ledger", ctx)}</div>`;
+  }).join("");
+  accountingLedgerAccount = prevAcc;
+  openPrintModal(`सबै सक्रिय खातावही (${activeAccounts.length} खाता)`, html);
+};
+
+window.printSingleAccountingVoucher = function(entryId) {
+  const journal = getAccountingJournal();
+  const j = journal.find(x => String(x.id) === String(entryId));
+  if (!j) return showToast("भौचर विवरण भेटिएन।", "error");
+  const totalDr = accountingMoney((j.lines || []).reduce((s, l) => s + Number(l.debit || 0), 0));
+  const totalCr = accountingMoney((j.lines || []).reduce((s, l) => s + Number(l.credit || 0), 0));
+  const words = typeof numberToNepaliWords === "function" ? numberToNepaliWords(Math.round(totalDr)) : "";
+  const srcLabel = j.source === "opening" ? "सुरु मौज्दात" : (j.source === "manual" ? "म्यानुअल भौचर" : "अटो पोस्ट भौचर");
+  const dispDate = j.source === "opening" ? getOpeningDateBS() : j.date;
+
+  const body = `
+    <div class="grid grid-cols-2 sm:grid-cols-3 gap-2 bg-slate-50 border border-slate-500 p-2.5 text-xs">
+      <div><strong>भौचर / Ref नं.:</strong> ${accountingEscape(j.ref || j.id)}</div>
+      <div><strong>मिति (BS):</strong> ${accountingEscape(dispDate)}</div>
+      <div><strong>प्रकार:</strong> ${accountingEscape(srcLabel)}</div>
+      <div class="sm:col-span-3"><strong>विवरण:</strong> ${accountingEscape(j.description)}</div>
+    </div>
+    <table class="w-full text-xs border-collapse border border-slate-800">
+      <thead class="bg-slate-100 font-bold">
+        <tr>
+          <th class="border border-slate-800 p-2 text-left w-24">खाता नं.</th>
+          <th class="border border-slate-800 p-2 text-left">खाताको नाम / विवरण</th>
+          <th class="border border-slate-800 p-2 text-right w-32">डेबिट (Dr रू.)</th>
+          <th class="border border-slate-800 p-2 text-right w-32">क्रेडिट (Cr रू.)</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${(j.lines || []).map(l => `
+          <tr>
+            <td class="border border-slate-700 p-2 font-semibold">${accountingEscape(l.accountId)}</td>
+            <td class="border border-slate-700 p-2">${accountingEscape(accountById(l.accountId).name)}</td>
+            <td class="border border-slate-700 p-2 text-right tabular-nums">${Number(l.debit || 0) > 0 ? fmtMoney(l.debit) : "—"}</td>
+            <td class="border border-slate-700 p-2 text-right tabular-nums">${Number(l.credit || 0) > 0 ? fmtMoney(l.credit) : "—"}</td>
+          </tr>
+        `).join("")}
+      </tbody>
+      <tfoot class="bg-slate-100 font-bold">
+        <tr>
+          <td colspan="2" class="border border-slate-800 p-2 text-right">जम्मा (Total):</td>
+          <td class="border border-slate-800 p-2 text-right tabular-nums">${fmtMoney(totalDr)}</td>
+          <td class="border border-slate-800 p-2 text-right tabular-nums">${fmtMoney(totalCr)}</td>
+        </tr>
+      </tfoot>
+    </table>
+    ${words ? `<div class="text-xs font-semibold border border-slate-400 p-2 bg-slate-50">अक्षरेपी: ${accountingEscape(words)}</div>` : ""}
+  `;
+  const html = buildAccountingPrintShell("दोहोरो लेखा भौचर (Accounting Voucher)", body);
+  openPrintModal(`भौचर प्रिन्ट (${j.ref || j.id})`, html);
+};
+
 function renderAccountingModule(){
-  const st=window.ERP_STATE,journal=getAccountingJournal(),period=journal.filter(j=>(j.source==="opening")||(j.date>=accountingFrom&&j.date<=accountingTo)),allBalances=getAccountBalances(journal,null,accountingTo),periodBalances=getAccountBalances(journal.filter(j=>j.source!=="opening"),accountingFrom,accountingTo);
+  const st=window.ERP_STATE;
+  const { journal, period, allBalances, periodBalances } = computeAccountingData();
   const tabs=[["journal","जर्नल / भौचर"],["ledger","खातावही"],["trial","Trial Balance"],["pl","आय-व्यय"],["bs","वासलात"],["cash","नगद प्रवाह"]];
+  const activeTabLabel = (tabs.find(t => t[0] === accountingTab) || ["", "लेखा"])[1];
   const opts=ACCOUNT_CHART.map(a=>`<option value="${a.id}">${a.id} - ${a.name}</option>`).join("");
   const tableHead=`<thead class="bg-slate-100"><tr><th class="p-2 text-left">खाता नं.</th><th class="p-2 text-left">खाताको नाम</th><th class="p-2 text-right">डेबिट</th><th class="p-2 text-right">क्रेडिट</th><th class="p-2 text-right">खुद मौज्दात</th></tr></thead>`;
   let content="";
@@ -5810,45 +6235,34 @@ function renderAccountingModule(){
       const drAccts=(j.lines||[]).filter(l=>l.debit>0).map(l=>`${l.accountId} ${accountById(l.accountId).name}`).join(", ");
       const crAccts=(j.lines||[]).filter(l=>l.credit>0).map(l=>`${l.accountId} ${accountById(l.accountId).name}`).join(", ");
       const srcBadge=j.source==="opening"?`<span class="px-1.5 py-0.5 bg-amber-100 text-amber-800 rounded text-[10px] font-semibold">सुरु मौज्दात</span>`:(j.source==="manual"?`<span class="px-1.5 py-0.5 bg-indigo-100 text-indigo-800 rounded text-[10px] font-semibold">म्यानुअल</span>`:`<span class="px-1.5 py-0.5 bg-teal-50 text-teal-800 rounded text-[10px] font-semibold">अटो पोस्ट</span>`);
-      return `<tr class="border-t ${j.source==='opening'?'bg-amber-50/40':''}"><td class="p-2">${j.source==="opening"?("सुरु ("+getOpeningDateBS()+")"):accountingEscape(j.date)}</td><td class="p-2">${accountingEscape(j.ref||j.id)}</td><td class="p-2">${accountingEscape(j.description)}<div class="text-[10px] text-slate-500">Dr: ${accountingEscape(drAccts)} | Cr: ${accountingEscape(crAccts)}</div></td><td class="p-2">${srcBadge}</td><td class="p-2 text-right font-semibold">${fmtMoney(j.lines.reduce((a,l)=>a+Number(l.debit||0),0))}</td><td class="p-2 text-right">${j.source==="manual"&&!j.reverses?`<button onclick="reverseAccountingVoucher('${j.id}')" class="text-rose-700 underline">उल्टाउनुहोस्</button>`:"—"}</td></tr>`;
+      return `<tr class="border-t ${j.source==='opening'?'bg-amber-50/40':''}"><td class="p-2">${j.source==="opening"?("सुरु ("+getOpeningDateBS()+")"):accountingEscape(j.date)}</td><td class="p-2">${accountingEscape(j.ref||j.id)}</td><td class="p-2">${accountingEscape(j.description)}<div class="text-[10px] text-slate-500">Dr: ${accountingEscape(drAccts)} | Cr: ${accountingEscape(crAccts)}</div></td><td class="p-2">${srcBadge}</td><td class="p-2 text-right font-semibold">${fmtMoney(j.lines.reduce((a,l)=>a+Number(l.debit||0),0))}</td><td class="p-2 text-right whitespace-nowrap space-x-1"><button type="button" onclick="printSingleAccountingVoucher('${accountingEscape(j.id)}')" class="px-2 py-0.5 bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-300 rounded text-[11px] font-semibold cursor-pointer">प्रिन्ट</button>${j.source==="manual"&&!j.reverses?`<button type="button" onclick="reverseAccountingVoucher('${j.id}')" class="text-rose-700 underline ml-1 cursor-pointer">उल्टाउनुहोस्</button>`:""}</td></tr>`;
     }).join("");
-    content=`<div class="bg-white border rounded-xl overflow-hidden"><div class="p-4 border-b"><h3 class="font-bold">नयाँ जर्नल भौचर (एक Debit र एक Credit)</h3><p class="text-xs text-slate-500 mt-1">सेटिङको सुरु मौज्दात, बिलिङ, अग्रिम र असुली स्वतः जर्नलमा जोडिन्छ। भौचर सच्याउन reversal प्रयोग गर्नुहोस्।</p><form onsubmit="addAccountingVoucher(event)" class="grid grid-cols-1 md:grid-cols-6 gap-2 mt-3 text-xs"><select id="acc-v-type" class="border rounded-lg p-2"><option>Journal</option><option>Receipt</option><option>Payment</option><option>Contra</option></select><input id="acc-v-date" value="${st.activeBSDate}" class="border rounded-lg p-2" placeholder="मिति BS"><select id="acc-v-debit" class="border rounded-lg p-2 md:col-span-1">${opts}</select><select id="acc-v-credit" class="border rounded-lg p-2">${opts.replace('value="1001"','value="1001" selected')}</select><input id="acc-v-amount" type="number" min="0.01" step="0.01" required placeholder="रकम" class="border rounded-lg p-2"><button class="bg-teal-700 text-white rounded-lg p-2">भौचर सेभ</button><input id="acc-v-desc" required placeholder="कारोबार विवरण" class="border rounded-lg p-2 md:col-span-6"></form></div><div class="overflow-x-auto"><table class="w-full text-xs"><thead class="bg-slate-50"><tr><th class="p-2 text-left">मिति</th><th class="p-2 text-left">Ref</th><th class="p-2 text-left">विवरण / खाता शीर्षक</th><th class="p-2 text-left">स्रोत</th><th class="p-2 text-right">रकम</th><th class="p-2 text-right">कार्य</th></tr></thead><tbody>${rows||'<tr><td colspan="6" class="p-4 text-center text-slate-500">यस अवधिमा कारोबार छैन।</td></tr>'}</tbody></table></div></div>`;
+    content=`<div class="bg-white border rounded-xl overflow-hidden"><div class="p-4 border-b"><div class="flex flex-wrap items-center justify-between gap-2"><div><h3 class="font-bold">नयाँ जर्नल भौचर (एक Debit र एक Credit)</h3><p class="text-xs text-slate-500 mt-1">सेटिङको सुरु मौज्दात, बिलिङ, अग्रिम र असुली स्वतः जर्नलमा जोडिन्छ। भौचर सच्याउन reversal प्रयोग गर्नुहोस्।</p></div><button type="button" onclick="printAccountingSection('journal')" class="bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold px-3 py-1.5 rounded-lg flex items-center gap-1.5 cursor-pointer"><i data-lucide="printer" class="w-3.5 h-3.5"></i> जर्नल रजिस्टर प्रिन्ट</button></div><form onsubmit="addAccountingVoucher(event)" class="grid grid-cols-1 md:grid-cols-6 gap-2 mt-3 text-xs"><select id="acc-v-type" class="border rounded-lg p-2"><option>Journal</option><option>Receipt</option><option>Payment</option><option>Contra</option></select><input id="acc-v-date" value="${st.activeBSDate}" class="border rounded-lg p-2" placeholder="मिति BS"><select id="acc-v-debit" class="border rounded-lg p-2 md:col-span-1">${opts}</select><select id="acc-v-credit" class="border rounded-lg p-2">${opts.replace('value="1001"','value="1001" selected')}</select><input id="acc-v-amount" type="number" min="0.01" step="0.01" required placeholder="रकम" class="border rounded-lg p-2"><button class="bg-teal-700 text-white rounded-lg p-2 cursor-pointer">भौचर सेभ</button><input id="acc-v-desc" required placeholder="कारोबार विवरण" class="border rounded-lg p-2 md:col-span-6"></form></div><div class="overflow-x-auto"><table class="w-full text-xs"><thead class="bg-slate-50"><tr><th class="p-2 text-left">मिति</th><th class="p-2 text-left">Ref</th><th class="p-2 text-left">विवरण / खाता शीर्षक</th><th class="p-2 text-left">स्रोत</th><th class="p-2 text-right">रकम</th><th class="p-2 text-right">प्रिन्ट / कार्य</th></tr></thead><tbody>${rows||'<tr><td colspan="6" class="p-4 text-center text-slate-500">यस अवधिमा कारोबार छैन।</td></tr>'}</tbody></table></div></div>`;
   } else if(accountingTab==="ledger"){
-    const a=accountById(accountingLedgerAccount),entries=[];
-    let openDr=0,openCr=0,openNet=0,periodDr=0,periodCr=0,run=0;
-    journal.filter(j=>j.date<=accountingTo).forEach(j=>j.lines.filter(l=>l.accountId===a.id).forEach(l=>{
-      const d=Number(l.debit||0),c=Number(l.credit||0),net=accountingAccountNet(a,{debit:d,credit:c});
-      run=accountingMoney(run+net);
-      if(j.source==="opening"||j.date<accountingFrom){
-        openDr=accountingMoney(openDr+d);openCr=accountingMoney(openCr+c);openNet=accountingMoney(openNet+net);
-      } else {
-        periodDr=accountingMoney(periodDr+d);periodCr=accountingMoney(periodCr+c);
-        entries.push(`<tr class="border-t"><td class="p-2">${accountingEscape(j.date)}</td><td class="p-2">${accountingEscape(j.ref||j.id)}</td><td class="p-2">${accountingEscape(j.description)}</td><td class="p-2 text-right">${d?fmtMoney(d):"—"}</td><td class="p-2 text-right">${c?fmtMoney(c):"—"}</td><td class="p-2 text-right font-semibold">${fmtMoney(Math.abs(run))} ${run>=0?"":"(उल्टो)"}</td></tr>`);
-      }
-    }));
-    const openingRow=(openDr>0||openCr>0||Math.abs(openNet)>0.009)?`<tr class="border-t bg-amber-50/70 font-semibold"><td class="p-2">सुरु (${accountingEscape(getOpeningDateBS())})</td><td class="p-2">Opening B/F</td><td class="p-2">प्रारम्भिक मौज्दात / अघिल्लो अवधि बाँकी</td><td class="p-2 text-right">${openDr?fmtMoney(openDr):"—"}</td><td class="p-2 text-right">${openCr?fmtMoney(openCr):"—"}</td><td class="p-2 text-right">${fmtMoney(openNet)}</td></tr>`:"";
-    const totalDr=accountingMoney(openDr+periodDr),totalCr=accountingMoney(openCr+periodCr);
-    content=`<div class="bg-white border rounded-xl p-4 space-y-3"><div class="flex flex-wrap items-center justify-between gap-2"><div><label class="text-xs font-bold">खाता छान्नुहोस्</label><select class="border rounded-lg p-2 text-xs ml-2 font-semibold" onchange="accountingLedgerAccount=this.value;renderCurrentModule();">${ACCOUNT_CHART.map(x=>`<option value="${x.id}" ${x.id===a.id?'selected':''}>${x.id} - ${accountingEscape(x.name)}</option>`).join("")}</select></div><div class="flex flex-wrap gap-3 text-xs bg-slate-50 px-3 py-2 rounded-lg border"><span>प्रारम्भिक मौज्दात: <strong class="text-amber-800">${fmtMoney(openNet)}</strong></span><span>कुल डेबिट: <strong>${fmtMoney(totalDr)}</strong></span><span>कुल क्रेडिट: <strong>${fmtMoney(totalCr)}</strong></span><span>अन्तिम मौज्दात: <strong class="text-teal-800">${fmtMoney(run)}</strong></span></div></div><div class="overflow-x-auto"><table class="w-full text-xs"><thead class="bg-slate-100"><tr><th class="p-2 text-left">मिति</th><th class="p-2 text-left">Ref</th><th class="p-2 text-left">विवरण</th><th class="p-2 text-right">Debit</th><th class="p-2 text-right">Credit</th><th class="p-2 text-right">चल्ती मौज्दात</th></tr></thead><tbody>${openingRow}${entries.join("")||(!openingRow?'<tr><td colspan="6" class="p-3 text-center text-slate-500">यस खातामा कारोबार छैन।</td></tr>':'')}</tbody><tfoot class="bg-slate-100 font-bold border-t-2"><tr><td colspan="3" class="p-2 text-right">कुल योग र अन्तिम मौज्दात (Closing Balance):</td><td class="p-2 text-right">${fmtMoney(totalDr)}</td><td class="p-2 text-right">${fmtMoney(totalCr)}</td><td class="p-2 text-right text-teal-900">${fmtMoney(run)}</td></tr></tfoot></table></div></div>`;
+    const ld = buildAccountingLedgerData(journal, accountingLedgerAccount);
+    const entries = ld.entries.map(en => `<tr class="border-t"><td class="p-2">${accountingEscape(en.date)}</td><td class="p-2">${accountingEscape(en.ref)}</td><td class="p-2">${accountingEscape(en.description)}</td><td class="p-2 text-right">${en.debit?fmtMoney(en.debit):"—"}</td><td class="p-2 text-right">${en.credit?fmtMoney(en.credit):"—"}</td><td class="p-2 text-right font-semibold">${fmtMoney(Math.abs(en.run))} ${en.run>=0?"":"(उल्टो)"}</td></tr>`);
+    const openingRow=(ld.openDr>0||ld.openCr>0||Math.abs(ld.openNet)>0.009)?`<tr class="border-t bg-amber-50/70 font-semibold"><td class="p-2">सुरु (${accountingEscape(getOpeningDateBS())})</td><td class="p-2">Opening B/F</td><td class="p-2">प्रारम्भिक मौज्दात / अघिल्लो अवधि बाँकी</td><td class="p-2 text-right">${ld.openDr?fmtMoney(ld.openDr):"—"}</td><td class="p-2 text-right">${ld.openCr?fmtMoney(ld.openCr):"—"}</td><td class="p-2 text-right">${fmtMoney(ld.openNet)}</td></tr>`:"";
+    content=`<div class="bg-white border rounded-xl p-4 space-y-3"><div class="flex flex-wrap items-center justify-between gap-2"><div><label class="text-xs font-bold">खाता छान्नुहोस्</label><select class="border rounded-lg p-2 text-xs ml-2 font-semibold" onchange="accountingLedgerAccount=this.value;renderCurrentModule();">${ACCOUNT_CHART.map(x=>`<option value="${x.id}" ${x.id===ld.a.id?'selected':''}>${x.id} - ${accountingEscape(x.name)}</option>`).join("")}</select></div><div class="flex flex-wrap items-center gap-2"><button type="button" onclick="printAccountingSection('ledger')" class="bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold px-3 py-1.5 rounded-lg flex items-center gap-1 cursor-pointer"><i data-lucide="printer" class="w-3.5 h-3.5"></i> यो खातावही प्रिन्ट</button><button type="button" onclick="printAllAccountingLedgers()" class="bg-indigo-700 hover:bg-indigo-800 text-white text-xs font-semibold px-3 py-1.5 rounded-lg flex items-center gap-1 cursor-pointer"><i data-lucide="printer" class="w-3.5 h-3.5"></i> सबै खाता प्रिन्ट</button></div></div><div class="flex flex-wrap gap-3 text-xs bg-slate-50 px-3 py-2 rounded-lg border"><span>प्रारम्भिक मौज्दात: <strong class="text-amber-800">${fmtMoney(ld.openNet)}</strong></span><span>कुल डेबिट: <strong>${fmtMoney(ld.totalDr)}</strong></span><span>कुल क्रेडिट: <strong>${fmtMoney(ld.totalCr)}</strong></span><span>अन्तिम मौज्दात: <strong class="text-teal-800">${fmtMoney(ld.closing)}</strong></span></div><div class="overflow-x-auto"><table class="w-full text-xs"><thead class="bg-slate-100"><tr><th class="p-2 text-left">मिति</th><th class="p-2 text-left">Ref</th><th class="p-2 text-left">विवरण</th><th class="p-2 text-right">Debit</th><th class="p-2 text-right">Credit</th><th class="p-2 text-right">चल्ती मौज्दात</th></tr></thead><tbody>${openingRow}${entries.join("")||(!openingRow?'<tr><td colspan="6" class="p-3 text-center text-slate-500">यस खातामा कारोबार छैन।</td></tr>':'')}</tbody><tfoot class="bg-slate-100 font-bold border-t-2"><tr><td colspan="3" class="p-2 text-right">कुल योग र अन्तिम मौज्दात (Closing Balance):</td><td class="p-2 text-right">${fmtMoney(ld.totalDr)}</td><td class="p-2 text-right">${fmtMoney(ld.totalCr)}</td><td class="p-2 text-right text-teal-900">${fmtMoney(ld.closing)}</td></tr></tfoot></table></div></div>`;
   } else if(accountingTab==="trial"){
     const rows=ACCOUNT_CHART.map(a=>{const b=allBalances[a.id]||{debit:0,credit:0};const net=accountingAccountNet(a,b);return `<tr class="border-t"><td class="p-2">${a.id}</td><td class="p-2">${a.name}</td><td class="p-2 text-right">${b.debit?fmtMoney(b.debit):"—"}</td><td class="p-2 text-right">${b.credit?fmtMoney(b.credit):"—"}</td><td class="p-2 text-right">${fmtMoney(Math.abs(net))} ${net<0?"(Cr)":"(Dr)"}</td></tr>`;}).join("");
     const dr=ACCOUNT_CHART.reduce((a,x)=>a+(allBalances[x.id]?.debit||0),0),cr=ACCOUNT_CHART.reduce((a,x)=>a+(allBalances[x.id]?.credit||0),0);
-    content=`<div class="bg-white border rounded-xl p-4 overflow-x-auto"><table class="w-full text-xs">${tableHead}<tbody>${rows}</tbody><tfoot class="bg-slate-100 font-bold"><tr><td colspan="2" class="p-2 text-right">जम्मा</td><td class="p-2 text-right">${fmtMoney(dr)}</td><td class="p-2 text-right">${fmtMoney(cr)}</td><td class="p-2 text-right">${Math.abs(dr-cr)<0.01?'<span class="text-emerald-700">मिलेको</span>':'<span class="text-rose-700">फरक '+fmtMoney(Math.abs(dr-cr))+'</span>'}</td></tr></tfoot></table></div>`;
+    content=`<div class="bg-white border rounded-xl p-4 space-y-3"><div class="flex flex-wrap items-center justify-between gap-2"><h3 class="text-sm font-bold text-slate-800">सन्तुलन परीक्षण (Trial Balance)</h3><button type="button" onclick="printAccountingSection('trial')" class="bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold px-3 py-1.5 rounded-lg flex items-center gap-1.5 cursor-pointer"><i data-lucide="printer" class="w-3.5 h-3.5"></i> Trial Balance प्रिन्ट</button></div><div class="overflow-x-auto"><table class="w-full text-xs">${tableHead}<tbody>${rows}</tbody><tfoot class="bg-slate-100 font-bold"><tr><td colspan="2" class="p-2 text-right">जम्मा</td><td class="p-2 text-right">${fmtMoney(dr)}</td><td class="p-2 text-right">${fmtMoney(cr)}</td><td class="p-2 text-right">${Math.abs(dr-cr)<0.01?'<span class="text-emerald-700">मिलेको</span>':'<span class="text-rose-700">फरक '+fmtMoney(Math.abs(dr-cr))+'</span>'}</td></tr></tfoot></table></div></div>`;
   } else if(accountingTab==="pl"){
     const inc=ACCOUNT_CHART.filter(a=>a.type==="income").map(a=>({a,v:accountingAccountNet(a,periodBalances[a.id]||{debit:0,credit:0})}));
     const exp=ACCOUNT_CHART.filter(a=>a.type==="expense").map(a=>({a,v:accountingAccountNet(a,periodBalances[a.id]||{debit:0,credit:0})}));
     const ti=inc.reduce((x,y)=>x+y.v,0),te=exp.reduce((x,y)=>x+y.v,0);
-    content=`<div class="bg-white border rounded-xl p-4 grid md:grid-cols-2 gap-5 text-xs"><div><h3 class="font-bold text-emerald-800 mb-2">आम्दानी</h3>${inc.map(x=>`<div class="flex justify-between border-b py-2"><span>${accountingEscape(x.a.name)}</span><b>${fmtMoney(x.v)}</b></div>`).join("")}<div class="flex justify-between font-bold pt-3"><span>कुल आम्दानी</span><span>${fmtMoney(ti)}</span></div></div><div><h3 class="font-bold text-rose-800 mb-2">खर्च</h3>${exp.map(x=>`<div class="flex justify-between border-b py-2"><span>${accountingEscape(x.a.name)}</span><b>${fmtMoney(x.v)}</b></div>`).join("")}<div class="flex justify-between font-bold pt-3"><span>कुल खर्च</span><span>${fmtMoney(te)}</span></div><div class="flex justify-between bg-slate-100 p-3 rounded-lg mt-3 font-bold"><span>खुद बचत / (घाटा)</span><span>${fmtMoney(ti-te)}</span></div></div></div>`;
+    content=`<div class="bg-white border rounded-xl p-4 space-y-3 text-xs"><div class="flex flex-wrap items-center justify-between gap-2 border-b pb-2"><h3 class="text-sm font-bold text-slate-800">आय-व्यय विवरण (Income &amp; Expenditure Statement)</h3><button type="button" onclick="printAccountingSection('pl')" class="bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold px-3 py-1.5 rounded-lg flex items-center gap-1.5 cursor-pointer"><i data-lucide="printer" class="w-3.5 h-3.5"></i> आय-व्यय प्रिन्ट</button></div><div class="grid md:grid-cols-2 gap-5"><div><h3 class="font-bold text-emerald-800 mb-2">आम्दानी</h3>${inc.map(x=>`<div class="flex justify-between border-b py-2"><span>${accountingEscape(x.a.name)}</span><b>${fmtMoney(x.v)}</b></div>`).join("")}<div class="flex justify-between font-bold pt-3"><span>कुल आम्दानी</span><span>${fmtMoney(ti)}</span></div></div><div><h3 class="font-bold text-rose-800 mb-2">खर्च</h3>${exp.map(x=>`<div class="flex justify-between border-b py-2"><span>${accountingEscape(x.a.name)}</span><b>${fmtMoney(x.v)}</b></div>`).join("")}<div class="flex justify-between font-bold pt-3"><span>कुल खर्च</span><span>${fmtMoney(te)}</span></div><div class="flex justify-between bg-slate-100 p-3 rounded-lg mt-3 font-bold"><span>खुद बचत / (घाटा)</span><span>${fmtMoney(ti-te)}</span></div></div></div></div>`;
   } else if(accountingTab==="bs"){
     const bal=allBalances, groups=["asset","liability","equity"],tot={};groups.forEach(t=>tot[t]=ACCOUNT_CHART.filter(a=>a.type===t).reduce((z,a)=>z+accountingAccountNet(a,bal[a.id]||{debit:0,credit:0}),0));
     const surplus=ACCOUNT_CHART.filter(a=>a.type==="income"||a.type==="expense").reduce((z,a)=>z+accountingAccountNet(a,bal[a.id]||{debit:0,credit:0})*(a.type==="income"?1:-1),0);
     const rhs=tot.liability+tot.equity+surplus;
-    content=`<div class="bg-white border rounded-xl p-4 grid md:grid-cols-2 gap-5 text-xs"><div><h3 class="font-bold mb-2">सम्पत्ति</h3>${ACCOUNT_CHART.filter(a=>a.type==="asset").map(a=>`<div class="flex justify-between border-b py-2"><span>${accountingEscape(a.name)}</span><b>${fmtMoney(accountingAccountNet(a,bal[a.id]||{debit:0,credit:0}))}</b></div>`).join("")}<div class="font-bold flex justify-between pt-3"><span>कुल सम्पत्ति</span><span>${fmtMoney(tot.asset)}</span></div></div><div><h3 class="font-bold mb-2">दायित्व तथा कोष</h3>${ACCOUNT_CHART.filter(a=>a.type==="liability"||a.type==="equity").map(a=>`<div class="flex justify-between border-b py-2"><span>${accountingEscape(a.name)}</span><b>${fmtMoney(accountingAccountNet(a,bal[a.id]||{debit:0,credit:0}))}</b></div>`).join("")}<div class="flex justify-between border-b py-2"><span>चालु अवधिसम्मको सञ्चित बचत/(घाटा)</span><b>${fmtMoney(surplus)}</b></div><div class="font-bold flex justify-between pt-3"><span>कुल दायित्व तथा कोष</span><span>${fmtMoney(rhs)}</span></div><div class="mt-3 p-3 rounded-lg ${Math.abs(tot.asset-rhs)<0.01?'bg-emerald-50 text-emerald-800':'bg-rose-50 text-rose-800'} font-bold">वासलात ${Math.abs(tot.asset-rhs)<0.01?'मिलेको':'मिलेको छैन'} — फरक ${fmtMoney(Math.abs(tot.asset-rhs))}</div></div></div>`;
+    content=`<div class="bg-white border rounded-xl p-4 space-y-3 text-xs"><div class="flex flex-wrap items-center justify-between gap-2 border-b pb-2"><h3 class="text-sm font-bold text-slate-800">वासलात (Balance Sheet)</h3><button type="button" onclick="printAccountingSection('bs')" class="bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold px-3 py-1.5 rounded-lg flex items-center gap-1.5 cursor-pointer"><i data-lucide="printer" class="w-3.5 h-3.5"></i> वासलात प्रिन्ट</button></div><div class="grid md:grid-cols-2 gap-5"><div><h3 class="font-bold mb-2">सम्पत्ति</h3>${ACCOUNT_CHART.filter(a=>a.type==="asset").map(a=>`<div class="flex justify-between border-b py-2"><span>${accountingEscape(a.name)}</span><b>${fmtMoney(accountingAccountNet(a,bal[a.id]||{debit:0,credit:0}))}</b></div>`).join("")}<div class="font-bold flex justify-between pt-3"><span>कुल सम्पत्ति</span><span>${fmtMoney(tot.asset)}</span></div></div><div><h3 class="font-bold mb-2">दायित्व तथा कोष</h3>${ACCOUNT_CHART.filter(a=>a.type==="liability"||a.type==="equity").map(a=>`<div class="flex justify-between border-b py-2"><span>${accountingEscape(a.name)}</span><b>${fmtMoney(accountingAccountNet(a,bal[a.id]||{debit:0,credit:0}))}</b></div>`).join("")}<div class="flex justify-between border-b py-2"><span>चालु अवधिसम्मको सञ्चित बचत/(घाटा)</span><b>${fmtMoney(surplus)}</b></div><div class="font-bold flex justify-between pt-3"><span>कुल दायित्व तथा कोष</span><span>${fmtMoney(rhs)}</span></div><div class="mt-3 p-3 rounded-lg ${Math.abs(tot.asset-rhs)<0.01?'bg-emerald-50 text-emerald-800':'bg-rose-50 text-rose-800'} font-bold">वासलात ${Math.abs(tot.asset-rhs)<0.01?'मिलेको':'मिलेको छैन'} — फरक ${fmtMoney(Math.abs(tot.asset-rhs))}</div></div></div></div>`;
   } else {
     const cashLines=period.flatMap(j=>j.lines.filter(l=>["1001","1002"].includes(l.accountId)).map(l=>({date:j.date,desc:j.description,account:l.accountId,debit:l.debit,credit:l.credit}))).sort((a,b)=>a.date.localeCompare(b.date));
     const net=cashLines.reduce((z,l)=>z+Number(l.debit||0)-Number(l.credit||0),0);
-    content=`<div class="bg-white border rounded-xl p-4"><div class="font-bold mb-3">नगद तथा बैंकको अवधिगत प्रवाह</div><div class="text-sm mb-3">प्रारम्भिक र अवधिको खुद नगद/बैंक मौज्दात: <b>${fmtMoney(net)}</b></div><div class="overflow-x-auto"><table class="w-full text-xs"><thead class="bg-slate-100"><tr><th class="p-2">मिति</th><th class="p-2">विवरण</th><th class="p-2">खाता</th><th class="p-2 text-right">आगमन</th><th class="p-2 text-right">बहिर्गमन</th></tr></thead><tbody>${cashLines.map(l=>`<tr class="border-t"><td class="p-2">${l.date==="0000-01-01"?("सुरु ("+getOpeningDateBS()+")"):l.date}</td><td class="p-2">${accountingEscape(l.desc)}</td><td class="p-2">${l.account==="1001"?"नगद":"बैंक"}</td><td class="p-2 text-right">${l.debit?fmtMoney(l.debit):"—"}</td><td class="p-2 text-right">${l.credit?fmtMoney(l.credit):"—"}</td></tr>`).join("")}</tbody></table></div></div>`;
+    content=`<div class="bg-white border rounded-xl p-4 space-y-3"><div class="flex flex-wrap items-center justify-between gap-2"><div class="font-bold">नगद तथा बैंकको अवधिगत प्रवाह</div><button type="button" onclick="printAccountingSection('cash')" class="bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold px-3 py-1.5 rounded-lg flex items-center gap-1.5 cursor-pointer"><i data-lucide="printer" class="w-3.5 h-3.5"></i> नगद प्रवाह प्रिन्ट</button></div><div class="text-sm">प्रारम्भिक र अवधिको खुद नगद/बैंक मौज्दात: <b>${fmtMoney(net)}</b></div><div class="overflow-x-auto"><table class="w-full text-xs"><thead class="bg-slate-100"><tr><th class="p-2">मिति</th><th class="p-2">विवरण</th><th class="p-2">खाता</th><th class="p-2 text-right">आगमन</th><th class="p-2 text-right">बहिर्गमन</th></tr></thead><tbody>${cashLines.map(l=>`<tr class="border-t"><td class="p-2">${l.date==="0000-01-01"?("सुरु ("+getOpeningDateBS()+")"):l.date}</td><td class="p-2">${accountingEscape(l.desc)}</td><td class="p-2">${l.account==="1001"?"नगद":"बैंक"}</td><td class="p-2 text-right">${l.debit?fmtMoney(l.debit):"—"}</td><td class="p-2 text-right">${l.credit?fmtMoney(l.credit):"—"}</td></tr>`).join("")}</tbody></table></div></div>`;
   }
-  return `<div class="space-y-4"><div class="bg-white border rounded-xl p-4"><div class="flex flex-wrap gap-2 mb-3">${tabs.map(([id,label])=>`<button onclick="accountingTab='${id}';renderCurrentModule()" class="px-3 py-2 rounded-lg text-xs font-semibold ${accountingTab===id?'bg-teal-700 text-white':'bg-slate-100'}">${label}</button>`).join("")}</div><div class="flex flex-wrap items-center gap-2 text-xs"><b>अवधि:</b><input value="${accountingFrom}" onchange="accountingFrom=this.value;renderCurrentModule()" class="border rounded-lg p-2 w-28"><span>देखि</span><input value="${accountingTo}" onchange="accountingTo=this.value;renderCurrentModule()" class="border rounded-lg p-2 w-28"><span class="text-slate-500">BS मिति YYYY-MM-DD</span></div></div>${content}<div class="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-xl p-3">महत्त्वपूर्ण: सेटिङको सुरु मौज्दात (Opening Balances), बिलिङ, अग्रिम, ऋण र बैंक कारोबार स्वतः दोहोरो लेखा प्रणालीमा पोस्ट हुन्छन्। कानुनी/लेखापरीक्षण प्रयोजनअघि लेखापालबाट opening balances प्रमाणित गराउनुहोस्।</div></div>`;
+  return `<div class="space-y-4"><div class="bg-white border rounded-xl p-4"><div class="flex flex-wrap items-center justify-between gap-2 mb-3"><div class="flex flex-wrap gap-2">${tabs.map(([id,label])=>`<button onclick="accountingTab='${id}';renderCurrentModule()" class="px-3 py-2 rounded-lg text-xs font-semibold cursor-pointer ${accountingTab===id?'bg-teal-700 text-white':'bg-slate-100 hover:bg-slate-200'}">${label}</button>`).join("")}</div><div class="flex flex-wrap gap-2"><button type="button" onclick="printAccountingSection('${accountingTab}')" class="bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold px-3.5 py-2 rounded-lg flex items-center gap-1.5 cursor-pointer"><i data-lucide="printer" class="w-4 h-4"></i> ${activeTabLabel} प्रिन्ट</button><button type="button" onclick="printAllAccountingSections()" class="bg-indigo-700 hover:bg-indigo-800 text-white text-xs font-semibold px-3.5 py-2 rounded-lg flex items-center gap-1.5 cursor-pointer"><i data-lucide="files" class="w-4 h-4"></i> सबै ६ वटै प्रिन्ट</button></div></div><div class="flex flex-wrap items-center gap-2 text-xs"><b>अवधि:</b><input value="${accountingFrom}" onchange="accountingFrom=this.value;renderCurrentModule()" class="border rounded-lg p-2 w-28"><span>देखि</span><input value="${accountingTo}" onchange="accountingTo=this.value;renderCurrentModule()" class="border rounded-lg p-2 w-28"><span class="text-slate-500">BS मिति YYYY-MM-DD</span></div></div>${content}<div class="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-xl p-3">महत्त्वपूर्ण: सेटिङको सुरु मौज्दात (Opening Balances), बिलिङ, अग्रिम, ऋण र बैंक कारोबार स्वतः दोहोरो लेखा प्रणालीमा पोस्ट हुन्छन्। कानुनी/लेखापरीक्षण प्रयोजनअघि लेखापालबाट opening balances प्रमाणित गराउनुहोस्।</div></div>`;
 }
 
 // ============================================================================
