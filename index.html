@@ -654,6 +654,85 @@ function isDateOnOrAfterOpeningBS(dateBS) {
   return bsToSerialDays(clean) >= bsToSerialDays(getOpeningDateBS());
 }
 
+function getOpeningCutoffBS(openingDateBS = null) {
+  const openBS = String(openingDateBS || getOpeningDateBS()).trim();
+  return addDaysToBS(openBS, -1);
+}
+
+function getAutoOpeningLoanSummary(openingDateBS = null) {
+  const st = window.ERP_STATE || {};
+  const openBS = String(openingDateBS || getOpeningDateBS()).trim();
+  const openSerial = bsToSerialDays(openBS);
+  const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+  const loans = Array.isArray(st.loans) ? st.loans : [];
+  const repayments = Array.isArray(st.loanRepayments) ? st.loanRepayments : [];
+
+  const preOpeningLoans = loans.filter(l => {
+    const dt = String(l.initialIssueDate || l.issueDate || "").trim();
+    return dt && bsToSerialDays(dt) < openSerial;
+  });
+
+  let autoTotal = 0;
+  preOpeningLoans.forEach(l => {
+    const allCaps = Array.isArray(l.capitalizationLogs) ? l.capitalizationLogs : [];
+    const allCapTotal = allCaps.reduce((sum, x) => sum + Number(x.amount || 0), 0);
+    const initPrin = Number(l.initialPrincipal != null ? l.initialPrincipal : Math.max(0, Number(l.principal || 0) - allCapTotal));
+    const preCaps = allCaps
+      .filter(x => x.date && bsToSerialDays(x.date) < openSerial)
+      .reduce((sum, x) => sum + Number(x.amount || 0), 0);
+    const loanReps = repayments.filter(r => r.loanId === l.id);
+    const prePaidPrin = loanReps.length > 0
+      ? loanReps
+          .filter(r => r.date && bsToSerialDays(r.date) < openSerial)
+          .reduce((sum, r) => sum + Number(r.principalPaid || 0), 0)
+      : Math.max(0, Number(l.paidPrincipal || 0));
+    const outstandingAtOpen = Math.max(0, round2(initPrin + preCaps - prePaidPrin));
+    autoTotal = round2(autoTotal + outstandingAtOpen);
+  });
+
+  return {
+    openingDateBS: openBS,
+    cutoffDateBS: getOpeningCutoffBS(openBS),
+    preOpeningCount: preOpeningLoans.length,
+    autoOpeningLoan: round2(autoTotal)
+  };
+}
+
+function getEffectiveOpeningLoanBalance(openingDateBS = null) {
+  const info = getAutoOpeningLoanSummary(openingDateBS);
+  if (info.preOpeningCount > 0) return info.autoOpeningLoan;
+  return Math.round((Number(window.ERP_STATE?.settings?.openingLoan || 0)) * 100) / 100;
+}
+
+let _lastSyncedFYCode = "";
+function getFiscalYearInfoBS(dateBS = null) {
+  const ref = String(dateBS || window.ERP_STATE?.activeBSDate || "2083-07-22").trim();
+  const p = parseBS(ref);
+  const startYear = p.m >= 4 ? p.y : p.y - 1;
+  const endYear = startYear + 1;
+  return {
+    startYear,
+    endYear,
+    fyCode: `${startYear}/${String(endYear).slice(-2)}`,
+    fyCodeFull: `${startYear}/${String(endYear).slice(-3)}`,
+    fromBS: `${startYear}-04-01`,
+    toBS: `${endYear}-03-32`,
+    prevFyEndBS: addDaysToBS(`${startYear}-04-01`, -1)
+  };
+}
+
+function syncDefaultFiscalYearRanges(force = false) {
+  const fy = getFiscalYearInfoBS();
+  if (!force && _lastSyncedFYCode === fy.fyCode) return fy;
+  _lastSyncedFYCode = fy.fyCode;
+  if (typeof bankFromBS !== "undefined") { bankFromBS = fy.fromBS; bankToBS = fy.toBS; }
+  if (typeof expFromBS !== "undefined") { expFromBS = fy.fromBS; expToBS = fy.toBS; }
+  if (typeof accountingFrom !== "undefined") { accountingFrom = fy.fromBS; accountingTo = fy.toBS; }
+  if (typeof repFromBS !== "undefined") { repFromBS = fy.fromBS; repToBS = fy.toBS; }
+  if (typeof dcFromBS !== "undefined") { dcFromBS = fy.fromBS; dcToBS = fy.toBS; }
+  return fy;
+}
+
 function numberToNepaliWords(num) {
   num = Math.round(Number(num) || 0);
   if (num === 0) return "शून्य रुपैयाँ मात्र";
@@ -974,6 +1053,11 @@ function isReadingPastGrace(reading, targetDateBS, pRule) {
 
 window.recalculateAllDynamicValues = function(showBanner = true) {
   const activeBS = window.ERP_STATE.activeBSDate;
+  syncDefaultFiscalYearRanges(false);
+  const loanOpenInfo = getAutoOpeningLoanSummary();
+  if (loanOpenInfo.preOpeningCount > 0 && window.ERP_STATE.settings) {
+    window.ERP_STATE.settings.openingLoan = loanOpenInfo.autoOpeningLoan;
+  }
   let totalPenalties = 0;
 
   // 1. Reset unpaid penalties so on-time advances settle eligible bills before penalty check
@@ -1268,7 +1352,7 @@ function renderDashboard() {
   const cashAcctBal = accBalances["1001"] ? (Number(accBalances["1001"].debit || 0) - Number(accBalances["1001"].credit || 0)) : Number(s.openingCash || 0);
   const bankAcctBal = accBalances["1002"] ? (Number(accBalances["1002"].debit || 0) - Number(accBalances["1002"].credit || 0)) : Number(s.openingBank || 0);
   const tankerCreditBal = accBalances["1102"] ? Math.max(0, Number(accBalances["1102"].debit || 0) - Number(accBalances["1102"].credit || 0)) : 0;
-  const totalLoanPrincipalOut = accBalances["1201"] ? (Number(accBalances["1201"].debit || 0) - Number(accBalances["1201"].credit || 0)) : Number(s.openingLoan || 0);
+  const totalLoanPrincipalOut = accBalances["1201"] ? (Number(accBalances["1201"].debit || 0) - Number(accBalances["1201"].credit || 0)) : getEffectiveOpeningLoanBalance();
   const openingCapitalBal = accBalances["3001"] ? (Number(accBalances["3001"].credit || 0) - Number(accBalances["3001"].debit || 0)) : 0;
 
   return `
@@ -1350,6 +1434,7 @@ function renderDashboard() {
         <span class="font-bold text-slate-700">सेटिङ सुरु मौज्दात (${getOpeningDateBS()}) र पुँजी मिलान (Double Entry लिंक):</span>
         <span>स्थिर सम्पत्ति (1501): <strong class="text-slate-900">${fmtMoney(s.fixedAssets || 0)}</strong></span>
         <span>सुरु नगद (1001): <strong class="text-teal-800">${fmtMoney(s.openingCash || 0)}</strong></span>
+        <span>सुरु ऋण लगानी (1201 Auto): <strong class="text-indigo-700">${fmtMoney(getEffectiveOpeningLoanBalance())}</strong></span>
         <span>प्रारम्भिक पुँजी कोष (3001): <strong class="text-indigo-800">${fmtMoney(openingCapitalBal)}</strong></span>
         ${tankerCreditBal > 0 ? `<span>ट्याङ्कर उधारो बाँकी (1102): <strong class="text-rose-700">${fmtMoney(tankerCreditBal)}</strong></span>` : ''}
       </div>
@@ -3736,20 +3821,20 @@ function renderLoansModule() {
   const filteredLoans = st.loans.filter(l => loanFilterCust === "ALL" || l.customerId === loanFilterCust);
 
   const openingDate = getOpeningDateBS();
+  const loanOpenInfo = getAutoOpeningLoanSummary(openingDate);
   const postOpeningLoanTotal = st.loans
     .filter(l => isDateOnOrAfterOpeningBS(l.initialIssueDate || l.issueDate))
-    .reduce((sum, l) => sum + Math.max(0, Number(l.initialPrincipal != null ? l.initialPrincipal : l.principal || 0)), 0);
-  const preOpeningLoanTotal = st.loans
-    .filter(l => !isDateOnOrAfterOpeningBS(l.initialIssueDate || l.issueDate))
     .reduce((sum, l) => sum + Math.max(0, Number(l.initialPrincipal != null ? l.initialPrincipal : l.principal || 0)), 0);
 
   return `
     <div class="space-y-6">
       <div class="bg-amber-50 border border-amber-200 text-amber-900 rounded-2xl px-4 py-3 text-xs leading-relaxed">
         <strong>सुरु मौज्दात मिति नियम (${openingDate}):</strong>
-        ${openingDate} भन्दा अघिका पुराना ऋणहरू ब्याज गणना र किस्ता असुलीका लागि मात्र राखिन्छन् — तिनले सेटिङको <strong>सुरुवाती नगद (1001)</strong> घटाउँदैनन् (पुराना ऋणको सुरु बाँकी साँवा सेटिङको <em>गत वर्षको बाँकी ऋण</em> बाट मिलान हुन्छ)।
+        ${loanOpenInfo.cutoffDateBS} सम्म (<strong>${openingDate}</strong> भन्दा अघि) लगानी भएका ऋणहरूको असुली घटाइएको बाँकी साँवा
+        <strong class="text-indigo-900">${fmtMoney(loanOpenInfo.autoOpeningLoan)}</strong> (${loanOpenInfo.preOpeningCount} खाता)
+        सफ्टवेयरले <strong>स्वतः गणना (Auto-Calculate) गरी ${openingDate} को ओपनिङ ऋण मौज्दातमा</strong> राख्दछ र ब्याज गणना गर्दछ (पुराना ऋणले सुरु नगद घटाउँदैनन्)।
         <strong>${openingDate} र त्यसपछिका</strong> नयाँ ऋण लगानी मात्र नगदबाट घटेर दोहोरो लेखामा पोस्ट हुन्छन्।
-        <span class="ml-1 font-semibold text-teal-900">[${openingDate} पछिको नयाँ लगानी: ${fmtMoney(postOpeningLoanTotal)} | अघिको ब्याज खाता: ${fmtMoney(preOpeningLoanTotal)}]</span>
+        <span class="ml-1 font-semibold text-teal-900">[${openingDate} पछिको नयाँ लगानी: ${fmtMoney(postOpeningLoanTotal)} | ${loanOpenInfo.cutoffDateBS} सम्मको अटो ओपनिङ ऋण: ${fmtMoney(loanOpenInfo.autoOpeningLoan)}]</span>
       </div>
       <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <div class="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
@@ -4316,7 +4401,7 @@ function disburseNewLoan(e) {
   if (isDateOnOrAfterOpeningBS(issueDt)) {
     showToast(`नयाँ ऋण खाता ${sequentialLoanId} सफलतापूर्वक स्वीकृत भयो! अब निवेदन र तमसुक प्रिन्ट गर्न सक्नुहुन्छ।`);
   } else {
-    showToast(`सुरु मिति (${getOpeningDateBS()}) अघिको ऋण ${sequentialLoanId} ब्याज गणनाका लागि सुरक्षित भयो (सुरु नगदबाट घटाइएन)।`, "info");
+    showToast(`${getOpeningCutoffBS()} सम्मको ऋण ${sequentialLoanId} सुरक्षित भई ${getOpeningDateBS()} को ओपनिङ ऋण मौज्दातमा स्वतः गणना भयो (सुरु नगदबाट घटाइएन)।`, "info");
   }
 }
 
@@ -4443,8 +4528,8 @@ function printLoanReceipt(repId) {
 // 11. BANK MANAGEMENT MODULE
 // ============================================================================
 let bankFilterId = "ALL";
-let bankFromBS = "2083-01-01";
-let bankToBS = "2083-12-30";
+var bankFromBS = getFiscalYearInfoBS().fromBS;
+var bankToBS = getFiscalYearInfoBS().toBS;
 
 function renderBankModule() {
   const st = window.ERP_STATE;
@@ -4710,8 +4795,8 @@ function addIncomeEntry(e) {
 }
 
 let expFilterCat = "ALL";
-let expFromBS = "2083-01-01";
-let expToBS = "2083-12-30";
+var expFromBS = getFiscalYearInfoBS().fromBS;
+var expToBS = getFiscalYearInfoBS().toBS;
 
 function renderExpenseModule() {
   const st = window.ERP_STATE;
@@ -5668,7 +5753,7 @@ function getAccountingJournal(){
   const customerOpening=(st.customers||[]).reduce((a,c)=>a+Math.max(0,Number(c.openingDue||0)),0);
   const openingPaidPreviously=(st.payments||[]).reduce((a,p)=>a+Number(p.openingPaid||0),0);
   const openingAR=accountingMoney(Number(st.settings.openingDues||0)+customerOpening+openingPaidPreviously);
-  const openingLoan=Number(st.settings.openingLoan||0);
+  const openingLoan=accountingMoney(getEffectiveOpeningLoanBalance());
   const openingCash=Number(st.settings.openingCash||0), openingFixed=Number(st.settings.fixedAssets||0);
   const openingAssets=[openingCash,bankOpening,openingAR,openingLoan,openingFixed].reduce((a,b)=>a+b,0);
   if(openingAssets>0){
@@ -5798,7 +5883,8 @@ function addAccountingVoucher(e){
   st.accountingVouchers.push({id:"JV-"+Date.now(),voucherNo:"JV-"+String(seq).padStart(5,"0"),date,type:document.getElementById("acc-v-type").value,description,lines:[{accountId:debitAccount,debit:amount,credit:0},{accountId:creditAccount,debit:0,credit:amount}]});
   st.accountingVoucherCounter=seq+1;window.cloudSync?.save();renderCurrentModule();showToast("दोहोरो लेखा भौचर सुरक्षित भयो।","success");
 }
-let accountingTab="journal", accountingFrom="2083-01-01", accountingTo="2083-12-30", accountingLedgerAccount="1001";
+let accountingTab="journal", accountingLedgerAccount="1001";
+var accountingFrom = getFiscalYearInfoBS().fromBS, accountingTo = getFiscalYearInfoBS().toBS;
 
 function getAccountingTabTitle(tabId) {
   const map = {
@@ -6269,8 +6355,8 @@ function renderAccountingModule(){
 // 15. COMPREHENSIVE A4 ACCOUNTING & OPERATIONAL REPORTS MODULE
 // ============================================================================
 let activeReportTab = "customer-annual";
-let repFromBS = "2083-01-01";
-let repToBS = "2083-12-30";
+var repFromBS = getFiscalYearInfoBS().fromBS;
+var repToBS = getFiscalYearInfoBS().toBS;
 let repCustFilter = "ALL";
 
 function renderReportsModule() {
@@ -7021,18 +7107,29 @@ function renderSettingsModule() {
 
       <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-4">
         <h3 class="text-base font-bold text-teal-700 flex items-center gap-2"><i data-lucide="wallet" class="w-5 h-5"></i> ओपनिङ ब्यालेन्स, स्थिर सम्पत्ति र गत वर्षको बाँकी बक्यौता</h3>
-        <p class="text-[11px] text-slate-600">यहाँ राखिएका सुरु मौज्दातहरू ड्यासबोर्ड, दोहोरो लेखा प्रणाली (जर्नल/खातावही/वासलात) र A4 रिपोर्टमा <strong>सुरु मौज्दात मिति (${s.openingDate || '2083-04-01'})</strong> का प्रारम्भिक मौज्दातका रूपमा जोडिन्छन्। नोट: ग्राहक KYC मा राखेको ओपनिङ बक्यौता र बैंक खातामा राखेको ओपनिङ मौज्दात स्वतः जोडिन्छ। सुरु मौज्दात मितिभन्दा अघिका पुराना ऋणहरू ब्याज गणनाका लागि मात्र रहन्छन् र तिनले सुरु नगद घटाउँदैनन् — ती पुराना ऋणको बाँकी साँवा <em>गत वर्षको बाँकी ऋण</em> मा राख्नुहोस्।</p>
-        <form onsubmit="saveOpeningBalances(event)" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-6 gap-3 text-xs">
-          <div><label class="font-semibold text-slate-600 block mb-1">सुरु मौज्दात मिति (BS)</label><input type="text" id="set-open-date" value="${s.openingDate || '2083-04-01'}" placeholder="2083-04-01" class="w-full border border-teal-300 bg-teal-50 rounded-xl px-3 py-2 font-bold text-teal-900"></div>
-          <div><label class="font-semibold text-slate-600 block mb-1">सुरुवाती नगद (Opening Cash)</label><input type="number" id="set-open-cash" value="${s.openingCash || 0}" class="w-full border border-slate-300 rounded-xl px-3 py-2 font-bold text-teal-800"></div>
-          <div><label class="font-semibold text-slate-600 block mb-1">गत वर्षको बाँकी महसुल (अतिरिक्त)</label><input type="number" id="set-open-dues" value="${s.openingDues || 0}" class="w-full border border-slate-300 rounded-xl px-3 py-2 font-bold text-amber-700"></div>
-          <div><label class="font-semibold text-slate-600 block mb-1">गत वर्षको बाँकी ऋण</label><input type="number" id="set-open-loan" value="${s.openingLoan || 0}" class="w-full border border-slate-300 rounded-xl px-3 py-2 font-bold text-indigo-700"></div>
-          <div><label class="font-semibold text-slate-600 block mb-1">बैंक ओपनिङ ब्यालेन्स (अतिरिक्त)</label><input type="number" id="set-open-bank" value="${s.openingBank || 0}" class="w-full border border-slate-300 rounded-xl px-3 py-2 font-bold text-cyan-800"></div>
-          <div><label class="font-semibold text-slate-600 block mb-1">स्थिर सम्पत्ति (Fixed Assets)</label><input type="number" id="set-fixed-assets" value="${s.fixedAssets || 0}" class="w-full border border-slate-300 rounded-xl px-3 py-2 font-bold text-slate-800"></div>
-          <div class="sm:col-span-2 md:col-span-6 flex justify-end pt-2">
-            <button type="submit" class="bg-teal-700 hover:bg-teal-800 text-white font-semibold px-5 py-2.5 rounded-xl flex items-center gap-2 cursor-pointer"><i data-lucide="save" class="w-4 h-4"></i> ओपनिङ ब्यालेन्स सुरक्षित गर्नुहोस्</button>
-          </div>
-        </form>
+        ${(() => {
+          const loanOpenInfo = getAutoOpeningLoanSummary(s.openingDate || "2083-04-01");
+          const effectiveLoanOpen = getEffectiveOpeningLoanBalance(s.openingDate || "2083-04-01");
+          const isAutoLoan = loanOpenInfo.preOpeningCount > 0;
+          return `
+            <p class="text-[11px] text-slate-600">यहाँ राखिएका सुरु मौज्दातहरू ड्यासबोर्ड, दोहोरो लेखा प्रणाली (जर्नल/खातावही/वासलात) र A4 रिपोर्टमा <strong>सुरु मौज्दात मिति (${loanOpenInfo.openingDateBS})</strong> का प्रारम्भिक मौज्दातका रूपमा जोडिन्छन्। नोट: ग्राहक KYC मा राखेको ओपनिङ बक्यौता, बैंक खातामा राखेको ओपनिङ मौज्दात र <strong>${loanOpenInfo.cutoffDateBS} सम्मका ऋण लगानी (${loanOpenInfo.preOpeningCount} खाता → ${fmtMoney(loanOpenInfo.autoOpeningLoan)})</strong> सफ्टवेयरले स्वतः गणना गरी ${loanOpenInfo.openingDateBS} को ओपनिङमा राख्दछ (हातले हाल्नु पर्दैन)।</p>
+            <form onsubmit="saveOpeningBalances(event)" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-6 gap-3 text-xs">
+              <div><label class="font-semibold text-slate-600 block mb-1">सुरु मौज्दात मिति (BS)</label><input type="text" id="set-open-date" value="${s.openingDate || '2083-04-01'}" placeholder="2083-04-01" class="w-full border border-teal-300 bg-teal-50 rounded-xl px-3 py-2 font-bold text-teal-900"></div>
+              <div><label class="font-semibold text-slate-600 block mb-1">सुरुवाती नगद (Opening Cash)</label><input type="number" id="set-open-cash" value="${s.openingCash || 0}" class="w-full border border-slate-300 rounded-xl px-3 py-2 font-bold text-teal-800"></div>
+              <div><label class="font-semibold text-slate-600 block mb-1">गत वर्षको बाँकी महसुल (अतिरिक्त)</label><input type="number" id="set-open-dues" value="${s.openingDues || 0}" class="w-full border border-slate-300 rounded-xl px-3 py-2 font-bold text-amber-700"></div>
+              <div>
+                <label class="font-semibold text-slate-600 block mb-1">गत वर्षको बाँकी ऋण (${isAutoLoan ? 'Auto' : 'अतिरिक्त'})</label>
+                <input type="number" id="set-open-loan" value="${effectiveLoanOpen}" ${isAutoLoan ? 'readonly title="ऋण लगानी बाट स्वतः गणना गरिएको"' : ''} class="w-full border ${isAutoLoan ? 'border-indigo-300 bg-indigo-50 cursor-not-allowed' : 'border-slate-300'} rounded-xl px-3 py-2 font-bold text-indigo-700">
+                <span class="block text-[10px] text-indigo-700 mt-0.5">${isAutoLoan ? `${loanOpenInfo.cutoffDateBS} सम्म (${loanOpenInfo.preOpeningCount} खाता) स्वतः गणना` : `${loanOpenInfo.openingDateBS} अघिको ऋण राख्नासाथ Auto हुन्छ`}</span>
+              </div>
+              <div><label class="font-semibold text-slate-600 block mb-1">बैंक ओपनिङ ब्यालेन्स (अतिरिक्त)</label><input type="number" id="set-open-bank" value="${s.openingBank || 0}" class="w-full border border-slate-300 rounded-xl px-3 py-2 font-bold text-cyan-800"></div>
+              <div><label class="font-semibold text-slate-600 block mb-1">स्थिर सम्पत्ति (Fixed Assets)</label><input type="number" id="set-fixed-assets" value="${s.fixedAssets || 0}" class="w-full border border-slate-300 rounded-xl px-3 py-2 font-bold text-slate-800"></div>
+              <div class="sm:col-span-2 md:col-span-6 flex justify-end pt-2">
+                <button type="submit" class="bg-teal-700 hover:bg-teal-800 text-white font-semibold px-5 py-2.5 rounded-xl flex items-center gap-2 cursor-pointer"><i data-lucide="save" class="w-4 h-4"></i> ओपनिङ ब्यालेन्स सुरक्षित गर्नुहोस्</button>
+              </div>
+            </form>
+          `;
+        })()}
       </div>
 
       <div class="bg-white p-5 rounded-2xl border border-indigo-200 shadow-sm space-y-2">
@@ -7209,7 +7306,8 @@ function saveOpeningBalances(e) {
   if (openDateEl) openDateEl.value = s.openingDate;
   s.openingCash = Number(document.getElementById("set-open-cash").value) || 0;
   s.openingDues = Number(document.getElementById("set-open-dues").value) || 0;
-  s.openingLoan = Number(document.getElementById("set-open-loan").value) || 0;
+  const loanOpenInfo = getAutoOpeningLoanSummary(s.openingDate);
+  s.openingLoan = loanOpenInfo.preOpeningCount > 0 ? loanOpenInfo.autoOpeningLoan : (Number(document.getElementById("set-open-loan").value) || 0);
   s.openingBank = Number(document.getElementById("set-open-bank").value) || 0;
   s.fixedAssets = Number(document.getElementById("set-fixed-assets").value) || 0;
 
@@ -7303,8 +7401,8 @@ function renderSupportModule() {
           <i data-lucide="trash-2" class="w-5 h-5"></i> मिति र मोड्युल छानी रेकर्ड डिलिट गर्नुहोस्
         </h3>
         <div class="grid grid-cols-2 gap-3 text-xs">
-          <div><label class="font-semibold text-slate-600 block mb-1">सुरु मिति (From BS)</label><input type="text" id="del-range-from" value="2083-01-01" class="w-full border border-slate-300 rounded-xl px-3 py-2 text-center font-semibold"></div>
-          <div><label class="font-semibold text-slate-600 block mb-1">अन्तिम मिति (To BS)</label><input type="text" id="del-range-to" value="2083-12-30" class="w-full border border-slate-300 rounded-xl px-3 py-2 text-center font-semibold"></div>
+          <div><label class="font-semibold text-slate-600 block mb-1">सुरु मिति (From BS)</label><input type="text" id="del-range-from" value="${getFiscalYearInfoBS().fromBS}" class="w-full border border-slate-300 rounded-xl px-3 py-2 text-center font-semibold"></div>
+          <div><label class="font-semibold text-slate-600 block mb-1">अन्तिम मिति (To BS)</label><input type="text" id="del-range-to" value="${getFiscalYearInfoBS().toBS}" class="w-full border border-slate-300 rounded-xl px-3 py-2 text-center font-semibold"></div>
         </div>
         <div class="bg-slate-50 p-3 rounded-xl border border-slate-200 space-y-2 text-xs">
           <div class="flex items-center justify-between border-b border-slate-200 pb-1.5 mb-1">
@@ -8917,8 +9015,8 @@ let noticeDateBS = "";
 let noticeMinMonths = 1;
 let activeDartaChalaniTab = "chalani";
 let dcSearchQuery = "";
-let dcFromBS = "2083-01-01";
-let dcToBS = "2083-12-30";
+var dcFromBS = getFiscalYearInfoBS().fromBS;
+var dcToBS = getFiscalYearInfoBS().toBS;
 
 function getCommitteeDisplayProfile() {
   ensureExtensionState();
