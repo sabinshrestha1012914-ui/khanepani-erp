@@ -4,11 +4,17 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="theme-color" content="#0f766e" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="apple-mobile-web-app-title" content="प्रगति जल" />
   <meta name="description" content="खानेपानी तथा सरसफाइ उपभोक्ता समितिको मिटर रिडिङ, ७ दिने सूचना चिठी, दर्ता-चलानी किताब, बिलिङ र दोहोरो लेखा प्रणाली" />
   <meta property="og:title" content="प्रगति जल उपभोक्ता समिति - Cloud ERP & Accounting" />
   <meta property="og:description" content="खानेपानी तथा सरसफाइ उपभोक्ता समितिको मिटर रिडिङ, ७ दिने सूचना चिठी, दर्ता-चलानी किताब, बिलिङ र दोहोरो लेखा प्रणाली" />
   <title>प्रगति जल उपभोक्ता समिति - Cloud ERP & Accounting</title>
-  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='30' fill='%230f766e'/%3E%3Cpath d='M32 14 C32 14 20 29 20 38 a12 12 0 0 0 24 0 c0-9-12-24-12-24z' fill='%23ffffff'/%3E%3C/svg%3E" />
+  <link rel="manifest" href="./manifest.webmanifest" />
+  <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
+  <link rel="icon" type="image/svg+xml" href="./icon.svg" />
   <script src="https://cdn.tailwindcss.com"></script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -143,6 +149,9 @@
       <button type="submit" class="w-full bg-teal-700 hover:bg-teal-800 text-white font-semibold py-2.5 rounded-xl shadow-lg shadow-teal-700/20 transition flex items-center justify-center gap-2">
         <i data-lucide="log-in" class="w-4 h-4"></i> प्रणालीमा प्रवेश गर्नुहोस् (Login)
       </button>
+      <button type="button" id="pwa-install-login-btn" onclick="triggerPWAInstall()" class="hidden w-full bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-300 font-semibold py-2 rounded-xl transition flex items-center justify-center gap-2 text-xs cursor-pointer">
+        <i data-lucide="smartphone" class="w-4 h-4 text-teal-700"></i> मोबाइल / PC एप इन्स्टल गर्नुहोस् (Install App)
+      </button>
     </form>
   </div>
 </div>
@@ -167,6 +176,17 @@
 
     <nav id="sidebar-nav" class="flex-1 overflow-y-auto p-2.5 space-y-1 text-xs font-medium"></nav>
 
+    <div id="pwa-install-sidebar-card" class="hidden mx-2.5 mb-2 p-2.5 rounded-xl bg-teal-900/60 border border-teal-700/60 text-xs space-y-2">
+      <div class="flex items-center gap-2 text-teal-100 font-semibold">
+        <i data-lucide="download" class="w-4 h-4 text-teal-300 shrink-0"></i>
+        <span>मोबाइल / PC एप इन्स्टल</span>
+      </div>
+      <p class="text-[10px] text-teal-200/90 leading-snug">यो सफ्टवेयरलाई फोन वा कम्प्युटरमा एपको रूपमा राख्नुहोस् — वेबसाइट अपडेट हुँदा एप स्वतः अपडेट हुन्छ।</p>
+      <button type="button" onclick="triggerPWAInstall()" class="w-full bg-teal-500 hover:bg-teal-400 text-slate-950 font-bold py-1.5 px-2.5 rounded-lg transition cursor-pointer flex items-center justify-center gap-1.5 text-[11px]">
+        <i data-lucide="smartphone" class="w-3.5 h-3.5"></i> एप इन्स्टल गर्नुहोस्
+      </button>
+    </div>
+
     <div class="p-3 border-t border-slate-800 bg-slate-950/50 flex items-center justify-between text-xs">
       <div class="flex items-center gap-2 truncate">
         <div class="w-7 h-7 rounded-lg bg-teal-800 text-teal-200 flex items-center justify-center font-bold">A</div>
@@ -175,9 +195,14 @@
           <div class="text-[10px] text-slate-400">पूर्ण अधिकार प्राप्त</div>
         </div>
       </div>
-      <button onclick="logoutApp()" title="Logout" class="p-2 text-slate-400 hover:text-red-400 hover:bg-slate-800 rounded-lg transition">
-        <i data-lucide="log-out" class="w-4 h-4"></i>
-      </button>
+      <div class="flex items-center gap-1">
+        <button type="button" onclick="checkAppUpdateNow()" title="नयाँ अपडेट जाँच गर्नुहोस्" class="p-2 text-slate-400 hover:text-teal-300 hover:bg-slate-800 rounded-lg transition cursor-pointer">
+          <i data-lucide="refresh-cw" class="w-4 h-4"></i>
+        </button>
+        <button onclick="logoutApp()" title="Logout" class="p-2 text-slate-400 hover:text-red-400 hover:bg-slate-800 rounded-lg transition cursor-pointer">
+          <i data-lucide="log-out" class="w-4 h-4"></i>
+        </button>
+      </div>
     </div>
   </aside>
 
@@ -195,6 +220,11 @@
         </div>
 
         <div class="flex flex-wrap items-center gap-2 sm:gap-3">
+          <button type="button" id="pwa-install-btn-header" onclick="triggerPWAInstall()" class="hidden items-center gap-1.5 px-3 py-1.5 rounded-xl bg-teal-700 hover:bg-teal-800 text-white text-xs font-semibold shadow-sm transition cursor-pointer">
+            <i data-lucide="download" class="w-4 h-4"></i>
+            <span>एप इन्स्टल (Mobile/PC)</span>
+          </button>
+
           <button onclick="openOverdueModal()" id="overdue-alert-btn" class="relative flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-red-50 hover:bg-red-100 border border-red-200 text-red-700 text-xs font-semibold transition">
             <i data-lucide="bell-ring" class="w-4 h-4 animate-bounce"></i>
             <span class="hidden sm:inline">भाखा नाघेको ऋण:</span>
@@ -8365,6 +8395,204 @@ window.renderCurrentModule = function() {
   ensureExtensionState();
   return _origRenderCurrentModuleForExt();
 };
+</script>
+
+<!-- ==================== PWA OFFLINE INDICATOR & INSTALL GUIDE MODAL ==================== -->
+<div id="pwa-offline-banner" class="no-print fixed bottom-4 left-4 z-50 hidden items-center gap-2 rounded-xl bg-amber-600 px-3.5 py-2 text-xs font-semibold text-white shadow-lg border border-amber-400">
+  <span class="h-2 w-2 rounded-full bg-white animate-pulse"></span>
+  <span>अफलाइन मोड — सुरक्षित स्थानीय डाटा प्रयोग हुँदैछ</span>
+</div>
+
+<div id="pwa-update-banner" class="no-print fixed bottom-4 right-4 z-50 hidden items-center gap-3 rounded-xl bg-slate-900 px-4 py-2.5 text-xs font-semibold text-white shadow-xl border border-teal-500">
+  <span>नयाँ सफ्टवेयर अपडेट उपलब्ध भयो!</span>
+  <button type="button" onclick="applyPWAUpdateNow()" class="bg-teal-500 hover:bg-teal-400 text-slate-950 font-bold px-3 py-1 rounded-lg cursor-pointer">अहिले अपडेट गर्नुहोस्</button>
+</div>
+
+<div id="pwa-install-guide-modal" class="no-print fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm hidden items-center justify-center p-4">
+  <div class="bg-white rounded-2xl max-w-md w-full shadow-2xl border border-slate-200 overflow-hidden">
+    <div class="bg-teal-700 text-white px-5 py-3.5 flex items-center justify-between">
+      <h3 class="font-bold text-sm flex items-center gap-2"><i data-lucide="smartphone" class="w-4 h-4"></i> मोबाइल र कम्प्युटर (PC) एप इन्स्टल गाइड</h3>
+      <button type="button" onclick="closePWAGuideModal()" class="text-teal-100 hover:text-white font-bold cursor-pointer">✕</button>
+    </div>
+    <div class="p-5 space-y-4 text-xs text-slate-700 leading-relaxed">
+      <div id="pwa-guide-ios" class="hidden space-y-2 bg-sky-50 border border-sky-200 rounded-xl p-3">
+        <div class="font-bold text-sky-900">iPhone / iPad (Safari) मा एप बनाउने तरिका:</div>
+        <ol class="list-decimal pl-4 space-y-1">
+          <li>Safari ब्राउजरको तल (वा माथि) रहेको <strong>Share (↑)</strong> बटनमा थिच्नुहोस्।</li>
+          <li>तल स्क्रोल गरेर <strong>"Add to Home Screen"</strong> मा ट्याप गर्नुहोस्।</li>
+          <li>माथि दायाँ <strong>Add</strong> थिच्नुहोस् — होम स्क्रिनमा एप बन्छ!</li>
+        </ol>
+      </div>
+      <div class="space-y-2 bg-teal-50 border border-teal-200 rounded-xl p-3">
+        <div class="font-bold text-teal-900">Android मोबाइल (Chrome) मा इन्स्टल गर्ने तरिका:</div>
+        <ol class="list-decimal pl-4 space-y-1">
+          <li>Chrome ब्राउजरको माथि दायाँ ३ थोप्ला (<strong>⋮</strong>) मेनुमा थिच्नुहोस्।</li>
+          <li><strong>"Install app"</strong> वा <strong>"Add to Home screen"</strong> छान्नुहोस्।</li>
+        </ol>
+      </div>
+      <div class="space-y-2 bg-slate-50 border border-slate-200 rounded-xl p-3">
+        <div class="font-bold text-slate-900">Windows / Mac कम्प्युटर (PC) सफ्टवेयर बनाउने तरिका:</div>
+        <ol class="list-decimal pl-4 space-y-1">
+          <li>Chrome वा Microsoft Edge मा एड्रेस बारको दायाँ छेउमा देखिने <strong>Install (⊕ / 💻)</strong> आइकनमा क्लिक गर्नुहोस्।</li>
+          <li>वा ब्राउजर मेनु (<strong>⋮</strong>) → <strong>Cast, save, and share</strong> → <strong>Install page as app</strong> थिच्नुहोस्। Desktop र Start Menu मा सिधै सफ्टवेयर सर्टकट बन्छ!</li>
+        </ol>
+      </div>
+      <div class="text-[11px] text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-xl p-2.5 font-medium">
+        ✓ पछि GitHub मा सफ्टवेयर अपडेट गर्दा मोबाइल एप र PC सफ्टवेयर दुवै इन्टरनेट जोडिनासाथ <strong>स्वतः अपडेट</strong> हुन्छन् र Firebase Cloud डाटा एउटै रहन्छ।
+      </div>
+      <button type="button" onclick="closePWAGuideModal()" class="w-full bg-teal-700 hover:bg-teal-800 text-white font-semibold py-2.5 rounded-xl cursor-pointer">बुझें (Close)</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ============================================================================
+// PWA INSTALLER, AUTO-UPDATE & OFFLINE STATUS ENGINE
+// ============================================================================
+let deferredPWAPrompt = null;
+let waitingSWWorker = null;
+
+function isAppRunningStandalone() {
+  return window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone === true;
+}
+
+function updatePWAInstallUI() {
+  const installed = isAppRunningStandalone();
+  const headerBtn = document.getElementById("pwa-install-btn-header");
+  const sidebarCard = document.getElementById("pwa-install-sidebar-card");
+  const loginBtn = document.getElementById("pwa-install-login-btn");
+
+  const showInstall = !installed;
+  if (headerBtn) {
+    if (showInstall) { headerBtn.classList.remove("hidden"); headerBtn.classList.add("flex"); }
+    else { headerBtn.classList.add("hidden"); headerBtn.classList.remove("flex"); }
+  }
+  if (sidebarCard) {
+    if (showInstall) sidebarCard.classList.remove("hidden");
+    else sidebarCard.classList.add("hidden");
+  }
+  if (loginBtn) {
+    if (showInstall) { loginBtn.classList.remove("hidden"); loginBtn.classList.add("flex"); }
+    else { loginBtn.classList.add("hidden"); loginBtn.classList.remove("flex"); }
+  }
+}
+
+window.triggerPWAInstall = async function() {
+  if (deferredPWAPrompt) {
+    try {
+      await deferredPWAPrompt.prompt();
+      const { outcome } = await deferredPWAPrompt.userChoice;
+      if (outcome === "accepted") {
+        deferredPWAPrompt = null;
+        updatePWAInstallUI();
+        showToast?.("एप सफलतापूर्वक इन्स्टल भयो!", "success");
+      }
+      return;
+    } catch (e) { console.warn("PWA prompt error:", e); }
+  }
+  const ua = (window.navigator.userAgent || "").toLowerCase();
+  const isIOS = /iphone|ipad|ipod/.test(ua);
+  const iosBox = document.getElementById("pwa-guide-ios");
+  if (iosBox) iosBox.classList.toggle("hidden", !isIOS);
+  const modal = document.getElementById("pwa-install-guide-modal");
+  if (modal) { modal.classList.remove("hidden"); modal.classList.add("flex"); }
+  safeCreateIcons?.();
+};
+
+window.closePWAGuideModal = function() {
+  const modal = document.getElementById("pwa-install-guide-modal");
+  if (modal) { modal.classList.add("hidden"); modal.classList.remove("flex"); }
+};
+
+window.addEventListener("beforeinstallprompt", (e) => {
+  e.preventDefault();
+  deferredPWAPrompt = e;
+  updatePWAInstallUI();
+});
+
+window.addEventListener("appinstalled", () => {
+  deferredPWAPrompt = null;
+  updatePWAInstallUI();
+  showToast?.("प्रगति जल ERP एप इन्स्टल भयो!", "success");
+});
+
+function updateConnectivityBanner() {
+  const banner = document.getElementById("pwa-offline-banner");
+  if (!banner) return;
+  if (navigator.onLine) {
+    banner.classList.add("hidden");
+    banner.classList.remove("flex");
+  } else {
+    banner.classList.remove("hidden");
+    banner.classList.add("flex");
+  }
+}
+window.addEventListener("online", updateConnectivityBanner);
+window.addEventListener("offline", updateConnectivityBanner);
+
+window.applyPWAUpdateNow = function() {
+  if (waitingSWWorker) {
+    waitingSWWorker.postMessage({ type: "SKIP_WAITING" });
+  } else {
+    window.location.reload();
+  }
+};
+
+window.checkAppUpdateNow = async function() {
+  if (!("serviceWorker" in navigator)) {
+    window.location.reload();
+    return;
+  }
+  try {
+    const reg = await navigator.serviceWorker.getRegistration("./");
+    if (reg) {
+      await reg.update();
+      if (reg.waiting) {
+        waitingSWWorker = reg.waiting;
+        applyPWAUpdateNow();
+      } else {
+        showToast?.("सफ्टवेयर पहिले नै नवीनतम (Updated) अवस्थामा छ!", "success");
+      }
+    } else {
+      window.location.reload();
+    }
+  } catch (e) {
+    window.location.reload();
+  }
+};
+
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("./sw.js").then((reg) => {
+      if (reg.waiting) {
+        waitingSWWorker = reg.waiting;
+        const b = document.getElementById("pwa-update-banner");
+        if (b) { b.classList.remove("hidden"); b.classList.add("flex"); }
+      }
+      reg.addEventListener("updatefound", () => {
+        const nw = reg.installing;
+        if (!nw) return;
+        nw.addEventListener("statechange", () => {
+          if (nw.state === "installed" && navigator.serviceWorker.controller) {
+            waitingSWWorker = nw;
+            const b = document.getElementById("pwa-update-banner");
+            if (b) { b.classList.remove("hidden"); b.classList.add("flex"); }
+          }
+        });
+      });
+    }).catch((err) => console.warn("SW registration skipped:", err));
+
+    let refreshing = false;
+    navigator.serviceWorker.addEventListener("controllerchange", () => {
+      if (refreshing) return;
+      refreshing = true;
+      window.location.reload();
+    });
+  });
+}
+
+updatePWAInstallUI();
+updateConnectivityBanner();
 </script>
 </body>
 </html>
