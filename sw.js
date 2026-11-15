@@ -1,13 +1,13 @@
 // Service Worker for Pragati Jal ERP (Mobile + PC Desktop PWA with Auto-Update)
-const CACHE_NAME = "pragati-jal-erp-v2";
+const CACHE_NAME = "pragati-jal-erp-v3";
 const APP_SHELL = [
   "./",
   "./index.html",
   "./manifest.webmanifest",
-  "./pwa-192x192.png",
-  "./pwa-512x512.png",
-  "./pwa-maskable-512x512.png",
-  "./apple-touch-icon.png"
+  "./pwa-192x192.png?v=logo2",
+  "./pwa-512x512.png?v=logo2",
+  "./pwa-maskable-512x512.png?v=logo2",
+  "./apple-touch-icon.png?v=logo2"
 ];
 
 self.addEventListener("install", (event) => {
