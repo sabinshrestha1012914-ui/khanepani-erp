@@ -108,6 +108,21 @@
         break-inside: avoid;
         page-break-inside: avoid;
       }
+      .doc-page-break {
+        break-after: page;
+        page-break-after: always;
+      }
+      .doc-page-break:last-child {
+        break-after: auto;
+        page-break-after: auto;
+      }
+    }
+    .tamasuk-vertical-strip {
+      writing-mode: vertical-rl;
+      transform: rotate(180deg);
+      white-space: nowrap;
+      line-height: 1.55;
+      font-size: 10.5px;
     }
   </style>
 </head>
@@ -718,6 +733,17 @@ const INITIAL_STATE = {
       { role: "सदस्य", name: "विमला सापकोटा", phone: "९८६४२८६७३६" },
       { role: "व्यवस्थापक", name: "सबिन श्रेष्ठ", phone: "९८१३३११३१९" }
     ],
+    tamasukOfficers: {
+      presidentName: "मोहन कृष्ण श्रेष्ठ",
+      presidentAddr: "पुरानागाउँ गा.वि.स. वडा नं. १",
+      presidentCit: "",
+      treasurerName: "हरी नारायण श्रेष्ठ",
+      treasurerAddr: "पुरानागाउँ गा.वि.स. वडा नं. १",
+      treasurerCit: "",
+      preparerName: "सविन श्रेष्ठ",
+      preparerAddr: "दाप्चा काशिखण्ड न.पा. वडा नं. १०",
+      preparerCit: "३०-०१-७३-१२०३७"
+    },
     openingDate: "2083-04-01",
     openingCash: 0,
     openingDues: 0,
@@ -742,6 +768,7 @@ const INITIAL_STATE = {
 
   customers: [],
   readings: [],
+  meterChanges: [],
   payments: [],
   loans: [],
   loanRepayments: [],
@@ -1424,6 +1451,21 @@ function renderKYCModule() {
             <label class="font-semibold text-slate-600 block mb-1">सुरुवाती मिटर अङ्क</label>
             <input type="number" id="kyc-init-reading" value="0" min="0" class="w-full border border-slate-300 rounded-xl px-3 py-2">
           </div>
+          <div>
+            <label class="font-semibold text-slate-600 block mb-1">पति / पत्नीको नाम</label>
+            <input type="text" id="kyc-spouse" placeholder="ऐच्छिक (ऋण निवेदनको लागि)" class="w-full border border-slate-300 rounded-xl px-3 py-2">
+          </div>
+          <div>
+            <label class="font-semibold text-slate-600 block mb-1">पेशा / व्यवसाय</label>
+            <input type="text" id="kyc-occupation" placeholder="कृषि / व्यापार" class="w-full border border-slate-300 rounded-xl px-3 py-2">
+          </div>
+          <div>
+            <label class="font-semibold text-slate-600 block mb-1">मिटर नं. / वडा नं.</label>
+            <div class="grid grid-cols-2 gap-1.5">
+              <input type="text" id="kyc-meter-no" placeholder="मिटर नं." class="w-full border border-slate-300 rounded-xl px-2 py-2">
+              <input type="text" id="kyc-ward-no" placeholder="वडा नं." class="w-full border border-slate-300 rounded-xl px-2 py-2">
+            </div>
+          </div>
           <div class="sm:col-span-3">
             <label class="font-semibold text-amber-800 block mb-1">गत वर्षको उठ्न बाँकी महसुल (Opening Due रू.) *</label>
             <input type="number" id="kyc-opening-due" value="0" min="0" class="w-full bg-amber-50 border border-amber-300 rounded-xl px-3 py-2 font-bold text-amber-900" placeholder="पुराना बिल अनुसार तिर्न बाँकी रकम">
@@ -1527,6 +1569,10 @@ function saveCustomerKYCData(e) {
     kittaNo: document.getElementById("kyc-kitta").value.trim(),
     regDate: document.getElementById("kyc-reg-date").value.trim() || st.activeBSDate,
     lastReading: Number(document.getElementById("kyc-init-reading").value) || 0,
+    spouseName: document.getElementById("kyc-spouse")?.value.trim() || "",
+    occupation: document.getElementById("kyc-occupation")?.value.trim() || "",
+    meterNo: document.getElementById("kyc-meter-no")?.value.trim() || "",
+    wardNo: document.getElementById("kyc-ward-no")?.value.trim() || "",
     openingDue: Number(document.getElementById("kyc-opening-due").value) || 0
   };
 
@@ -1565,6 +1611,10 @@ function editCustomerKYC(idx) {
   document.getElementById("kyc-kitta").value = c.kittaNo || "";
   document.getElementById("kyc-reg-date").value = c.regDate || window.ERP_STATE.activeBSDate;
   document.getElementById("kyc-init-reading").value = c.lastReading || 0;
+  if (document.getElementById("kyc-spouse")) document.getElementById("kyc-spouse").value = c.spouseName || "";
+  if (document.getElementById("kyc-occupation")) document.getElementById("kyc-occupation").value = c.occupation || "";
+  if (document.getElementById("kyc-meter-no")) document.getElementById("kyc-meter-no").value = c.meterNo || "";
+  if (document.getElementById("kyc-ward-no")) document.getElementById("kyc-ward-no").value = c.wardNo || "";
   document.getElementById("kyc-opening-due").value = c.openingDue || 0;
 
   document.getElementById("kyc-form-title").innerText = `ग्राहक विवरण सम्पादन गर्दै (${c.id})`;
@@ -1829,7 +1879,8 @@ function previewRowReading(input) {
   }
 
   currInput.classList.remove("border-red-500", "bg-red-50");
-  const units = curr - prev;
+  const oldMeterUnits = Math.max(0, Number(row.dataset.oldUnits || 0));
+  const units = (curr - prev) + oldMeterUnits;
   const calc = calculateWaterBill(units, entryDate);
   const totalWithMaint = Math.round((calc.totalBill + maintVal) * 100) / 100;
   const remAfterDirect = Math.max(0, Math.round((totalWithMaint - directPaid) * 100) / 100);
@@ -1949,7 +2000,7 @@ function buildCustomerHistoryPrintableHTML(customer, custReadings) {
             const rem = getReadingRemaining(r) + Number(r.penaltyAmount || 0);
             return `
             <tr>
-              <td class="border border-slate-400 p-2 font-bold">${r.month}</td>
+              <td class="border border-slate-400 p-2 font-bold">${r.month}${r.meterChanged ? ` <span class="text-[10px] text-amber-700 font-normal">(मिटर फेरिएको)</span>` : ''}</td>
               <td class="border border-slate-400 p-2">${r.entryDate || '-'}</td>
               <td class="border border-slate-400 p-2 text-right font-bold">${r.units}</td>
               <td class="border border-slate-400 p-2 text-right">${fmtMoney(r.maintenanceAmount || 0)}</td>
@@ -2002,7 +2053,7 @@ function openCustomerHistoryModal(customerId) {
                 const rem = getReadingRemaining(r) + Number(r.penaltyAmount || 0);
                 return `
                 <tr class="hover:bg-slate-50">
-                  <td class="p-2.5 font-bold text-teal-800">${r.month}</td>
+                  <td class="p-2.5 font-bold text-teal-800">${r.month}${r.meterChanged ? ` <span class="text-[10px] text-amber-700 font-semibold">(मिटर फेरिएको)</span>` : ''}</td>
                   <td class="p-2.5 text-slate-600">${r.entryDate || '-'}</td>
                   <td class="p-2.5 text-right font-bold text-slate-700">${r.units}</td>
                   <td class="p-2.5 text-right font-semibold text-amber-700">${fmtMoney(r.maintenanceAmount || 0)}</td>
@@ -3723,6 +3774,31 @@ function renderLoansModule() {
         </div>
       </div>
 
+      ${typeof lastDisbursedLoanId !== "undefined" && lastDisbursedLoanId && st.loans.some(l => l.id === lastDisbursedLoanId) ? (() => {
+        const dl = st.loans.find(l => l.id === lastDisbursedLoanId);
+        const dc = st.customers.find(x => x.id === dl.customerId) || { name: dl.customerId };
+        return `
+          <div class="bg-emerald-50 border-2 border-emerald-400 rounded-2xl p-4 flex flex-wrap items-center justify-between gap-3 shadow-sm">
+            <div class="text-xs text-emerald-950">
+              <div class="font-bold text-sm">✓ ऋण लगानी स्वीकृत भयो: ${dl.id} (${dc.name} — ${fmtMoney(dl.initialPrincipal || dl.principal)})</div>
+              <div class="text-emerald-800 mt-0.5">सबै केवाईसी तथा ऋण विवरण स्वतः भरिएको छ — अब तलबाट निवेदन र तमसुक सिधै प्रिन्ट गर्नुहोस्:</div>
+            </div>
+            <div class="flex flex-wrap gap-2">
+              <button type="button" onclick="printLoanApplicationLetter('${dl.id}')" class="bg-blue-700 hover:bg-blue-800 text-white text-xs font-semibold px-3.5 py-2 rounded-xl flex items-center gap-1.5 cursor-pointer">
+                <i data-lucide="file-text" class="w-4 h-4"></i> ऋण माग निवेदन प्रिन्ट
+              </button>
+              <button type="button" onclick="printLoanTamasuk('${dl.id}')" class="bg-teal-700 hover:bg-teal-800 text-white text-xs font-semibold px-3.5 py-2 rounded-xl flex items-center gap-1.5 cursor-pointer">
+                <i data-lucide="scroll-text" class="w-4 h-4"></i> तमसुक प्रिन्ट
+              </button>
+              <button type="button" onclick="printBothLoanDocs('${dl.id}')" class="bg-indigo-700 hover:bg-indigo-800 text-white text-xs font-semibold px-3.5 py-2 rounded-xl flex items-center gap-1.5 cursor-pointer">
+                <i data-lucide="printer" class="w-4 h-4"></i> दुवै एकैसाथ प्रिन्ट
+              </button>
+              <button type="button" onclick="lastDisbursedLoanId=''; renderCurrentModule();" class="px-2.5 py-2 text-xs text-slate-600 hover:text-slate-900 font-bold cursor-pointer">✕</button>
+            </div>
+          </div>
+        `;
+      })() : ''}
+
       <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
           <h3 class="text-sm font-bold text-slate-800 mb-3 flex items-center gap-2">
@@ -3731,7 +3807,7 @@ function renderLoansModule() {
           <form onsubmit="disburseNewLoan(event)" class="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
             <div>
               <label class="font-semibold text-slate-600 block mb-1">सदस्य / ग्राहक छान्नुहोस् *</label>
-              <select id="ln-cust" required class="w-full border border-slate-300 rounded-xl px-3 py-2 font-semibold">
+              <select id="ln-cust" required onchange="autofillLoanBorrowerExtras?.(this.value)" class="w-full border border-slate-300 rounded-xl px-3 py-2 font-semibold">
                 ${st.customers.map(c => `<option value="${c.id}">${c.id} - ${c.name}</option>`).join("")}
               </select>
             </div>
@@ -3760,11 +3836,44 @@ function renderLoansModule() {
               <input type="text" id="ln-due-date" value="${addDaysToBS(st.activeBSDate, 180)}" required class="w-full border border-slate-300 rounded-xl px-3 py-2 font-semibold">
             </div>
             <div class="sm:col-span-2">
-              <label class="font-semibold text-slate-600 block mb-1">ऋणको उद्देश्य</label>
-              <input type="text" id="ln-purpose" placeholder="खानेपानी ट्याङ्की / पाइपलाइन निर्माण" class="w-full border border-slate-300 rounded-xl px-3 py-2">
+              <label class="font-semibold text-slate-600 block mb-1">ऋणको उद्देश्य / शीर्षक</label>
+              <input type="text" id="ln-purpose" placeholder="व्यापार / कृषि / घरायसी प्रयोजन" class="w-full border border-slate-300 rounded-xl px-3 py-2">
             </div>
+
+            <details class="sm:col-span-2 bg-slate-50 border border-slate-200 rounded-xl p-3">
+              <summary class="cursor-pointer font-bold text-indigo-800">निवेदन र तमसुक विवरण (पति/पत्नी, पेशा, वडा र जमानी ग्राहक)</summary>
+              <div class="grid grid-cols-1 sm:grid-cols-3 gap-2 mt-2.5">
+                <div>
+                  <label class="font-semibold text-slate-600 block mb-1">पति/पत्नीको नाम</label>
+                  <input type="text" id="ln-spouse" value="${st.customers[0]?.spouseName || ''}" placeholder="ऐच्छिक" class="w-full border border-slate-300 bg-white rounded-lg px-2.5 py-1.5">
+                </div>
+                <div>
+                  <label class="font-semibold text-slate-600 block mb-1">पेशा / व्यवसाय</label>
+                  <input type="text" id="ln-occupation" value="${st.customers[0]?.occupation || ''}" placeholder="व्यापार / कृषि" class="w-full border border-slate-300 bg-white rounded-lg px-2.5 py-1.5">
+                </div>
+                <div>
+                  <label class="font-semibold text-slate-600 block mb-1">वडा नं. (तमसुकको लागि)</label>
+                  <input type="text" id="ln-ward" value="${st.customers[0]?.wardNo || '१०'}" placeholder="१०" class="w-full border border-slate-300 bg-white rounded-lg px-2.5 py-1.5">
+                </div>
+              </div>
+              <datalist id="loan-guarantor-custs">
+                ${st.customers.map(c => `<option value="${c.name}">`).join("")}
+              </datalist>
+              <div class="mt-2.5 space-y-1.5">
+                <div class="font-semibold text-slate-600">ऋणीका जमानी ग्राहकहरू (ऐच्छिक — तमसुकमा स्वतः भरिन्छ):</div>
+                <div class="grid grid-cols-2 gap-2">
+                  <input type="text" id="ln-g1-name" list="loan-guarantor-custs" placeholder="१. जमानीको नाम" class="border border-slate-300 bg-white rounded-lg px-2.5 py-1.5">
+                  <input type="text" id="ln-g1-addr" placeholder="१. जमानीको ठेगाना" class="border border-slate-300 bg-white rounded-lg px-2.5 py-1.5">
+                  <input type="text" id="ln-g2-name" list="loan-guarantor-custs" placeholder="२. जमानीको नाम" class="border border-slate-300 bg-white rounded-lg px-2.5 py-1.5">
+                  <input type="text" id="ln-g2-addr" placeholder="२. जमानीको ठेगाना" class="border border-slate-300 bg-white rounded-lg px-2.5 py-1.5">
+                  <input type="text" id="ln-g3-name" list="loan-guarantor-custs" placeholder="३. जमानीको नाम" class="border border-slate-300 bg-white rounded-lg px-2.5 py-1.5">
+                  <input type="text" id="ln-g3-addr" placeholder="३. जमानीको ठेगाना" class="border border-slate-300 bg-white rounded-lg px-2.5 py-1.5">
+                </div>
+              </div>
+            </details>
+
             <div class="sm:col-span-2 flex justify-end">
-              <button type="submit" class="bg-indigo-700 hover:bg-indigo-800 text-white font-semibold px-4 py-2 rounded-xl">ऋण लगानी स्वीकृत गर्नुहोस्</button>
+              <button type="submit" class="bg-indigo-700 hover:bg-indigo-800 text-white font-semibold px-4 py-2 rounded-xl cursor-pointer">ऋण लगानी स्वीकृत गर्नुहोस्</button>
             </div>
           </form>
         </div>
@@ -3874,10 +3983,12 @@ function renderLoansModule() {
                     <td class="p-3 text-center">
                       ${l.status === 'Closed' ? `<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-200 text-slate-700">चुक्ता</span>` : `<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-700">सक्रिय</span>`}
                     </td>
-                    <td class="p-3 text-center space-x-1">
-                      <button onclick="openMemberLoanLedgerStatement('${l.id}')" class="px-2 py-1 bg-teal-50 hover:bg-teal-100 text-teal-800 border border-teal-200 rounded-lg font-semibold">स्टेटमेन्ट</button>
-                      <button onclick="promptManualCapitalization('${l.id}')" class="px-2 py-1 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 rounded-lg font-semibold">ब्याज गाभ्ने</button>
-                      <button onclick="promptEditLoan('${l.id}')" class="px-2 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-800 border border-indigo-200 rounded-lg font-semibold">अपडेट</button>
+                    <td class="p-3 text-center whitespace-nowrap space-x-1">
+                      <button onclick="printLoanApplicationLetter('${l.id}')" class="px-2 py-1 bg-blue-50 hover:bg-blue-100 text-blue-800 border border-blue-200 rounded-lg font-semibold cursor-pointer">निवेदन</button>
+                      <button onclick="printLoanTamasuk('${l.id}')" class="px-2 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 rounded-lg font-semibold cursor-pointer">तमसुक</button>
+                      <button onclick="openMemberLoanLedgerStatement('${l.id}')" class="px-2 py-1 bg-teal-50 hover:bg-teal-100 text-teal-800 border border-teal-200 rounded-lg font-semibold cursor-pointer">स्टेटमेन्ट</button>
+                      <button onclick="promptManualCapitalization('${l.id}')" class="px-2 py-1 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 rounded-lg font-semibold cursor-pointer">ब्याज गाभ्ने</button>
+                      <button onclick="promptEditLoan('${l.id}')" class="px-2 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-800 border border-indigo-200 rounded-lg font-semibold cursor-pointer">अपडेट</button>
                     </td>
                   </tr>
                 `;
@@ -4127,9 +4238,12 @@ function openMemberLoanLedgerStatement(loanId) {
   openPrintModal(`ऋण लेजर स्टेटमेन्ट - ${c.name} (${ln.id})`, html);
 }
 
+var lastDisbursedLoanId = "";
+
 function disburseNewLoan(e) {
   e.preventDefault();
   const st = window.ERP_STATE;
+  const custId = document.getElementById("ln-cust").value;
   const issueDt = document.getElementById("ln-issue-date").value.trim() || st.activeBSDate;
   const prinAmt = Number(document.getElementById("ln-principal").value);
   const durationMonths = Number(document.getElementById("ln-duration-months")?.value || 6);
@@ -4152,21 +4266,43 @@ function disburseNewLoan(e) {
     sequentialLoanId = "LN-" + String(nextIdNum).padStart(3, "0");
   }
 
+  const spouseName = document.getElementById("ln-spouse")?.value.trim() || "";
+  const occupation = document.getElementById("ln-occupation")?.value.trim() || "";
+  const wardNo = document.getElementById("ln-ward")?.value.trim() || "";
+  const guarantors = [1, 2, 3].map(i => ({
+    name: document.getElementById(`ln-g${i}-name`)?.value.trim() || "",
+    address: document.getElementById(`ln-g${i}-addr`)?.value.trim() || ""
+  }));
+
+  const cust = st.customers.find(c => c.id === custId);
+  if (cust) {
+    if (spouseName) cust.spouseName = spouseName;
+    if (occupation) cust.occupation = occupation;
+    if (wardNo) cust.wardNo = wardNo;
+  }
+
+  const rateRule = getActiveLoanRateRule(issueDt);
+
   st.loans.push({
     id: sequentialLoanId,
-    customerId: document.getElementById("ln-cust").value,
+    customerId: custId,
     initialIssueDate: issueDt,
     initialPrincipal: prinAmt,
     issueDate: issueDt,
     lastCapitalizationDate: issueDt,
     dueDate: dueDt,
     durationMonths,
+    interestRate: Number(rateRule?.annualRate || 14),
     principal: prinAmt,
     paidPrincipal: 0,
     paidInterest: 0,
     paidInterestSinceCap: 0,
     accruedInterest: 0,
-    purpose: document.getElementById("ln-purpose").value.trim() || "खानेपानी तथा घरायसी प्रयोजन",
+    purpose: document.getElementById("ln-purpose").value.trim() || "व्यापार व्यवसाय",
+    spouseName,
+    occupation,
+    wardNo,
+    guarantors,
     remarksHistory: [],
     capitalizationLogs: [],
     status: "Active",
@@ -4174,10 +4310,11 @@ function disburseNewLoan(e) {
     overdueDays: 0
   });
 
+  lastDisbursedLoanId = sequentialLoanId;
   window.recalculateAllDynamicValues(false);
   renderCurrentModule();
   if (isDateOnOrAfterOpeningBS(issueDt)) {
-    showToast(`नयाँ ऋण खाता ${sequentialLoanId} सफलतापूर्वक स्वीकृत भयो!`);
+    showToast(`नयाँ ऋण खाता ${sequentialLoanId} सफलतापूर्वक स्वीकृत भयो! अब निवेदन र तमसुक प्रिन्ट गर्न सक्नुहुन्छ।`);
   } else {
     showToast(`सुरु मिति (${getOpeningDateBS()}) अघिको ऋण ${sequentialLoanId} ब्याज गणनाका लागि सुरक्षित भयो (सुरु नगदबाट घटाइएन)।`, "info");
   }
@@ -7051,6 +7188,7 @@ function executeClearDemoRecords() {
   st.tankerPayments = [];
   st.dartaBook = [];
   st.chalaniBook = [];
+  st.meterChanges = [];
 
   window.recalculateAllDynamicValues(true);
   renderCurrentModule();
@@ -7078,6 +7216,7 @@ function ensureExtensionState() {
   if (!st) return;
   if (!Array.isArray(st.dartaBook)) st.dartaBook = [];
   if (!Array.isArray(st.chalaniBook)) st.chalaniBook = [];
+  if (!Array.isArray(st.meterChanges)) st.meterChanges = [];
   if (!st.settings) st.settings = {};
   const s = st.settings;
   if (s.panNo === undefined) s.panNo = "६२४९४४५८६";
@@ -7088,6 +7227,19 @@ function ensureExtensionState() {
   if (s.dartaCounter === undefined) s.dartaCounter = 1;
   if (!Array.isArray(s.committeeMembers) || s.committeeMembers.length === 0) {
     s.committeeMembers = JSON.parse(JSON.stringify(DEFAULT_COMMITTEE_MEMBERS));
+  }
+  if (!s.tamasukOfficers || typeof s.tamasukOfficers !== "object") {
+    s.tamasukOfficers = {
+      presidentName: "मोहन कृष्ण श्रेष्ठ",
+      presidentAddr: "पुरानागाउँ गा.वि.स. वडा नं. १",
+      presidentCit: "",
+      treasurerName: "हरी नारायण श्रेष्ठ",
+      treasurerAddr: "पुरानागाउँ गा.वि.स. वडा नं. १",
+      treasurerCit: "",
+      preparerName: "सविन श्रेष्ठ",
+      preparerAddr: "दाप्चा काशिखण्ड न.पा. वडा नं. १०",
+      preparerCit: "३०-०१-७३-१२०३७"
+    };
   }
 }
 
@@ -7216,127 +7368,798 @@ window.openBulkWhatsappModal = function(month) {
   document.getElementById("whatsapp-modal").classList.add("flex");
 };
 
+function getReadingChronoKey(r) {
+  const st = window.ERP_STATE;
+  const mo = getNepaliMonthNumber(r?.month);
+  const yr = Number(r?.year) || parseBS(r?.entryDate || st?.activeBSDate || "2083-01-01").y;
+  const serial = (() => { try { return bsToSerialDays(r?.entryDate || st?.activeBSDate || "2083-01-01"); } catch (_) { return 0; } })();
+  return (mo > 0 ? (yr * 100 + mo) * 1000000 : 0) + serial;
+}
+
+function getCustomerReadingsSorted(customerId) {
+  const st = window.ERP_STATE;
+  return (st.readings || [])
+    .filter(r => r.customerId === customerId)
+    .slice()
+    .sort((a, b) => getReadingChronoKey(a) - getReadingChronoKey(b));
+}
+
+function syncCustomerLastReading(customerId, fallbackPrevIfEmpty = null) {
+  const st = window.ERP_STATE;
+  const cust = st.customers.find(c => c.id === customerId);
+  if (!cust) return;
+  const sortedRds = getCustomerReadingsSorted(customerId);
+  const lastRd = sortedRds.length ? sortedRds[sortedRds.length - 1] : null;
+  const mcs = (st.meterChanges || [])
+    .filter(m => m.customerId === customerId)
+    .slice()
+    .sort((a, b) => {
+      try {
+        const diff = bsToSerialDays(a.changeDate) - bsToSerialDays(b.changeDate);
+        if (diff !== 0) return diff;
+      } catch (_) {}
+      return Number(a.createdAt || 0) - Number(b.createdAt || 0);
+    });
+  const lastMC = mcs.length ? mcs[mcs.length - 1] : null;
+
+  if (!lastRd && !lastMC) {
+    if (fallbackPrevIfEmpty !== null && fallbackPrevIfEmpty !== undefined) {
+      cust.lastReading = Math.max(0, Number(fallbackPrevIfEmpty) || 0);
+    }
+    return;
+  }
+  if (lastMC && !lastRd) {
+    cust.lastReading = Number(lastMC.newMeterStart || 0);
+    return;
+  }
+  if (lastRd && lastMC) {
+    const rdDate = getNormalizedReadingDate(lastRd);
+    let mcAfterRd = false;
+    try {
+      const diff = bsToSerialDays(lastMC.changeDate) - bsToSerialDays(rdDate);
+      if (diff > 0) mcAfterRd = true;
+      else if (diff === 0 && !lastMC.readingId) mcAfterRd = true;
+    } catch (_) {}
+    if (mcAfterRd) {
+      cust.lastReading = Number(lastMC.newMeterStart || 0);
+      return;
+    }
+  }
+  if (lastRd) {
+    cust.lastReading = Number(lastRd.currReading || 0);
+  }
+}
+
+function reconcileCustomerReadingsChain(customerId, fromReadingId = null, cascadeNext = true, fallbackPrevIfEmpty = null) {
+  const st = window.ERP_STATE;
+  const sortedRds = getCustomerReadingsSorted(customerId);
+
+  if (cascadeNext && fromReadingId && sortedRds.length > 1) {
+    const startIdx = sortedRds.findIndex(r => String(r.id) === String(fromReadingId));
+    if (startIdx >= 0) {
+      for (let i = startIdx + 1; i < sortedRds.length; i++) {
+        const prevRd = sortedRds[i - 1];
+        const nextRd = sortedRds[i];
+        if (nextRd.meterChanged) break;
+        const newPrev = Number(prevRd.currReading || 0);
+        nextRd.prevReading = newPrev;
+        const rawCurr = Number(nextRd.currReading || 0);
+        if (rawCurr < newPrev) {
+          nextRd.currReading = newPrev;
+        }
+        const units = Math.max(0, Number(nextRd.currReading) - newPrev);
+        const calc = calculateWaterBill(units, nextRd.entryDate || st.activeBSDate);
+        nextRd.units = units;
+        nextRd.baseAmount = calc.baseAmount;
+        nextRd.extraAmount = calc.extraAmount;
+        nextRd.billAmount = Math.round((calc.totalBill + Number(nextRd.maintenanceAmount || 0)) * 100) / 100;
+      }
+    }
+  }
+
+  syncCustomerLastReading(customerId, fallbackPrevIfEmpty);
+  if (typeof rebuildCustomerBillingLedger === "function") {
+    rebuildCustomerBillingLedger(customerId);
+  } else {
+    window.recalculateAllDynamicValues(false);
+  }
+}
+
+window.saveBulkReadings = function() {
+  const st = window.ERP_STATE;
+  const entryDate = document.getElementById("unit-entry-date").value.trim() || st.activeBSDate;
+  const rows = document.querySelectorAll("#module-container tbody tr[data-cust-row]");
+  let savedCount = 0;
+  let skippedInvalid = 0;
+  const touchedCustomers = new Set();
+
+  rows.forEach(row => {
+    const currInput = row.querySelector(".bulk-reading-input");
+    const maintInput = row.querySelector(".bulk-maint-input");
+    if (!currInput || currInput.value === "") return;
+
+    const cid = currInput.dataset.custId;
+    const prev = Number(currInput.dataset.prev);
+    const curr = Number(currInput.value);
+    const maintVal = Number(maintInput?.value) || 0;
+    if (!Number.isFinite(curr) || curr < prev) { skippedInvalid++; return; }
+
+    const existingIdx = st.readings.findIndex(r => r.customerId === cid && r.month === selectedUnitMonth);
+    const oldMeterUnits = existingIdx >= 0 && st.readings[existingIdx].meterChanged
+      ? Math.max(0, Number(st.readings[existingIdx].oldMeterUnits || 0))
+      : 0;
+    const units = (curr - prev) + oldMeterUnits;
+    const calc = calculateWaterBill(units, entryDate);
+    const totalBillWithMaint = Math.round((calc.totalBill + maintVal) * 100) / 100;
+
+    if (existingIdx >= 0) {
+      const old = st.readings[existingIdx];
+      old.entryDate = entryDate;
+      old.year = parseBS(entryDate).y.toString();
+      old.prevReading = prev;
+      old.currReading = curr;
+      old.units = units;
+      old.baseAmount = calc.baseAmount;
+      old.extraAmount = calc.extraAmount;
+      old.maintenanceAmount = maintVal;
+      old.billAmount = totalBillWithMaint;
+    } else {
+      st.readings.push({
+        id: "RD-" + Date.now() + "-" + cid,
+        customerId: cid,
+        month: selectedUnitMonth,
+        year: parseBS(entryDate).y.toString(),
+        entryDate,
+        prevReading: prev,
+        currReading: curr,
+        units,
+        baseAmount: calc.baseAmount,
+        extraAmount: calc.extraAmount,
+        maintenanceAmount: maintVal,
+        billAmount: totalBillWithMaint,
+        penaltyAmount: 0,
+        paidAmount: 0,
+        paidMaintAmount: 0,
+        status: "Unpaid"
+      });
+    }
+
+    touchedCustomers.add(cid);
+    savedCount++;
+  });
+
+  if (touchedCustomers.size > 0) {
+    touchedCustomers.forEach(cid => reconcileCustomerReadingsChain(cid, null, false));
+  } else {
+    window.recalculateAllDynamicValues(false);
+  }
+  renderCurrentModule();
+  if (skippedInvalid > 0) {
+    showToast(`${savedCount} जना सुरक्षित भयो (${skippedInvalid} जनाको हालको अङ्क साविकभन्दा कम भएकाले छोडियो)।`, "warning");
+  } else {
+    showToast(`${selectedUnitMonth} महिनाको ${savedCount} जना ग्राहकको युनिट र मर्मत शुल्क सुरक्षित/अपडेट भयो!`);
+  }
+};
+
+function getOrCreateUnitActionModalContainer() {
+  let el = document.getElementById("unit-action-modal-container");
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "unit-action-modal-container";
+    document.body.appendChild(el);
+  }
+  return el;
+}
+
+window.closeUnitActionModal = function() {
+  const el = document.getElementById("unit-action-modal-container");
+  if (el) el.innerHTML = "";
+};
+
+window.previewModifyReadingModal = function() {
+  const prev = Number(document.getElementById("mod-rd-prev")?.value || 0);
+  const curr = Number(document.getElementById("mod-rd-curr")?.value || 0);
+  const oldU = Math.max(0, Number(document.getElementById("mod-rd-old-units")?.value || 0));
+  const maint = Math.max(0, Number(document.getElementById("mod-rd-maint")?.value || 0));
+  const dt = document.getElementById("mod-rd-date")?.value.trim() || window.ERP_STATE.activeBSDate;
+  const previewEl = document.getElementById("mod-rd-preview");
+  if (!previewEl) return;
+  if (curr < prev) {
+    previewEl.innerHTML = `<span class="text-rose-700 font-bold">हालको अङ्क साविक अङ्क (${prev}) भन्दा कम हुन सक्दैन!</span>`;
+    return;
+  }
+  const units = (curr - prev) + oldU;
+  const calc = calculateWaterBill(units, dt);
+  const total = Math.round((calc.totalBill + maint) * 100) / 100;
+  previewEl.innerHTML = `
+    <div class="grid grid-cols-3 gap-2 text-center">
+      <div><div class="text-[10px] text-slate-500">खपत युनिट</div><div class="font-bold text-slate-900">${units} युनिट</div></div>
+      <div><div class="text-[10px] text-slate-500">पानी बिल</div><div class="font-bold text-teal-800">${fmtMoney(calc.totalBill)}</div></div>
+      <div><div class="text-[10px] text-slate-500">कुल बिल (मर्मत सहित)</div><div class="font-bold text-indigo-800">${fmtMoney(total)}</div></div>
+    </div>
+  `;
+};
+
+window.openModifyReadingModal = function(custId, monthName) {
+  ensureExtensionState();
+  const st = window.ERP_STATE;
+  const c = st.customers.find(x => x.id === custId);
+  const r = st.readings.find(x => x.customerId === custId && x.month === monthName);
+  if (!c || !r) return showToast("सच्याउनुपर्ने रिडिङ भेटिएन। पहिले युनिट इन्ट्री सेभ गर्नुहोस्।", "error");
+
+  const container = getOrCreateUnitActionModalContainer();
+  container.innerHTML = `
+    <div class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+      <div class="bg-white rounded-2xl max-w-lg w-full shadow-2xl border border-slate-200 overflow-hidden">
+        <div class="bg-indigo-700 text-white px-5 py-3.5 flex items-center justify-between">
+          <h3 class="font-bold text-sm">गलत रिडिङ अङ्क सच्याउनुहोस् (Modify Reading)</h3>
+          <button type="button" onclick="closeUnitActionModal()" class="text-indigo-100 hover:text-white font-bold cursor-pointer">✕</button>
+        </div>
+        <form onsubmit="saveModifiedReading(event, '${r.id}')" class="p-5 space-y-3.5 text-xs">
+          <div class="bg-slate-50 border border-slate-200 rounded-xl p-3 flex flex-wrap justify-between gap-2">
+            <div><strong>ग्राहक:</strong> ${escapeHtmlSafe(c.name)} (${escapeHtmlSafe(c.id)})</div>
+            <div><strong>महिना:</strong> <span class="font-bold text-indigo-800">${escapeHtmlSafe(r.month)} (${escapeHtmlSafe(r.year || '')})</span></div>
+          </div>
+
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="font-semibold text-slate-600 block mb-1">साविक अङ्क (Prev Reading) *</label>
+              <input type="number" id="mod-rd-prev" min="0" value="${Number(r.prevReading || 0)}" required oninput="previewModifyReadingModal()" class="w-full border border-slate-300 rounded-xl px-3 py-2 font-bold">
+            </div>
+            <div>
+              <label class="font-semibold text-slate-600 block mb-1">हालको अङ्क (Curr Reading) *</label>
+              <input type="number" id="mod-rd-curr" min="0" value="${Number(r.currReading || 0)}" required oninput="previewModifyReadingModal()" class="w-full border-2 border-indigo-400 bg-indigo-50/40 rounded-xl px-3 py-2 font-bold text-indigo-950">
+            </div>
+            <div>
+              <label class="font-semibold text-slate-600 block mb-1">मर्मत खर्च (रू.)</label>
+              <input type="number" id="mod-rd-maint" min="0" step="0.01" value="${Number(r.maintenanceAmount || 0)}" oninput="previewModifyReadingModal()" class="w-full border border-amber-300 bg-amber-50/40 rounded-xl px-3 py-2 font-bold">
+            </div>
+            <div>
+              <label class="font-semibold text-slate-600 block mb-1">इन्ट्री मिति (BS) *</label>
+              <input type="text" id="mod-rd-date" value="${escapeHtmlSafe(r.entryDate || st.activeBSDate)}" required oninput="previewModifyReadingModal()" class="w-full border border-teal-300 bg-teal-50 rounded-xl px-3 py-2 font-bold">
+            </div>
+          </div>
+
+          ${r.meterChanged ? `
+            <div class="bg-amber-50 border border-amber-200 rounded-xl p-3">
+              <label class="font-semibold text-amber-900 block mb-1">पुरानो मिटरबाट जोडिएको युनिट (Meter Change Old Units)</label>
+              <input type="number" id="mod-rd-old-units" min="0" value="${Number(r.oldMeterUnits || 0)}" oninput="previewModifyReadingModal()" class="w-full border border-amber-300 bg-white rounded-lg px-3 py-1.5 font-bold">
+            </div>
+          ` : `<input type="hidden" id="mod-rd-old-units" value="0">`}
+
+          <div>
+            <label class="font-semibold text-slate-600 block mb-1">सच्याउनुको कारण / कैफियत</label>
+            <input type="text" id="mod-rd-remark" value="${escapeHtmlSafe(r.remark || '')}" placeholder="उदा: टाइप मिस्टेक सच्याइएको" class="w-full border border-slate-300 rounded-xl px-3 py-2">
+          </div>
+
+          <label class="flex items-center gap-2 bg-teal-50 border border-teal-200 rounded-xl p-2.5 cursor-pointer">
+            <input type="checkbox" id="mod-rd-cascade" checked class="rounded text-teal-700">
+            <span class="font-semibold text-teal-900">यसपछिका महिनाको साविक अङ्क, बिल, बक्यौता, रसिद तथा लेजर पनि स्वतः मिलाउने</span>
+          </label>
+
+          <div id="mod-rd-preview" class="bg-slate-100 border border-slate-200 rounded-xl p-3"></div>
+
+          <div class="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-100">
+            <button type="button" onclick="deleteSingleReadingRecord('${r.id}')" class="px-3 py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-xl font-semibold cursor-pointer">
+              रिडिङ डिलिट गर्नुहोस्
+            </button>
+            <div class="flex gap-2">
+              <button type="button" onclick="closeUnitActionModal()" class="px-4 py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-xl font-semibold cursor-pointer">रद्द</button>
+              <button type="submit" class="px-5 py-2 bg-indigo-700 hover:bg-indigo-800 text-white rounded-xl font-semibold cursor-pointer">सच्याएर सेभ गर्नुहोस्</button>
+            </div>
+          </div>
+        </form>
+      </div>
+    </div>
+  `;
+  previewModifyReadingModal();
+};
+
+window.saveModifiedReading = function(e, readingId) {
+  e.preventDefault();
+  const st = window.ERP_STATE;
+  const r = st.readings.find(x => String(x.id) === String(readingId));
+  if (!r) return;
+
+  const newPrev = Number(document.getElementById("mod-rd-prev").value);
+  const newCurr = Number(document.getElementById("mod-rd-curr").value);
+  const newMaint = Math.max(0, Number(document.getElementById("mod-rd-maint").value) || 0);
+  const oldU = Math.max(0, Number(document.getElementById("mod-rd-old-units")?.value) || 0);
+  const newDate = document.getElementById("mod-rd-date").value.trim() || st.activeBSDate;
+  const newRemark = document.getElementById("mod-rd-remark").value.trim();
+  const cascadeNext = !!document.getElementById("mod-rd-cascade")?.checked;
+
+  if (!Number.isFinite(newPrev) || !Number.isFinite(newCurr) || newCurr < newPrev) {
+    return showToast("हालको अङ्क साविक अङ्कभन्दा कम हुन सक्दैन।", "error");
+  }
+
+  const units = (newCurr - newPrev) + oldU;
+  const calc = calculateWaterBill(units, newDate);
+  r.prevReading = newPrev;
+  r.currReading = newCurr;
+  r.oldMeterUnits = oldU;
+  r.maintenanceAmount = newMaint;
+  r.entryDate = newDate;
+  r.year = parseBS(newDate).y.toString();
+  r.units = units;
+  r.baseAmount = calc.baseAmount;
+  r.extraAmount = calc.extraAmount;
+  r.billAmount = Math.round((calc.totalBill + newMaint) * 100) / 100;
+  if (newRemark) r.remark = newRemark;
+
+  reconcileCustomerReadingsChain(r.customerId, r.id, cascadeNext);
+  closeUnitActionModal();
+  renderCurrentModule();
+  showToast(`${r.month} महिनाको रिडिङ (${newPrev} → ${newCurr}, ${units} युनिट) सच्याइयो र सबै हिसाब मिलाइयो!`, "success");
+};
+
+window.deleteSingleReadingRecord = function(readingId) {
+  if (!verifyAdminPasswordBeforeDelete()) return;
+  const st = window.ERP_STATE;
+  const r = st.readings.find(x => String(x.id) === String(readingId));
+  if (!r) return;
+  if (!confirm(`के तपाईं ${r.month} (${r.customerId}) को रिडिङ (${r.prevReading} → ${r.currReading}) हटाउन चाहनुहुन्छ? भुक्तानी भए त्यो रकम स्वतः अग्रिम/अन्य बिलमा समायोजन हुनेछ।`)) return;
+
+  const cid = r.customerId;
+  const prevFallback = r.prevReading;
+  st.readings = st.readings.filter(x => String(x.id) !== String(readingId));
+  st.meterChanges = (st.meterChanges || []).filter(m => String(m.readingId) !== String(readingId));
+  reconcileCustomerReadingsChain(cid, null, false, prevFallback);
+  closeUnitActionModal();
+  renderCurrentModule();
+  showToast(`${r.month} महिनाको रिडिङ हटाइयो र लेजर मिलाइयो!`, "info");
+};
+
+window.toggleMeterChangeModeUI = function() {
+  const mode = document.querySelector('input[name="mc-mode"]:checked')?.value || "bill";
+  const box = document.getElementById("mc-new-curr-wrap");
+  if (box) box.classList.toggle("hidden", mode !== "bill");
+  previewMeterChangeModal();
+};
+
+window.previewMeterChangeModal = function() {
+  const oldPrev = Number(document.getElementById("mc-old-prev")?.value || 0);
+  const oldFinal = Number(document.getElementById("mc-old-final")?.value || 0);
+  const newStart = Number(document.getElementById("mc-new-start")?.value || 0);
+  const newCurr = Number(document.getElementById("mc-new-curr")?.value || 0);
+  const maint = Math.max(0, Number(document.getElementById("mc-maint")?.value || 0));
+  const dt = document.getElementById("mc-date")?.value.trim() || window.ERP_STATE.activeBSDate;
+  const mode = document.querySelector('input[name="mc-mode"]:checked')?.value || "bill";
+  const el = document.getElementById("mc-preview-box");
+  if (!el) return;
+
+  if (oldFinal < oldPrev) {
+    el.innerHTML = `<span class="text-rose-700 font-bold">पुरानो मिटरको अन्तिम अङ्क (${oldFinal}) अघिल्लो अङ्क (${oldPrev}) भन्दा कम हुन सक्दैन।</span>`;
+    return;
+  }
+  const oldUnits = oldFinal - oldPrev;
+  if (mode === "bill") {
+    if (newCurr < newStart) {
+      el.innerHTML = `<span class="text-rose-700 font-bold">नयाँ मिटरको हालको अङ्क (${newCurr}) सुरु अङ्क (${newStart}) भन्दा कम हुन सक्दैन।</span>`;
+      return;
+    }
+    const newUnits = newCurr - newStart;
+    const totalUnits = oldUnits + newUnits;
+    const calc = calculateWaterBill(totalUnits, dt);
+    const totalBill = Math.round((calc.totalBill + maint) * 100) / 100;
+    el.innerHTML = `
+      <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center">
+        <div><div class="text-[10px] text-slate-500">पुरानो मिटर युनिट</div><div class="font-bold text-slate-800">${oldUnits}</div></div>
+        <div><div class="text-[10px] text-slate-500">नयाँ मिटर युनिट</div><div class="font-bold text-slate-800">${newUnits}</div></div>
+        <div><div class="text-[10px] text-slate-500">कुल खपत युनिट</div><div class="font-bold text-teal-800">${totalUnits} युनिट</div></div>
+        <div><div class="text-[10px] text-slate-500">${selectedUnitMonth} को बिल</div><div class="font-bold text-indigo-800">${fmtMoney(totalBill)}</div></div>
+      </div>
+      <div class="text-[11px] text-emerald-800 mt-2 text-center font-semibold">✓ अर्को महिनाको साविक अङ्क स्वतः <b>${newCurr}</b> बाट सुरु हुनेछ।</div>
+    `;
+  } else {
+    el.innerHTML = `
+      <div class="text-center text-xs text-slate-700 space-y-1">
+        <div>पुरानो मिटर खपत युनिट: <strong>${oldUnits} युनिट</strong> (${oldPrev} → ${oldFinal})</div>
+        <div class="text-emerald-800 font-semibold">✓ ग्राहकको साविक मिटर अङ्क स्वतः नयाँ सुरु अङ्क <b>${newStart}</b> मा सेट हुनेछ।</div>
+      </div>
+    `;
+  }
+};
+
+window.openMeterChangeModal = function(custId) {
+  ensureExtensionState();
+  const st = window.ERP_STATE;
+  const c = st.customers.find(x => x.id === custId);
+  if (!c) return;
+
+  const existing = st.readings.find(r => r.customerId === custId && r.month === selectedUnitMonth);
+  const oldPrevDefault = existing ? Number(existing.oldMeterPrev ?? existing.prevReading ?? 0) : Number(c.lastReading || 0);
+  const oldFinalDefault = existing && existing.meterChanged ? Number(existing.oldMeterFinal ?? oldPrevDefault) : oldPrevDefault;
+  const newStartDefault = existing && existing.meterChanged ? Number(existing.newMeterStart ?? 0) : 0;
+  const newCurrDefault = existing && existing.meterChanged ? Number(existing.currReading ?? 0) : 0;
+
+  const container = getOrCreateUnitActionModalContainer();
+  container.innerHTML = `
+    <div class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+      <div class="bg-white rounded-2xl max-w-xl w-full shadow-2xl border border-slate-200 overflow-hidden max-h-[92vh] overflow-y-auto">
+        <div class="bg-amber-600 text-white px-5 py-3.5 flex items-center justify-between">
+          <h3 class="font-bold text-sm flex items-center gap-2">🔄 मिटर परिवर्तन (Meter Replacement) — ${escapeHtmlSafe(c.name)}</h3>
+          <button type="button" onclick="closeUnitActionModal()" class="text-amber-100 hover:text-white font-bold cursor-pointer">✕</button>
+        </div>
+        <form onsubmit="saveMeterChange(event, '${c.id}')" class="p-5 space-y-3.5 text-xs">
+          <div class="bg-amber-50 border border-amber-200 rounded-xl p-3 text-amber-950 flex flex-wrap justify-between gap-2">
+            <div><strong>ग्राहक नं.:</strong> ${escapeHtmlSafe(c.id)} | <strong>हालको मिटर नं.:</strong> ${escapeHtmlSafe(c.meterNo || 'नराखिएको')}</div>
+            <div><strong>चालु साविक अङ्क:</strong> <span class="font-bold">${c.lastReading || 0}</span></div>
+          </div>
+
+          <div class="space-y-2 bg-slate-50 border border-slate-200 rounded-xl p-3">
+            <label class="flex items-start gap-2 cursor-pointer">
+              <input type="radio" name="mc-mode" value="bill" checked onchange="toggleMeterChangeModeUI()" class="mt-0.5">
+              <span><strong>${selectedUnitMonth} महिनाको बिल सहित मिटर परिवर्तन सेभ गर्ने</strong><br><span class="text-[10px] text-slate-500">पुरानो मिटरमा चलेको युनिट + नयाँ मिटरमा चलेको युनिट जोडेर बिल बन्छ र अर्को महिनाको साविक अङ्क मिल्छ।</span></span>
+            </label>
+            <label class="flex items-start gap-2 cursor-pointer">
+              <input type="radio" name="mc-mode" value="switch_only" onchange="toggleMeterChangeModeUI()" class="mt-0.5">
+              <span><strong>केवल नयाँ मिटर जडान / सुरु अङ्क मात्र अपडेट गर्ने</strong><br><span class="text-[10px] text-slate-500">अहिले बिल नबनाई ग्राहकको मिटर नं. र सुरुवाती अङ्क मात्र नयाँ मिटरमा सार्ने (पुरानो मिटर ० युनिट हुँदा)।</span></span>
+            </label>
+          </div>
+
+          <div class="grid grid-cols-2 sm:grid-cols-3 gap-3">
+            <div>
+              <label class="font-semibold text-slate-600 block mb-1">परिवर्तन मिति (BS) *</label>
+              <input type="text" id="mc-date" value="${st.activeBSDate}" required oninput="previewMeterChangeModal()" class="w-full border border-teal-300 bg-teal-50 rounded-xl px-3 py-2 font-bold">
+            </div>
+            <div>
+              <label class="font-semibold text-slate-600 block mb-1">पुरानो मिटर नं.</label>
+              <input type="text" id="mc-old-meter-no" value="${escapeHtmlSafe(c.meterNo || '')}" placeholder="ऐच्छिक" class="w-full border border-slate-300 rounded-xl px-3 py-2">
+            </div>
+            <div>
+              <label class="font-semibold text-slate-600 block mb-1">नयाँ मिटर नं. *</label>
+              <input type="text" id="mc-new-meter-no" value="" placeholder="उदा: MTR-2083-01" class="w-full border border-slate-300 rounded-xl px-3 py-2 font-semibold">
+            </div>
+          </div>
+
+          <div class="grid grid-cols-2 sm:grid-cols-3 gap-3">
+            <div>
+              <label class="font-semibold text-slate-600 block mb-1">पुरानो साविक अङ्क *</label>
+              <input type="number" id="mc-old-prev" min="0" value="${oldPrevDefault}" required oninput="previewMeterChangeModal()" class="w-full border border-slate-300 rounded-xl px-3 py-2 font-bold">
+            </div>
+            <div>
+              <label class="font-semibold text-slate-600 block mb-1">पुरानो अन्तिम अङ्क (बिग्रँदा) *</label>
+              <input type="number" id="mc-old-final" min="0" value="${oldFinalDefault}" required oninput="previewMeterChangeModal()" class="w-full border border-amber-300 bg-amber-50/40 rounded-xl px-3 py-2 font-bold">
+            </div>
+            <div>
+              <label class="font-semibold text-slate-600 block mb-1">नयाँ मिटर सुरु अङ्क *</label>
+              <input type="number" id="mc-new-start" min="0" value="${newStartDefault}" required oninput="previewMeterChangeModal()" class="w-full border border-emerald-300 bg-emerald-50/40 rounded-xl px-3 py-2 font-bold">
+            </div>
+          </div>
+
+          <div id="mc-new-curr-wrap" class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="font-semibold text-slate-600 block mb-1">नयाँ मिटर हालको अङ्क (${selectedUnitMonth}) *</label>
+              <input type="number" id="mc-new-curr" min="0" value="${newCurrDefault}" oninput="previewMeterChangeModal()" class="w-full border-2 border-teal-500 bg-teal-50/40 rounded-xl px-3 py-2 font-bold text-teal-950">
+            </div>
+            <div>
+              <label class="font-semibold text-slate-600 block mb-1">मर्मत / मिटर शुल्क (रू.)</label>
+              <input type="number" id="mc-maint" min="0" step="0.01" value="${existing ? Number(existing.maintenanceAmount || 0) : 0}" oninput="previewMeterChangeModal()" class="w-full border border-slate-300 rounded-xl px-3 py-2 font-bold">
+            </div>
+          </div>
+
+          <div>
+            <label class="font-semibold text-slate-600 block mb-1">मिटर परिवर्तनको कारण</label>
+            <input type="text" id="mc-reason" value="मिटर बिग्रिएर नयाँ जडान गरिएको" class="w-full border border-slate-300 rounded-xl px-3 py-2">
+          </div>
+
+          <div id="mc-preview-box" class="bg-slate-100 border border-slate-200 rounded-xl p-3"></div>
+
+          <div class="flex justify-end gap-2 pt-2 border-t border-slate-100">
+            <button type="button" onclick="closeUnitActionModal()" class="px-4 py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-xl font-semibold cursor-pointer">रद्द</button>
+            <button type="submit" class="px-5 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl font-semibold cursor-pointer">मिटर परिवर्तन सुरक्षित गर्नुहोस्</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  `;
+  previewMeterChangeModal();
+};
+
+window.saveMeterChange = function(e, custId) {
+  e.preventDefault();
+  ensureExtensionState();
+  const st = window.ERP_STATE;
+  const c = st.customers.find(x => x.id === custId);
+  if (!c) return;
+
+  const mode = document.querySelector('input[name="mc-mode"]:checked')?.value || "bill";
+  const changeDate = document.getElementById("mc-date").value.trim() || st.activeBSDate;
+  const oldMeterNo = document.getElementById("mc-old-meter-no").value.trim();
+  const newMeterNo = document.getElementById("mc-new-meter-no").value.trim();
+  const oldPrev = Number(document.getElementById("mc-old-prev").value || 0);
+  const oldFinal = Number(document.getElementById("mc-old-final").value || 0);
+  const newStart = Number(document.getElementById("mc-new-start").value || 0);
+  const newCurr = Number(document.getElementById("mc-new-curr").value || 0);
+  const maintVal = Math.max(0, Number(document.getElementById("mc-maint").value || 0));
+  const reason = document.getElementById("mc-reason").value.trim() || "मिटर बिग्रिएर परिवर्तन";
+
+  if (oldFinal < oldPrev) return showToast("पुरानो अन्तिम अङ्क अघिल्लो अङ्कभन्दा कम हुन सक्दैन।", "error");
+  const oldUnits = oldFinal - oldPrev;
+
+  if (mode === "bill" && newCurr < newStart) {
+    return showToast("नयाँ मिटरको हालको अङ्क सुरु अङ्कभन्दा कम हुन सक्दैन।", "error");
+  }
+
+  let savedReadingId = null;
+
+  if (mode === "bill") {
+    const newUnits = newCurr - newStart;
+    const totalUnits = oldUnits + newUnits;
+    const calc = calculateWaterBill(totalUnits, changeDate);
+    const totalBillWithMaint = Math.round((calc.totalBill + maintVal) * 100) / 100;
+
+    const existing = st.readings.find(r => r.customerId === custId && r.month === selectedUnitMonth);
+    if (existing) {
+      existing.entryDate = changeDate;
+      existing.year = parseBS(changeDate).y.toString();
+      existing.prevReading = newStart;
+      existing.currReading = newCurr;
+      existing.units = totalUnits;
+      existing.baseAmount = calc.baseAmount;
+      existing.extraAmount = calc.extraAmount;
+      existing.maintenanceAmount = maintVal;
+      existing.billAmount = totalBillWithMaint;
+      existing.meterChanged = true;
+      existing.oldMeterPrev = oldPrev;
+      existing.oldMeterFinal = oldFinal;
+      existing.oldMeterUnits = oldUnits;
+      existing.newMeterStart = newStart;
+      existing.meterNo = newMeterNo || c.meterNo || "";
+      existing.remark = `मिटर परिवर्तन (${oldPrev}→${oldFinal}=${oldUnits} युनिट + नयाँ ${newStart}→${newCurr}=${newUnits} युनिट)`;
+      savedReadingId = existing.id;
+    } else {
+      const rdObj = {
+        id: "RD-" + Date.now() + "-" + custId,
+        customerId: custId,
+        month: selectedUnitMonth,
+        year: parseBS(changeDate).y.toString(),
+        entryDate: changeDate,
+        prevReading: newStart,
+        currReading: newCurr,
+        units: totalUnits,
+        baseAmount: calc.baseAmount,
+        extraAmount: calc.extraAmount,
+        maintenanceAmount: maintVal,
+        billAmount: totalBillWithMaint,
+        penaltyAmount: 0,
+        paidAmount: 0,
+        paidMaintAmount: 0,
+        status: "Unpaid",
+        meterChanged: true,
+        oldMeterPrev: oldPrev,
+        oldMeterFinal: oldFinal,
+        oldMeterUnits: oldUnits,
+        newMeterStart: newStart,
+        meterNo: newMeterNo || c.meterNo || "",
+        remark: `मिटर परिवर्तन (${oldPrev}→${oldFinal}=${oldUnits} युनिट + नयाँ ${newStart}→${newCurr}=${newUnits} युनिट)`
+      };
+      st.readings.push(rdObj);
+      savedReadingId = rdObj.id;
+    }
+  } else {
+    if (oldUnits > 0 && !confirm(`पुरानो मिटरमा ${oldUnits} युनिट खपत देखिएको छ। बिल नबनाई सिधै नयाँ सुरु अङ्क ${newStart} सेट गर्ने हो?`)) {
+      return;
+    }
+  }
+
+  if (newMeterNo) c.meterNo = newMeterNo;
+
+  st.meterChanges.push({
+    id: "MC-" + Date.now(),
+    createdAt: Date.now(),
+    customerId: custId,
+    customerName: c.name,
+    changeDate,
+    month: selectedUnitMonth,
+    oldMeterNo: oldMeterNo || "-",
+    newMeterNo: newMeterNo || "-",
+    oldMeterPrev: oldPrev,
+    oldMeterFinal: oldFinal,
+    oldMeterUnits: oldUnits,
+    newMeterStart: newStart,
+    newMeterCurr: mode === "bill" ? newCurr : newStart,
+    readingId: savedReadingId,
+    reason
+  });
+
+  if (savedReadingId) {
+    reconcileCustomerReadingsChain(custId, savedReadingId, true);
+  } else {
+    syncCustomerLastReading(custId);
+    if (typeof rebuildCustomerBillingLedger === "function") rebuildCustomerBillingLedger(custId);
+    else window.recalculateAllDynamicValues(false);
+  }
+
+  closeUnitActionModal();
+  renderCurrentModule();
+  showToast(`${c.name} को मिटर परिवर्तन सुरक्षित गरियो र सबै हिसाब/साविक अङ्क मिलाइयो!`, "success");
+};
+
+window.deleteMeterChangeRecord = function(mcId) {
+  if (!verifyAdminPasswordBeforeDelete()) return;
+  const st = window.ERP_STATE;
+  const mc = (st.meterChanges || []).find(x => x.id === mcId);
+  if (!mc) return;
+  if (!confirm("के तपाईं यो मिटर परिवर्तन इतिहास अभिलेख हटाउन चाहनुहुन्छ?")) return;
+  st.meterChanges = st.meterChanges.filter(x => x.id !== mcId);
+  syncCustomerLastReading(mc.customerId);
+  window.recalculateAllDynamicValues(false);
+  renderCurrentModule();
+  showToast("मिटर परिवर्तन अभिलेख हटाइयो।", "info");
+};
+
 window.renderUnitEntryModule = function() {
+  ensureExtensionState();
   const st = window.ERP_STATE;
   const activeRule = getActiveTariffRule(st.activeBSDate);
   const monthReadings = st.readings.filter(r => r.month === selectedUnitMonth);
 
   return `
-    <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-4">
-      <div class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 pb-4">
-        <div>
-          <h3 class="text-base font-bold text-slate-800">मासिक बल्क युनिट इन्ट्री तथा मर्मत शुल्क (Bulk Reading & Maintenance)</h3>
-          <p class="text-xs text-slate-500">लागू दर: न्यूनतम ${activeRule.minUnits} युनिट सम्म ${fmtMoney(activeRule.minAmount)}, अतिरिक्त रु. ${activeRule.extraRate}/युनिट</p>
+    <div class="space-y-5">
+      <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-4">
+        <div class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 pb-4">
+          <div>
+            <h3 class="text-base font-bold text-slate-800">मासिक बल्क युनिट इन्ट्री, सच्याउने (Modify) तथा मिटर परिवर्तन</h3>
+            <p class="text-xs text-slate-500">लागू दर: न्यूनतम ${activeRule.minUnits} युनिट सम्म ${fmtMoney(activeRule.minAmount)}, अतिरिक्त रु. ${activeRule.extraRate}/युनिट</p>
+          </div>
+          <div class="flex flex-wrap items-center gap-2">
+            <div>
+              <label class="block text-[10px] font-semibold text-slate-500">महिना छान्नुहोस्</label>
+              <select id="unit-month-select" onchange="selectedUnitMonth = this.value; renderCurrentModule();" class="text-xs font-bold border border-slate-300 rounded-xl px-3 py-2 bg-slate-50">
+                ${NEPALI_MONTHS.map(m => `<option value="${m}" ${m === selectedUnitMonth ? 'selected' : ''}>${m}</option>`).join("")}
+              </select>
+            </div>
+            <div>
+              <label class="block text-[10px] font-semibold text-slate-500">इन्ट्री मिति (Auto BS)</label>
+              <input type="text" id="unit-entry-date" value="${st.activeBSDate}" class="w-28 text-xs font-bold border border-teal-300 bg-teal-50 text-teal-950 rounded-xl px-3 py-2">
+            </div>
+            <div>
+              <label class="block text-[10px] font-semibold text-slate-500">ग्राहक स्टेटमेन्ट</label>
+              <select id="header-customer-select" class="text-xs font-bold border border-indigo-300 rounded-xl px-3 py-2 bg-indigo-50/50 text-indigo-950">
+                ${st.customers.length ? st.customers.map(c => `<option value="${c.id}">${c.id} - ${c.name}</option>`).join("") : `<option value="">-- ग्राहक छैन --</option>`}
+              </select>
+            </div>
+            <div class="pt-4">
+              <button onclick="openCustomerHistoryModal(document.getElementById('header-customer-select').value)" class="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold px-3 py-2 rounded-xl shadow-sm flex items-center gap-1 cursor-pointer">
+                📊 स्टेटमेन्ट
+              </button>
+            </div>
+            <div class="pt-4">
+              <button onclick="openBulkWhatsappModal('${selectedUnitMonth}')" class="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold px-4 py-2 rounded-xl shadow-sm flex items-center gap-1.5 cursor-pointer">
+                <i data-lucide="message-circle" class="w-4 h-4"></i> Bulk WhatsApp (${monthReadings.length})
+              </button>
+            </div>
+          </div>
         </div>
-        <div class="flex flex-wrap items-center gap-2">
-          <div>
-            <label class="block text-[10px] font-semibold text-slate-500">महिना छान्नुहोस्</label>
-            <select id="unit-month-select" onchange="selectedUnitMonth = this.value; renderCurrentModule();" class="text-xs font-bold border border-slate-300 rounded-xl px-3 py-2 bg-slate-50">
-              ${NEPALI_MONTHS.map(m => `<option value="${m}" ${m === selectedUnitMonth ? 'selected' : ''}>${m}</option>`).join("")}
-            </select>
-          </div>
-          <div>
-            <label class="block text-[10px] font-semibold text-slate-500">इन्ट्री मिति (Auto BS)</label>
-            <input type="text" id="unit-entry-date" value="${st.activeBSDate}" class="w-28 text-xs font-bold border border-teal-300 bg-teal-50 text-teal-950 rounded-xl px-3 py-2">
-          </div>
-          <div>
-            <label class="block text-[10px] font-semibold text-slate-500">ग्राहक स्टेटमेन्ट</label>
-            <select id="header-customer-select" class="text-xs font-bold border border-indigo-300 rounded-xl px-3 py-2 bg-indigo-50/50 text-indigo-950">
-              ${st.customers.length ? st.customers.map(c => `<option value="${c.id}">${c.id} - ${c.name}</option>`).join("") : `<option value="">-- ग्राहक छैन --</option>`}
-            </select>
-          </div>
-          <div class="pt-4">
-            <button onclick="openCustomerHistoryModal(document.getElementById('header-customer-select').value)" class="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold px-3 py-2 rounded-xl shadow-sm flex items-center gap-1">
-              📊 स्टेटमेन्ट
-            </button>
-          </div>
-          <div class="pt-4">
-            <button onclick="openBulkWhatsappModal('${selectedUnitMonth}')" class="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold px-4 py-2 rounded-xl shadow-sm flex items-center gap-1.5">
-              <i data-lucide="message-circle" class="w-4 h-4"></i> Bulk WhatsApp (${monthReadings.length})
-            </button>
-          </div>
+
+        <div class="overflow-x-auto">
+          <table class="w-full text-xs text-left">
+            <thead class="bg-slate-50 text-slate-700 font-semibold border-b border-slate-200">
+              <tr>
+                <th class="p-3">आइडी</th>
+                <th class="p-3">ग्राहकको नाम (फोन)</th>
+                <th class="p-3 text-right">साविक अङ्क</th>
+                <th class="p-3 w-28 text-right">हालको अङ्क *</th>
+                <th class="p-3 w-28 text-right">मर्मत खर्च (रु.)</th>
+                <th class="p-3 text-right">खपत युनिट</th>
+                <th class="p-3 text-right">जम्मा बिल / अग्रिम (-)</th>
+                <th class="p-3 text-right">तिर्नुपर्ने (बाँकी)</th>
+                <th class="p-3 text-center">अवस्था / Modify / मिटर परिवर्तन</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-100">
+              ${st.customers.map(c => {
+                const existing = monthReadings.find(r => r.customerId === c.id);
+                const prev = existing ? existing.prevReading : c.lastReading;
+                const curr = existing ? existing.currReading : "";
+                const maint = existing ? (existing.maintenanceAmount || 0) : "";
+                const units = existing ? existing.units : 0;
+                const bill = existing ? Number(existing.billAmount || 0) : 0;
+                const advApplied = existing ? getReadingAdvanceApplied(existing.id) : 0;
+                const directPaid = existing ? Math.max(0, Math.round((getReadingPaidTotal(existing) - advApplied) * 100) / 100) : 0;
+                const custRemAdv = Math.max(0, Number(c.advanceBalance || 0));
+                const totalAvailAdv = Math.round((custRemAdv + advApplied) * 100) / 100;
+                const shownAdv = existing ? advApplied : 0;
+                const prevDue = getCustomerPreviousDueForMonth(c.id, selectedUnitMonth, existing || null);
+                const netPayable = existing ? Math.max(0, Math.round((getReadingRemaining(existing) + Number(existing.penaltyAmount || 0)) * 100) / 100) : 0;
+                return `
+                  <tr class="hover:bg-slate-50" data-cust-row="1" data-old-units="${existing?.meterChanged ? Number(existing.oldMeterUnits || 0) : 0}" data-avail-adv="${totalAvailAdv}" data-direct-paid="${directPaid}" data-penalty="${existing ? Number(existing.penaltyAmount || 0) : 0}">
+                    <td class="p-3 font-bold text-teal-800">
+                      ${escapeHtmlSafe(c.id)}
+                      ${c.meterNo ? `<div class="text-[10px] font-normal text-slate-500">मि.: ${escapeHtmlSafe(c.meterNo)}</div>` : ''}
+                    </td>
+                    <td class="p-3 font-semibold">
+                      ${escapeHtmlSafe(c.name)}
+                      <div class="text-[10px] text-slate-400">${escapeHtmlSafe(c.phone)}</div>
+                      ${existing?.meterChanged ? `<div class="text-[10px] font-bold text-amber-700">🔄 मिटर फेरिएको (पुरानो: +${existing.oldMeterUnits || 0} यु.)</div>` : ''}
+                      ${custRemAdv > 0 ? `<div class="text-[10px] font-bold text-emerald-700">बाँकी अग्रिम: -${fmtMoney(custRemAdv)}</div>` : ''}
+                      ${prevDue > 0 ? `<div class="text-[10px] font-bold text-rose-700">पहिलेको बाँकी: +${fmtMoney(prevDue)}</div>` : ''}
+                    </td>
+                    <td class="p-3 text-right font-mono font-semibold" id="prev-${c.id}">${prev}</td>
+                    <td class="p-3 text-right">
+                      <input type="number" min="${prev}" value="${curr}" data-cust-id="${c.id}" data-prev="${prev}"
+                        oninput="previewRowReading(this)"
+                        class="bulk-reading-input w-24 text-right font-bold border border-slate-300 rounded-lg px-2 py-1.5 focus:ring-2 focus:ring-teal-600 outline-none">
+                    </td>
+                    <td class="p-3 text-right">
+                      <input type="number" min="0" value="${maint}" data-cust-id="${c.id}" data-prev="${prev}"
+                        oninput="previewRowReading(this)"
+                        class="bulk-maint-input w-24 text-right font-bold border border-amber-300 bg-amber-50/40 rounded-lg px-2 py-1.5 focus:ring-2 focus:ring-amber-600 outline-none" placeholder="0">
+                    </td>
+                    <td class="p-3 text-right font-bold tabular-nums text-slate-700" id="units-${c.id}">${units}</td>
+                    <td class="p-3 text-right tabular-nums" id="bill-${c.id}">
+                      <div class="font-bold text-teal-800">${fmtMoney(bill)}</div>
+                      ${shownAdv > 0 ? `<div class="text-[10px] font-bold text-emerald-700">- ${fmtMoney(shownAdv)} (अग्रिम)</div>` : (custRemAdv > 0 && !existing ? `<div class="text-[10px] font-semibold text-emerald-700">अग्रिम: -${fmtMoney(custRemAdv)}</div>` : '')}
+                    </td>
+                    <td class="p-3 text-right font-bold tabular-nums ${netPayable > 0 ? 'text-rose-700' : 'text-emerald-700'}" id="net-${c.id}">
+                      ${existing ? fmtMoney(netPayable) : (custRemAdv > 0 ? `<span class="text-[11px] text-emerald-700">बिल - अग्रिम</span>` : fmtMoney(0))}
+                    </td>
+                    <td class="p-3 text-center whitespace-nowrap">
+                      <div class="inline-flex flex-wrap items-center justify-center gap-1">
+                        ${existing
+                          ? `<span class="px-2 py-0.5 rounded-full text-[10px] font-semibold ${netPayable <= 0 ? 'bg-emerald-100 text-emerald-800' : 'bg-teal-100 text-teal-800'}">${netPayable <= 0 ? 'चुक्ता' : 'सुरक्षित'}</span>
+                             <button type="button" onclick="openModifyReadingModal('${c.id}','${selectedUnitMonth}')" title="गलत अङ्क सच्याउनुहोस्" class="px-2 py-0.5 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-800 border border-indigo-200 text-[10px] font-semibold cursor-pointer">Modify</button>
+                             <button type="button" onclick="sendSingleReadingWhatsapp('${c.id}','${selectedUnitMonth}')" title="WhatsApp पठाउनुहोस्" class="px-2 py-0.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-[10px] font-semibold cursor-pointer">WA</button>`
+                          : `<span class="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-slate-100 text-slate-500">बाँकी</span>`
+                        }
+                        <button type="button" onclick="openMeterChangeModal('${c.id}')" title="मिटर बिग्रिएमा परिवर्तन गर्नुहोस्" class="px-2 py-0.5 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-300 text-[10px] font-semibold cursor-pointer">मिटर फेर्ने</button>
+                      </div>
+                    </td>
+                  </tr>
+                `;
+              }).join("") || `<tr><td colspan="9" class="p-6 text-center text-slate-400">पहिले KYC मेनुबाट ग्राहक दर्ता गर्नुहोस्।</td></tr>`}
+            </tbody>
+          </table>
+        </div>
+
+        <div class="flex justify-end pt-2">
+          <button onclick="saveBulkReadings()" class="bg-teal-700 hover:bg-teal-800 text-white text-xs font-semibold px-6 py-2.5 rounded-xl shadow-md flex items-center gap-2 cursor-pointer">
+            <i data-lucide="check-circle-2" class="w-4 h-4"></i> ${selectedUnitMonth} महिनाको बल्क रिडिङ र मर्मत शुल्क सेभ / अपडेट गर्नुहोस्
+          </button>
         </div>
       </div>
 
-      <div class="overflow-x-auto">
-        <table class="w-full text-xs text-left">
-          <thead class="bg-slate-50 text-slate-700 font-semibold border-b border-slate-200">
-            <tr>
-              <th class="p-3">आइडी</th>
-              <th class="p-3">ग्राहकको नाम (फोन)</th>
-              <th class="p-3 text-right">साविक अङ्क</th>
-              <th class="p-3 w-28 text-right">हालको अङ्क *</th>
-              <th class="p-3 w-28 text-right">मर्मत खर्च (रु.)</th>
-              <th class="p-3 text-right">खपत युनिट</th>
-              <th class="p-3 text-right">जम्मा बिल / अग्रिम (-)</th>
-              <th class="p-3 text-right">तिर्नुपर्ने (बाँकी)</th>
-              <th class="p-3 text-center">अवस्था / WhatsApp</th>
-            </tr>
-          </thead>
-          <tbody class="divide-y divide-slate-100">
-            ${st.customers.map(c => {
-              const existing = monthReadings.find(r => r.customerId === c.id);
-              const prev = existing ? existing.prevReading : c.lastReading;
-              const curr = existing ? existing.currReading : "";
-              const maint = existing ? (existing.maintenanceAmount || 0) : "";
-              const units = existing ? existing.units : 0;
-              const bill = existing ? Number(existing.billAmount || 0) : 0;
-              const advApplied = existing ? getReadingAdvanceApplied(existing.id) : 0;
-              const directPaid = existing ? Math.max(0, Math.round((getReadingPaidTotal(existing) - advApplied) * 100) / 100) : 0;
-              const custRemAdv = Math.max(0, Number(c.advanceBalance || 0));
-              const totalAvailAdv = Math.round((custRemAdv + advApplied) * 100) / 100;
-              const shownAdv = existing ? advApplied : 0;
-              const prevDue = getCustomerPreviousDueForMonth(c.id, selectedUnitMonth, existing || null);
-              const netPayable = existing ? Math.max(0, Math.round((getReadingRemaining(existing) + Number(existing.penaltyAmount || 0)) * 100) / 100) : 0;
-              return `
-                <tr class="hover:bg-slate-50" data-avail-adv="${totalAvailAdv}" data-direct-paid="${directPaid}" data-penalty="${existing ? Number(existing.penaltyAmount || 0) : 0}">
-                  <td class="p-3 font-bold text-teal-800">${escapeHtmlSafe(c.id)}</td>
-                  <td class="p-3 font-semibold">
-                    ${escapeHtmlSafe(c.name)}
-                    <div class="text-[10px] text-slate-400">${escapeHtmlSafe(c.phone)}</div>
-                    ${custRemAdv > 0 ? `<div class="text-[10px] font-bold text-emerald-700">बाँकी अग्रिम: -${fmtMoney(custRemAdv)}</div>` : ''}
-                    ${prevDue > 0 ? `<div class="text-[10px] font-bold text-rose-700">पहिलेको बाँकी: +${fmtMoney(prevDue)}</div>` : ''}
-                  </td>
-                  <td class="p-3 text-right font-mono font-semibold" id="prev-${c.id}">${prev}</td>
-                  <td class="p-3 text-right">
-                    <input type="number" min="${prev}" value="${curr}" data-cust-id="${c.id}" data-prev="${prev}"
-                      oninput="previewRowReading(this)"
-                      class="bulk-reading-input w-24 text-right font-bold border border-slate-300 rounded-lg px-2 py-1.5 focus:ring-2 focus:ring-teal-600 outline-none">
-                  </td>
-                  <td class="p-3 text-right">
-                    <input type="number" min="0" value="${maint}" data-cust-id="${c.id}" data-prev="${prev}"
-                      oninput="previewRowReading(this)"
-                      class="bulk-maint-input w-24 text-right font-bold border border-amber-300 bg-amber-50/40 rounded-lg px-2 py-1.5 focus:ring-2 focus:ring-amber-600 outline-none" placeholder="0">
-                  </td>
-                  <td class="p-3 text-right font-bold tabular-nums text-slate-700" id="units-${c.id}">${units}</td>
-                  <td class="p-3 text-right tabular-nums" id="bill-${c.id}">
-                    <div class="font-bold text-teal-800">${fmtMoney(bill)}</div>
-                    ${shownAdv > 0 ? `<div class="text-[10px] font-bold text-emerald-700">- ${fmtMoney(shownAdv)} (अग्रिम)</div>` : (custRemAdv > 0 && !existing ? `<div class="text-[10px] font-semibold text-emerald-700">अग्रिम: -${fmtMoney(custRemAdv)}</div>` : '')}
-                  </td>
-                  <td class="p-3 text-right font-bold tabular-nums ${netPayable > 0 ? 'text-rose-700' : 'text-emerald-700'}" id="net-${c.id}">
-                    ${existing ? fmtMoney(netPayable) : (custRemAdv > 0 ? `<span class="text-[11px] text-emerald-700">बिल - अग्रिम</span>` : fmtMoney(0))}
-                  </td>
-                  <td class="p-3 text-center">
-                    <div class="inline-flex items-center gap-1">
-                      ${existing
-                        ? `<span class="px-2 py-0.5 rounded-full text-[10px] font-semibold ${netPayable <= 0 ? 'bg-emerald-100 text-emerald-800' : 'bg-teal-100 text-teal-800'}">${netPayable <= 0 ? 'चुक्ता' : 'सुरक्षित'}</span>
-                           <button type="button" onclick="sendSingleReadingWhatsapp('${c.id}','${selectedUnitMonth}')" title="WhatsApp पठाउनुहोस्" class="px-2 py-0.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-[10px] font-semibold">WA</button>`
-                        : `<span class="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-slate-100 text-slate-500">बाँकी</span>`
-                      }
-                    </div>
-                  </td>
+      ${st.meterChanges.length > 0 ? `
+        <div class="bg-white rounded-2xl border border-amber-200 shadow-sm overflow-hidden">
+          <div class="p-4 bg-amber-50/70 border-b border-amber-200 flex items-center justify-between">
+            <h4 class="text-sm font-bold text-amber-950">🔄 मिटर परिवर्तन इतिहास (Meter Change History — ${st.meterChanges.length} अभिलेख)</h4>
+          </div>
+          <div class="overflow-x-auto">
+            <table class="w-full text-xs text-left">
+              <thead class="bg-slate-50 border-b border-slate-200">
+                <tr>
+                  <th class="p-3">मिति (BS)</th>
+                  <th class="p-3">ग्राहक</th>
+                  <th class="p-3">महिना</th>
+                  <th class="p-3">पुरानो → नयाँ मिटर नं.</th>
+                  <th class="p-3 text-right">पुरानो अङ्क (अघिल्लो → अन्तिम)</th>
+                  <th class="p-3 text-right">नयाँ सुरु अङ्क</th>
+                  <th class="p-3">कारण</th>
+                  <th class="p-3 text-center">कार्य</th>
                 </tr>
-              `;
-            }).join("") || `<tr><td colspan="9" class="p-6 text-center text-slate-400">पहिले KYC मेनुबाट ग्राहक दर्ता गर्नुहोस्।</td></tr>`}
-          </tbody>
-        </table>
-      </div>
-
-      <div class="flex justify-end pt-2">
-        <button onclick="saveBulkReadings()" class="bg-teal-700 hover:bg-teal-800 text-white text-xs font-semibold px-6 py-2.5 rounded-xl shadow-md flex items-center gap-2">
-          <i data-lucide="check-circle-2" class="w-4 h-4"></i> ${selectedUnitMonth} महिनाको बल्क रिडिङ र मर्मत शुल्क सेभ / अपडेट गर्नुहोस्
-        </button>
-      </div>
+              </thead>
+              <tbody class="divide-y divide-slate-100">
+                ${st.meterChanges.slice().reverse().map(mc => `
+                  <tr class="hover:bg-slate-50">
+                    <td class="p-3 tabular-nums font-semibold">${escapeHtmlSafe(mc.changeDate)}</td>
+                    <td class="p-3 font-bold">${escapeHtmlSafe(mc.customerName)} (${escapeHtmlSafe(mc.customerId)})</td>
+                    <td class="p-3">${escapeHtmlSafe(mc.month || '-')}</td>
+                    <td class="p-3">${escapeHtmlSafe(mc.oldMeterNo)} → <strong class="text-teal-800">${escapeHtmlSafe(mc.newMeterNo)}</strong></td>
+                    <td class="p-3 text-right tabular-nums">${mc.oldMeterPrev} → ${mc.oldMeterFinal} (${mc.oldMeterUnits || 0} यु.)</td>
+                    <td class="p-3 text-right tabular-nums font-bold text-emerald-700">${mc.newMeterStart}</td>
+                    <td class="p-3 text-slate-600">${escapeHtmlSafe(mc.reason || '-')}</td>
+                    <td class="p-3 text-center">
+                      <button type="button" onclick="deleteMeterChangeRecord('${mc.id}')" class="px-2 py-0.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-lg text-[10px] font-semibold cursor-pointer">हटाउने</button>
+                    </td>
+                  </tr>
+                `).join("")}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ` : ''}
     </div>
   `;
 };
@@ -7588,8 +8411,31 @@ window.renderSettingsModule = function() {
             </tbody>
           </table>
         </div>
+        <div class="border-t border-slate-200 pt-3">
+          <div class="font-bold text-slate-700 mb-2">तमसुक प्रमाणित गर्ने अधिकारी र कर्मचारी विवरण (ऋण तमसुकको लागि):</div>
+          <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
+            <div class="bg-slate-50 p-2.5 rounded-xl border border-slate-200 space-y-1.5">
+              <div class="font-bold text-blue-800">१. स्वीकृत गर्ने (अध्यक्ष)</div>
+              <input type="text" id="set-tam-pres-name" value="${escapeHtmlSafe(s.tamasukOfficers.presidentName || '')}" placeholder="अध्यक्षको नाम" class="w-full border border-slate-300 bg-white rounded-lg px-2 py-1">
+              <input type="text" id="set-tam-pres-addr" value="${escapeHtmlSafe(s.tamasukOfficers.presidentAddr || '')}" placeholder="ठेगाना" class="w-full border border-slate-300 bg-white rounded-lg px-2 py-1">
+              <input type="text" id="set-tam-pres-cit" value="${escapeHtmlSafe(s.tamasukOfficers.presidentCit || '')}" placeholder="नागरिकता नं." class="w-full border border-slate-300 bg-white rounded-lg px-2 py-1">
+            </div>
+            <div class="bg-slate-50 p-2.5 rounded-xl border border-slate-200 space-y-1.5">
+              <div class="font-bold text-blue-800">२. स्वीकृत गर्ने (कोषाध्यक्ष)</div>
+              <input type="text" id="set-tam-tr-name" value="${escapeHtmlSafe(s.tamasukOfficers.treasurerName || '')}" placeholder="कोषाध्यक्षको नाम" class="w-full border border-slate-300 bg-white rounded-lg px-2 py-1">
+              <input type="text" id="set-tam-tr-addr" value="${escapeHtmlSafe(s.tamasukOfficers.treasurerAddr || '')}" placeholder="ठेगाना" class="w-full border border-slate-300 bg-white rounded-lg px-2 py-1">
+              <input type="text" id="set-tam-tr-cit" value="${escapeHtmlSafe(s.tamasukOfficers.treasurerCit || '')}" placeholder="नागरिकता नं." class="w-full border border-slate-300 bg-white rounded-lg px-2 py-1">
+            </div>
+            <div class="bg-slate-50 p-2.5 rounded-xl border border-slate-200 space-y-1.5">
+              <div class="font-bold text-blue-800">३. तमसुक तयार गर्ने (कर्मचारी)</div>
+              <input type="text" id="set-tam-prep-name" value="${escapeHtmlSafe(s.tamasukOfficers.preparerName || '')}" placeholder="कर्मचारीको नाम" class="w-full border border-slate-300 bg-white rounded-lg px-2 py-1">
+              <input type="text" id="set-tam-prep-addr" value="${escapeHtmlSafe(s.tamasukOfficers.preparerAddr || '')}" placeholder="ठेगाना" class="w-full border border-slate-300 bg-white rounded-lg px-2 py-1">
+              <input type="text" id="set-tam-prep-cit" value="${escapeHtmlSafe(s.tamasukOfficers.preparerCit || '')}" placeholder="नागरिकता नं." class="w-full border border-slate-300 bg-white rounded-lg px-2 py-1">
+            </div>
+          </div>
+        </div>
         <div class="flex justify-end">
-          <button type="submit" class="bg-blue-700 hover:bg-blue-800 text-white font-semibold px-5 py-2 rounded-xl cursor-pointer">चिठी तथा कार्यसमिति विवरण सेभ गर्नुहोस्</button>
+          <button type="submit" class="bg-blue-700 hover:bg-blue-800 text-white font-semibold px-5 py-2 rounded-xl cursor-pointer">चिठी, तमसुक तथा कार्यसमिति विवरण सेभ गर्नुहोस्</button>
         </div>
       </form>
     </div>
@@ -7608,8 +8454,19 @@ function saveLetterheadSettings(e) {
   s.patraSankhya = document.getElementById("set-patra-sankhya").value.trim();
   s.chalaniCounter = Math.max(1, Number(document.getElementById("set-chalani-counter").value) || 1);
   s.dartaCounter = Math.max(1, Number(document.getElementById("set-darta-counter").value) || 1);
+  s.tamasukOfficers = {
+    presidentName: document.getElementById("set-tam-pres-name")?.value.trim() || "",
+    presidentAddr: document.getElementById("set-tam-pres-addr")?.value.trim() || "",
+    presidentCit: document.getElementById("set-tam-pres-cit")?.value.trim() || "",
+    treasurerName: document.getElementById("set-tam-tr-name")?.value.trim() || "",
+    treasurerAddr: document.getElementById("set-tam-tr-addr")?.value.trim() || "",
+    treasurerCit: document.getElementById("set-tam-tr-cit")?.value.trim() || "",
+    preparerName: document.getElementById("set-tam-prep-name")?.value.trim() || "",
+    preparerAddr: document.getElementById("set-tam-prep-addr")?.value.trim() || "",
+    preparerCit: document.getElementById("set-tam-prep-cit")?.value.trim() || ""
+  };
   window.cloudSync?.save();
-  showToast("चिठी हेडर तथा कार्यसमिति विवरण सुरक्षित गरियो!", "success");
+  showToast("चिठी हेडर, तमसुक अधिकारी तथा कार्यसमिति विवरण सुरक्षित गरियो!", "success");
 }
 
 function updateCommitteeMember(idx, key, val) {
@@ -8363,6 +9220,289 @@ function printDartaChalaniRegister(tab) {
   `;
   openPrintModal(isChalani ? "A4 चलानी किताब प्रिन्ट" : "A4 दर्ता किताब प्रिन्ट", html);
 }
+
+// ============================================================================
+// LOAN APPLICATION LETTER & TAMASUK AUTO-GENERATOR
+// ============================================================================
+window.autofillLoanBorrowerExtras = function(custId) {
+  const st = window.ERP_STATE;
+  const c = st?.customers?.find(x => x.id === custId);
+  if (!c) return;
+  const spEl = document.getElementById("ln-spouse");
+  const ocEl = document.getElementById("ln-occupation");
+  const wdEl = document.getElementById("ln-ward");
+  if (spEl) spEl.value = c.spouseName || "";
+  if (ocEl) ocEl.value = c.occupation || "";
+  if (wdEl) wdEl.value = c.wardNo || extractWardFromAddress(c.address) || "१०";
+};
+
+function getNepaliWeekdayFromBS(bsStr) {
+  const days = ["आइतबार", "सोमबार", "मंगलबार", "बुधबार", "बिहीबार", "शुक्रबार", "शनिबार"];
+  try {
+    const diff = bsToSerialDays(bsStr) - bsToSerialDays("2083-07-22");
+    const idx = ((diff % 7) + 7) % 7;
+    return days[idx] || "आइतबार";
+  } catch (_) {
+    return "आइतबार";
+  }
+}
+
+function computeBorrowerAgeBS(dobBS, refBS) {
+  const cleanDob = String(dobBS || "").trim().replace(/\//g, "-");
+  if (!/^\d{4}-\d{1,2}-\d{1,2}$/.test(cleanDob)) return "";
+  const d = parseBS(cleanDob);
+  const r = parseBS(refBS || window.ERP_STATE?.activeBSDate || "2083-07-22");
+  let age = r.y - d.y;
+  if (r.m < d.m || (r.m === d.m && r.d < d.d)) age--;
+  return (age > 0 && age < 120) ? toNepaliDigits(age) : "";
+}
+
+function extractWardFromAddress(addr) {
+  const txt = String(addr || "");
+  const m = txt.match(/वडा\s*(?:नं\.?)?\s*([०-९\d]+)/) || txt.match(/[-–]\s*([०-९\d]+)/);
+  return m ? toNepaliDigits(m[1]) : "";
+}
+
+function resolveLoanDocData(loanId) {
+  ensureExtensionState();
+  const st = window.ERP_STATE;
+  const ln = st.loans.find(l => l.id === loanId);
+  if (!ln) return null;
+  const c = st.customers.find(x => x.id === ln.customerId) || { id: ln.customerId, name: ln.customerId };
+  const profile = getCommitteeDisplayProfile();
+  const issueDate = ln.initialIssueDate || ln.issueDate || st.activeBSDate;
+  const dueDate = ln.dueDate || addDaysToBS(issueDate, 180);
+  const amount = Math.round(Number(ln.initialPrincipal != null ? ln.initialPrincipal : ln.principal || 0));
+  const words = numberToNepaliWords(amount);
+  const durationMonths = Number(ln.durationMonths || 6);
+  const rateRule = getActiveLoanRateRule(issueDate);
+  const annualRate = Number(ln.interestRate || rateRule?.annualRate || 14);
+  const issueP = parseBS(issueDate);
+  const dueP = parseBS(dueDate);
+  const ageStr = computeBorrowerAgeBS(c.dob, issueDate);
+  const wardRaw = ln.wardNo || c.wardNo || extractWardFromAddress(c.address) || "१०";
+  const guarantors = Array.isArray(ln.guarantors) ? ln.guarantors : [];
+  const officers = st.settings.tamasukOfficers || {};
+
+  return {
+    ln, c, profile, issueDate, dueDate, amount, words, durationMonths, annualRate,
+    issueP, dueP,
+    issueMonthName: NEPALI_MONTHS[issueP.m - 1] || "",
+    dueMonthName: NEPALI_MONTHS[dueP.m - 1] || "",
+    weekday: getNepaliWeekdayFromBS(issueDate),
+    ageStr,
+    wardStr: toNepaliDigits(wardRaw),
+    spouseName: ln.spouseName || c.spouseName || "",
+    occupation: ln.occupation || c.occupation || ln.purpose || "व्यापार",
+    purpose: ln.purpose || "व्यापार व्यवसाय",
+    guarantors,
+    officers
+  };
+}
+
+function buildLoanApplicationLetterHTML(loanId) {
+  const d = resolveLoanDocData(loanId);
+  if (!d) return "";
+  const { ln, c, profile, issueDate, dueDate, amount, words, durationMonths, ageStr, spouseName, occupation, purpose } = d;
+  const valOrDots = (v, minW = "110px") => v
+    ? `<span class="font-bold border-b border-dotted border-slate-700 px-1.5">${escapeHtmlSafe(v)}</span>`
+    : `<span class="inline-block border-b border-dotted border-slate-700" style="min-width:${minW};">&nbsp;</span>`;
+
+  return `
+    <div class="bg-white text-slate-950 p-6 sm:p-8 max-w-[780px] mx-auto" style="font-family:'Noto Sans Devanagari', sans-serif; font-size:13px; line-height:1.75;">
+      <div class="text-right mb-3">
+        मिति: ${valOrDots(toNepaliDigits(issueDate), "110px")}
+      </div>
+
+      <div class="mb-3 leading-snug">
+        <div class="font-semibold">श्रीमान कार्यालय प्रमुख ज्यु,</div>
+        <div class="text-lg font-bold tracking-tight mt-0.5">${escapeHtmlSafe(profile.name)}</div>
+        <div class="text-xs font-medium text-slate-800">${escapeHtmlSafe(profile.address)}</div>
+      </div>
+
+      <div class="text-center font-bold underline text-sm my-3">
+        विषय: ऋण माग सम्बन्धमा ।
+      </div>
+
+      <div class="mb-4 text-justify">
+        <div>महोदय,</div>
+        <p class="mt-1 indent-8">
+          उपरोक्त सम्बन्धमा मलाई <strong>${escapeHtmlSafe(purpose)}</strong> कार्य गर्नको लागि रकम आवश्यक परेको हुनाले यस संस्थाबाट ऋण उपलब्ध गराई दिनुहुन निम्न विवरणका साथ आवेदन शुल्क रु १००/- यसै साथ यो निवेदन पेस गर्दछु ।
+        </p>
+      </div>
+
+      <div class="text-center font-bold underline text-sm mb-3">निवेदकको व्यक्तिगत विवरण</div>
+
+      <div class="grid grid-cols-12 gap-y-2 gap-x-4 text-[12.5px] mb-5">
+        <div class="col-span-7">१. नाम, थर : ${valOrDots(c.name, "160px")}</div>
+        <div class="col-span-5">२. उमेर: ${valOrDots(ageStr ? ageStr + " वर्ष" : "", "80px")}</div>
+
+        <div class="col-span-7">३. बाबुको नाम: ${valOrDots(c.fatherName, "150px")}</div>
+        <div class="col-span-5">४. बाजेको नाम: ${valOrDots(c.grandfatherName, "110px")}</div>
+
+        <div class="col-span-7">५. पति/पत्नीको नाम: ${valOrDots(spouseName, "140px")}</div>
+        <div class="col-span-5">६. पेशा: ${valOrDots(occupation, "100px")}</div>
+
+        <div class="col-span-6">७. ग्राहक नं.: ${valOrDots(toNepaliDigits(c.id), "100px")}</div>
+        <div class="col-span-6">८. नागरिकता नं.: ${valOrDots(toNepaliDigits(c.citizenshipNo), "120px")}</div>
+
+        <div class="col-span-12">९. स्थायी ठेगाना: ${valOrDots(c.address, "260px")}</div>
+        <div class="col-span-12">१०. हालको ठेगाना: ${valOrDots(c.address, "260px")}</div>
+
+        <div class="col-span-7">११. व्यवसाय: ${valOrDots(occupation, "150px")}</div>
+        <div class="col-span-5">सम्पर्क नं: ${valOrDots(toNepaliDigits(c.phone), "100px")}</div>
+      </div>
+
+      <div class="text-center font-bold underline text-sm mb-3">ऋण विवरण</div>
+
+      <div class="grid grid-cols-12 gap-y-2 gap-x-4 text-[12.5px] mb-6">
+        <div class="col-span-6">१. ऋण शिर्षक : ${valOrDots(purpose, "130px")}</div>
+        <div class="col-span-6">
+          २. माग गरीएको रकम रु. ${valOrDots(toNepaliDigits(amount.toLocaleString("en-IN")) + "/-", "110px")}
+          <div class="mt-1">(अक्षरेपी रु. ${valOrDots(words, "180px")})</div>
+        </div>
+        <div class="col-span-12">
+          ३. चुक्ता गर्ने अवधि: ${valOrDots(toNepaliDigits(durationMonths) + " महिना", "80px")}
+          <span class="ml-3 text-xs text-slate-700">(भाखा मिति: ${escapeHtmlSafe(toNepaliDigits(dueDate))} सम्म)</span>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-12 gap-4 items-end pt-3">
+        <div class="col-span-3 flex flex-col items-center">
+          <div class="w-24 h-28 border border-slate-900"></div>
+          <div class="text-xs font-semibold mt-1">निवेदकको फोटो</div>
+        </div>
+
+        <div class="col-span-5 text-xs leading-relaxed self-center">
+          <div class="font-bold underline mb-1">संलग्न कागजातहरु</div>
+          <div>१. नागरिकताको प्रतिलिपी</div>
+          <div>२. पासपोट साईज फोटो</div>
+          <div>३. हाल महिनाको पानिको महशुल चुक्ता रसिद</div>
+        </div>
+
+        <div class="col-span-4 flex flex-col items-center">
+          <table class="border-collapse border border-slate-900 text-xs mb-6">
+            <tr>
+              <th class="border border-slate-900 px-5 py-0.5 font-normal">दाँया</th>
+              <th class="border border-slate-900 px-5 py-0.5 font-normal">बाँया</th>
+            </tr>
+            <tr>
+              <td class="border border-slate-900 h-16 w-20"></td>
+              <td class="border border-slate-900 h-16 w-20"></td>
+            </tr>
+          </table>
+          <div class="w-full border-t border-dotted border-slate-800 pt-1 text-center text-xs font-semibold">
+            निवेदकको दस्तखत
+          </div>
+          <div class="text-[11px] text-slate-700">(${escapeHtmlSafe(c.name)})</div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function buildLoanTamasukHTML(loanId) {
+  const d = resolveLoanDocData(loanId);
+  if (!d) return "";
+  const {
+    ln, c, profile, issueDate, amount, words, annualRate,
+    issueP, dueP, issueMonthName, dueMonthName, weekday,
+    ageStr, wardStr, purpose, guarantors, officers
+  } = d;
+
+  const dotVal = (v, minW = "75px") => v
+    ? `<span class="font-bold border-b border-dotted border-slate-700 px-1">${escapeHtmlSafe(v)}</span>`
+    : `<span class="inline-block border-b border-dotted border-slate-700" style="min-width:${minW};">&nbsp;</span>`;
+
+  const presLine = `यस संस्था बाट ऋण स्वीकृत गर्नेको नाम ${officers.presidentName || "...................."} ठेगाना ${officers.presidentAddr || "...................."} नागरिकता नं. ${officers.presidentCit ? toNepaliDigits(officers.presidentCit) : "............"} पद अध्यक्ष दस्तखत ..................`;
+  const trLine = `यस संस्था बाट ऋण स्वीकृत गर्नेको नाम ${officers.treasurerName || "...................."} ठेगाना ${officers.treasurerAddr || "...................."} नागरिकता नं. ${officers.treasurerCit ? toNepaliDigits(officers.treasurerCit) : "............"} पद कोषाध्यक्ष दस्तखत ..................`;
+  const prepLine = `तमसुक तयार गर्नेको नाम ${officers.preparerName || "...................."} ठेगाना ${officers.preparerAddr || "...................."} नागरिकता नं. ${officers.preparerCit ? toNepaliDigits(officers.preparerCit) : "............"} पद कर्मचारी दस्तखत ..................`;
+
+  const gRows = [0, 1, 2].map(idx => {
+    const g = guarantors[idx] || {};
+    return `
+      <div class="flex flex-wrap items-baseline gap-2 py-1">
+        <span>${toNepaliDigits(idx + 1)}. सही</span>
+        <span class="inline-block border-b border-dotted border-slate-700" style="min-width:110px;">&nbsp;</span>
+        <span>नाम:</span>
+        ${dotVal(g.name, "150px")}
+        <span>ठेगाना:</span>
+        ${dotVal(g.address, "150px")}
+      </div>
+    `;
+  }).join("");
+
+  return `
+    <div class="bg-white text-slate-950 p-4 sm:p-6 max-w-[790px] mx-auto" style="font-family:'Noto Sans Devanagari', sans-serif; font-size:12.5px; line-height:1.85;">
+      <div class="flex gap-3 items-stretch">
+        <div class="flex gap-1 pr-2 border-r border-dotted border-slate-400 items-center justify-center shrink-0">
+          <div class="tamasuk-vertical-strip">${escapeHtmlSafe(presLine)}</div>
+          <div class="tamasuk-vertical-strip">${escapeHtmlSafe(trLine)}</div>
+          <div class="tamasuk-vertical-strip">${escapeHtmlSafe(prepLine)}</div>
+        </div>
+
+        <div class="flex-1 space-y-4">
+          <div class="text-justify leading-[1.95]">
+            लिखितम धनीका नाम काभ्रे जिल्ला साविक पुरानागाउँ गा.वि.स वडा नं.१ हाल नमोबुद्ध न.पा. वडा नं.१० स्थित
+            <strong>${escapeHtmlSafe(profile.name)}</strong>
+            धन व्यहोर्ने ऋणीको नाम धनी संस्थाका ग्राहक नं. ${dotVal(toNepaliDigits(c.id), "60px")} भएका श्री ${dotVal(c.grandfatherName, "140px")} को नाती/नातीनी श्री ${dotVal(c.fatherName, "140px")} को छोरा/छोरी काभ्रे जिल्ला नमोबुद्ध न.पा./गा.वि.स. वडा नं. ${dotVal(wardStr, "40px")} बस्ने वर्ष ${dotVal(ageStr, "38px")} को श्री ${dotVal(c.name, "160px")} ले ${dotVal(purpose, "130px")} कार्य गर्नका लागि पेश गरेको ऋण निवेदनमा उल्लेखित शर्तहरु र संस्थाका नीति नियम र निर्देशन समेतलाई पालना गर्ने गरी आजका मिति ${dotVal(toNepaliDigits(issueDate), "95px")} मा रु. ${dotVal(toNepaliDigits(amount.toLocaleString("en-IN")) + "/-", "90px")} (अक्षरेपी ${dotVal(words, "180px")}) ऋण लिएको साँचो हो । उक्त ऋण रकम र सो मा वार्षिक ${toNepaliDigits(annualRate)}% का दरले लाग्ने ब्याज समेत ${dotVal(toNepaliDigits(dueP.y), "50px")} साल ${dotVal(dueMonthName, "60px")} महिना ${dotVal(toNepaliDigits(dueP.d), "35px")} गते भित्र किस्ताबन्दी/एकमुष्टमा सम्पूर्ण साँवा ब्याज बुझाउने छु । जुन कार्यका लागि ऋण लिएको हो सो कार्यमा नलगाए वा भाखा भित्र साँवा तथा ब्याज बुझाउन नल्याएमा संस्थाको नियमानुसार लाग्ने हर्जाना र विलम्ब शुल्क समेत बुझाउन मन्जुर छु । कथंकदाचित मैले बुझाउनु पर्ने साँवा, ब्याज र हर्जाना नबुझाएमा मेरो यस संस्थाबाट जडान गरि खाइ रहेको धाराको लाइन कटाई र अरु कसैलाई कुनै व्यहोराको लिखित गरी नदिएको म तथा मेरा एकाघर सगोल परिवारका नाममा रहेको हक भोगको मेरो अन्य चल/अचल श्री सम्पत्तिबाट प्रचलित कानुन बमोजिम असुल उपर गरि लिनु भएमा कुनै प्रकारको उजुर बाजुर गर्ने छैन भनि मेरा मन्जुरीले किनाराका साक्षीहरुका रोहवरमा यसै संस्थाको कार्यालयमा बसी यो तमसुकमा सहिछाप गरी धनी संस्थालाई दिएँ ।
+          </div>
+
+          <div class="flex flex-col items-end pt-1">
+            <div class="mb-2">बुझिलिनेको दस्तखत : ${dotVal("", "150px")}</div>
+            <table class="border-collapse border border-slate-900 text-xs">
+              <tr>
+                <th class="border border-slate-900 px-5 py-0.5 font-normal">दाँया</th>
+                <th class="border border-slate-900 px-5 py-0.5 font-normal">बाँया</th>
+              </tr>
+              <tr>
+                <td class="border border-slate-900 h-16 w-20"></td>
+                <td class="border border-slate-900 h-16 w-20"></td>
+              </tr>
+            </table>
+          </div>
+
+          <div class="space-y-2 pt-1">
+            <div class="font-bold underline text-sm">ऋणीका जमानी ग्राहकहरुः</div>
+            <div>
+              ऋणी श्री ${dotVal(c.name, "160px")} ले तोकिएको भाखाभित्र रकम नबुझाएमा बुझाउनु पर्ने सम्पूर्ण साँवा ब्याज बुझाउन हामी मन्जुर छौं ।
+            </div>
+            <div class="pt-1 text-xs">
+              ${gRows}
+            </div>
+          </div>
+
+          <div class="pt-4 text-center font-semibold text-xs">
+            ईति सम्वत् ${dotVal(toNepaliDigits(issueP.y), "55px")} साल ${dotVal(issueMonthName, "65px")} महिना ${dotVal(toNepaliDigits(issueP.d), "40px")} गते रोज ${dotVal(weekday, "65px")} शुभम् ।
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+window.printLoanApplicationLetter = function(loanId) {
+  const html = buildLoanApplicationLetterHTML(loanId);
+  if (!html) return showToast("ऋण विवरण भेटिएन।", "error");
+  openPrintModal(`ऋण माग निवेदन (${loanId})`, html);
+};
+
+window.printLoanTamasuk = function(loanId) {
+  const html = buildLoanTamasukHTML(loanId);
+  if (!html) return showToast("ऋण विवरण भेटिएन।", "error");
+  openPrintModal(`ऋण तमसुक (${loanId})`, html);
+};
+
+window.printBothLoanDocs = function(loanId) {
+  const letterHtml = buildLoanApplicationLetterHTML(loanId);
+  const tamasukHtml = buildLoanTamasukHTML(loanId);
+  if (!letterHtml || !tamasukHtml) return showToast("ऋण विवरण भेटिएन।", "error");
+  const combined = `
+    <div class="doc-page-break">${letterHtml}</div>
+    <div class="doc-page-break">${tamasukHtml}</div>
+  `;
+  openPrintModal(`ऋण माग निवेदन तथा तमसुक (${loanId})`, combined);
+};
 
 ensureExtensionState();
 const _origRenderCurrentModuleForExt = window.renderCurrentModule;
