@@ -4,10 +4,10 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="theme-color" content="#0f766e" />
-  <meta name="description" content="खानेपानी तथा सरसफाइ उपभोक्ता समितिको व्यवस्थापन, बिलिङ र लेखा प्रणाली" />
-  <link rel="manifest" href="./manifest.webmanifest" />
-  <link rel="apple-touch-icon" href="./icons/icon.svg" />
-  <title>खानेपानी तथा सरसफाइ उपभोक्ता समिति - Cloud ERP & Accounting</title>
+  <meta name="description" content="खानेपानी तथा सरसफाइ उपभोक्ता समितिको मिटर रिडिङ, ७ दिने सूचना चिठी, दर्ता-चलानी किताब, बिलिङ र दोहोरो लेखा प्रणाली" />
+  <meta property="og:title" content="प्रगति जल उपभोक्ता समिति - Cloud ERP & Accounting" />
+  <meta property="og:description" content="खानेपानी तथा सरसफाइ उपभोक्ता समितिको मिटर रिडिङ, ७ दिने सूचना चिठी, दर्ता-चलानी किताब, बिलिङ र दोहोरो लेखा प्रणाली" />
+  <title>प्रगति जल उपभोक्ता समिति - Cloud ERP & Accounting</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -308,9 +308,7 @@
 
 <!-- ==================== FIREBASE AUTH + ADMIN-ONLY CLOUD SYNC ==================== -->
 <script type="module">
-  import { initializeApp, getApps } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-  import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-  import { getFirestore, doc, getDoc, onSnapshot, runTransaction } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+  let initializeApp, getApps, getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged, getFirestore, doc, getDoc, onSnapshot, runTransaction;
 
   const SESSION_ID = "sess-" + crypto.randomUUID();
   const LOCAL_KEY = "KHANEPANI_ERP_LOCAL_BACKUP";
@@ -349,6 +347,15 @@
     remoteDocumentMissing: false,
     async init() {
       try {
+        const [appMod, authMod, fsMod] = await Promise.all([
+          import(/* @vite-ignore */ "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js"),
+          import(/* @vite-ignore */ "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js"),
+          import(/* @vite-ignore */ "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js")
+        ]);
+        ({ initializeApp, getApps } = appMod);
+        ({ getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged } = authMod);
+        ({ getFirestore, doc, getDoc, onSnapshot, runTransaction } = fsMod);
+
         const cfg = {
           apiKey: "AIzaSyCc-c3h1SECfqUi7aabrmF9YqNG8dPKbbE",
           authDomain: "hamro-sanstha.firebaseapp.com",
@@ -664,6 +671,22 @@ const INITIAL_STATE = {
     receiptCounter: 1001,
     loanReceiptCounter: 501,
     tankerReceiptCounter: 1,
+    panNo: "६२४९४४५८६",
+    regNo: "१७६",
+    estYear: "२०५६",
+    patraSankhya: "२०८३/०८४",
+    chalaniCounter: 1,
+    dartaCounter: 1,
+    committeeMembers: [
+      { role: "अध्यक्ष", name: "मोहन कृष्ण श्रेष्ठ", phone: "९८४१९३९३२२" },
+      { role: "उपाध्यक्ष", name: "बाबुकाजी श्रेष्ठ", phone: "९८४३५२८०३९" },
+      { role: "कोषाध्यक्ष", name: "हरिनारायण श्रेष्ठ", phone: "९८४१००८३४६" },
+      { role: "सचिव", name: "पञ्चमाया श्रेष्ठ", phone: "९८४९९४१४८८" },
+      { role: "सदस्य", name: "सहदेव गौतम", phone: "९८४९३४६१९५" },
+      { role: "सदस्य", name: "रोशन श्रेष्ठ", phone: "९८०३४२०९७१" },
+      { role: "सदस्य", name: "विमला सापकोटा", phone: "९८६४२८६७३६" },
+      { role: "व्यवस्थापक", name: "सबिन श्रेष्ठ", phone: "९८१३३११३१९" }
+    ],
     openingDate: "2083-04-01",
     openingCash: 0,
     openingDues: 0,
@@ -699,6 +722,8 @@ const INITIAL_STATE = {
   staffPayroll: [],
   tankerSales: [],
   tankerPayments: [],
+  dartaBook: [],
+  chalaniBook: [],
   accountingVouchers: [],
   accountingVoucherCounter: 1
 };
@@ -1012,6 +1037,8 @@ const MODULES = [
   { id: "unit-entry", label: "युनिट इन्ट्री & WhatsApp", icon: "gauge", sub: "मासिक बल्क मिटर रिडिङ र Anti-Block WhatsApp" },
   { id: "amount-entry", label: "अमाउन्ट इन्ट्री & रसिद", icon: "banknote", sub: "बल्क/सिङ्गल महसुल असुली र अक्षरमा रसिद प्रिन्ट" },
   { id: "reading-print", label: "मिटर रिडिङ सिट प्रिन्ट", icon: "printer", sub: "फिल्ड रिडिङ रजिस्टर र ग्राहक रिडिङ बिल प्रिन्ट" },
+  { id: "notice-letter", label: "७ दिने सूचना / चिठी", icon: "file-text", sub: "बक्यौता सदस्यको ७ दिने सूचना चिठी अटो जेनेरेट र प्रिन्ट" },
+  { id: "darta-chalani", label: "दर्ता र चलानी किताब", icon: "book-marked", sub: "आगमन (दर्ता) र प्रेषित (चलानी) पत्र अभिलेख तथा प्रिन्ट" },
   { id: "loans", label: "ऋण लगानी तथा असुली", icon: "hand-coins", sub: "अटोमेटिक ब्याज गणना, किस्ता रसिद र भाखा विवरण" },
   { id: "bank", label: "बैंक व्यवस्थापन (Bank)", icon: "landmark", sub: "बैंक खाता, डिपोजिट/विड्र र मिति अनुसार स्टेटमेन्ट" },
   { id: "income", label: "आम्दानी (Income)", icon: "trending-up", sub: "मर्मत, नयाँ धारा, अनुदान तथा सहयोग आम्दानी" },
@@ -1131,6 +1158,8 @@ window.renderCurrentModule = function() {
     case "unit-entry": container.innerHTML = renderUnitEntryModule(); break;
     case "amount-entry": container.innerHTML = renderAmountEntryModule(); break;
     case "reading-print": container.innerHTML = renderReadingPrintModule(); break;
+    case "notice-letter": container.innerHTML = renderNoticeLetterModule(); break;
+    case "darta-chalani": container.innerHTML = renderDartaChalaniModule(); break;
     case "loans": container.innerHTML = renderLoansModule(); break;
     case "bank": container.innerHTML = renderBankModule(); break;
     case "income": container.innerHTML = renderIncomeModule(); break;
@@ -6992,6 +7021,8 @@ function executeClearDemoRecords() {
   st.staffPayroll = [];
   st.tankerSales = [];
   st.tankerPayments = [];
+  st.dartaBook = [];
+  st.chalaniBook = [];
 
   window.recalculateAllDynamicValues(true);
   renderCurrentModule();
@@ -6999,16 +7030,10 @@ function executeClearDemoRecords() {
 }
 </script>
 
-<script>
-  // Progressive Web App: installable on supported phones/desktops.
-  // Cloud records remain in Firebase; the service worker caches only the app shell.
-  if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
-    window.addEventListener("load", () => {
-      navigator.serviceWorker.register("./sw.js", { scope: "./" })
-        .catch(err => console.warn("PWA service worker registration failed:", err));
-    });
-  }
-</script>
+<script src="/erp-extensions.js"></script>
+<script src="/erp-letters.js"></script>
+<div id="root" class="hidden"></div>
+<script type="module" src="/src/main.tsx"></script>
 
 </body>
 </html>
