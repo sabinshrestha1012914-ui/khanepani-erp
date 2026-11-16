@@ -3653,7 +3653,7 @@ window.downloadWindowsWhatsappAutoSender = async function() {
 
   if (!payload.length) return showToast("मान्य फोन नं. भएका ग्राहक भेटिएनन्।", "error");
 
-  const payloadB64 = utf8ToBase64Safe(JSON.stringify(payload));
+  const payloadB64 = utf8ToBase64Safe(JSON.stringify({ customers: payload }));
   const useDesktop = targetMode === "desktop" ? "$true" : "$false";
   const sendPhotoFlag = includePhoto ? "$true" : "$false";
 
@@ -3666,6 +3666,7 @@ window.downloadWindowsWhatsappAutoSender = async function() {
     "public class PJWinFocus {",
     "  [DllImport(\"user32.dll\")] public static extern bool SetForegroundWindow(IntPtr hWnd);",
     "  [DllImport(\"user32.dll\")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);",
+    "  [DllImport(\"user32.dll\")] public static extern bool IsIconic(IntPtr hWnd);",
     "}",
     "\"@ -ErrorAction SilentlyContinue",
     "",
@@ -3682,7 +3683,7 @@ window.downloadWindowsWhatsappAutoSender = async function() {
     "    $proc = Get-Process | Where-Object { $_.MainWindowHandle -ne [IntPtr]::Zero -and $_.ProcessName -match 'chrome|msedge|brave' } | Select-Object -First 1",
     "  }",
     "  if ($proc) {",
-    "    [PJWinFocus]::ShowWindow($proc.MainWindowHandle, 9) | Out-Null",
+    "    if ([PJWinFocus]::IsIconic($proc.MainWindowHandle)) { [PJWinFocus]::ShowWindow($proc.MainWindowHandle, 9) | Out-Null }",
     "    [PJWinFocus]::SetForegroundWindow($proc.MainWindowHandle) | Out-Null",
     "  } else {",
     "    $wshell.AppActivate('WhatsApp') | Out-Null",
@@ -3691,7 +3692,8 @@ window.downloadWindowsWhatsappAutoSender = async function() {
     "",
     `$payloadB64 = "${payloadB64}"`,
     "$jsonText = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($payloadB64))",
-    "$items = @($jsonText | ConvertFrom-Json)",
+    "$parsed = $jsonText | ConvertFrom-Json",
+    "$items = @($parsed.customers)",
     "",
     "Write-Host '============================================================' -ForegroundColor Cyan",
     "Write-Host '  Pragati Jal ERP - Windows Auto WhatsApp Sender (Anti-Block)' -ForegroundColor Green",
@@ -3703,12 +3705,12 @@ window.downloadWindowsWhatsappAutoSender = async function() {
     "$idx = 0",
     "foreach ($item in $items) {",
     "  $idx++",
-    "  Write-Host ('[' + $idx + '/' + $items.Count + '] Sending to ' + $item.id + ' - ' + $item.name + ' (' + $item.phone + ')...') -ForegroundColor Cyan",
+    "  Write-Host ('[' + $idx + '/' + $items.Count + '] Sending to ' + [string]$item.id + ' - ' + [string]$item.name + ' (' + [string]$item.phone + ')...') -ForegroundColor Cyan",
     "  $encodedMsg = [System.Uri]::EscapeDataString([string]$item.msg)",
     "  if ($useDesktop) {",
-    "    $url = 'whatsapp://send?phone=' + $item.phone + '&text=' + $encodedMsg",
+    "    $url = 'whatsapp://send?phone=' + [string]$item.phone + '&text=' + $encodedMsg",
     "  } else {",
-    "    $url = 'https://web.whatsapp.com/send?phone=' + $item.phone + '&text=' + $encodedMsg",
+    "    $url = 'https://web.whatsapp.com/send?phone=' + [string]$item.phone + '&text=' + $encodedMsg",
     "  }",
     "  Start-Process $url",
     "  $waitNow = if ($idx -eq 1) { $loadWaitSec + 2 } else { $loadWaitSec }",
@@ -3717,10 +3719,10 @@ window.downloadWindowsWhatsappAutoSender = async function() {
     "  Start-Sleep -Milliseconds 500",
     "  [System.Windows.Forms.SendKeys]::SendWait('{ENTER}')",
     "  Write-Host '   -> Bill text sent!' -ForegroundColor Green",
-    "  if ($sendPhoto -and $item.imgB64) {",
+    "  if ($sendPhoto -and [string]$item.imgB64) {",
     "    Start-Sleep -Milliseconds 1300",
     "    try {",
-    "      $imgBytes = [System.Convert]::FromBase64String($item.imgB64)",
+    "      $imgBytes = [System.Convert]::FromBase64String([string]$item.imgB64)",
     "      $ms = New-Object System.IO.MemoryStream(,$imgBytes)",
     "      $rawImg = [System.Drawing.Image]::FromStream($ms)",
     "      $bmp = New-Object System.Drawing.Bitmap($rawImg)",
