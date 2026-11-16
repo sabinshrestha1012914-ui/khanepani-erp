@@ -395,9 +395,13 @@
               <option value="web">Browser WhatsApp Web (Chrome/Edge)</option>
             </select>
           </label>
-          <label class="inline-flex items-center gap-1.5 cursor-pointer font-semibold">
-            <input type="checkbox" id="wa-win-include-photo" checked class="rounded border-amber-400 text-emerald-700">
-            बिल फोटो (.png) पनि सँगै पठाउने
+          <label class="inline-flex items-center gap-1.5 font-semibold">
+            पठाउने विवरण:
+            <select id="wa-win-send-mode" class="border border-amber-300 rounded-lg px-2 py-1 bg-white text-xs font-bold text-emerald-900">
+              <option value="photo_only" selected>बिलको फोटो (.png) मात्र (मेसेज नपठाउने)</option>
+              <option value="photo_and_text">मेसेज + बिल फोटो दुवै</option>
+              <option value="text_only">मेसेज मात्र</option>
+            </select>
           </label>
           <label class="inline-flex items-center gap-1 font-semibold">
             ग्याप (सेकेन्ड):
@@ -3622,7 +3626,9 @@ function utf8ToBase64Safe(str) {
 window.downloadWindowsWhatsappAutoSender = async function() {
   if (!waQueue || !waQueue.length) return showToast("कुनै फोन नं. भएको ग्राहक सूची छैन।", "warning");
   const targetMode = document.getElementById("wa-win-target")?.value || "desktop";
-  const includePhoto = !!document.getElementById("wa-win-include-photo")?.checked;
+  const sendMode = document.getElementById("wa-win-send-mode")?.value || "photo_only";
+  const sendText = sendMode === "photo_and_text" || sendMode === "text_only";
+  const includePhoto = sendMode === "photo_only" || sendMode === "photo_and_text";
   const minGap = Math.max(3, Math.min(60, Number(document.getElementById("wa-win-min-gap")?.value) || 7));
   const maxGap = Math.max(minGap, Math.min(90, Number(document.getElementById("wa-win-max-gap")?.value) || 12));
   const loadWaitSec = targetMode === "web" ? 9 : 5;
@@ -3646,7 +3652,7 @@ window.downloadWindowsWhatsappAutoSender = async function() {
       id: String(item.customer?.id || ""),
       name: String(item.customer?.name || ""),
       phone: String(fullPhone),
-      msg: String(item.msg || ""),
+      msg: sendText ? String(item.msg || "") : "",
       imgB64
     });
   }
@@ -3655,6 +3661,7 @@ window.downloadWindowsWhatsappAutoSender = async function() {
 
   const payloadB64 = utf8ToBase64Safe(JSON.stringify({ customers: payload }));
   const useDesktop = targetMode === "desktop" ? "$true" : "$false";
+  const sendTextFlag = sendText ? "$true" : "$false";
   const sendPhotoFlag = includePhoto ? "$true" : "$false";
 
   const psLines = [
@@ -3694,18 +3701,26 @@ window.downloadWindowsWhatsappAutoSender = async function() {
     "    SetForegroundWindow(hWnd);",
     "    if (fgThread != 0 && fgThread != curThread) AttachThreadInput(curThread, fgThread, false);",
     "  }",
+    "  public static void ClickAt(int x, int y) {",
+    "    SetCursorPos(x, y);",
+    "    Thread.Sleep(80);",
+    "    mouse_event(0x0002, 0, 0, 0, UIntPtr.Zero);",
+    "    Thread.Sleep(50);",
+    "    mouse_event(0x0004, 0, 0, 0, UIntPtr.Zero);",
+    "  }",
     "  public static void ClickInputBox(IntPtr hWnd) {",
     "    RECT r;",
     "    if (!GetWindowRect(hWnd, out r)) return;",
     "    int w = r.Right - r.Left; int h = r.Bottom - r.Top;",
     "    if (w < 200 || h < 200) return;",
-    "    int x = r.Left + (int)(w * 0.62);",
-    "    int y = r.Bottom - 44;",
-    "    SetCursorPos(x, y);",
-    "    Thread.Sleep(80);",
-    "    mouse_event(0x0002, 0, 0, 0, UIntPtr.Zero);",
-    "    Thread.Sleep(40);",
-    "    mouse_event(0x0004, 0, 0, 0, UIntPtr.Zero);",
+    "    ClickAt(r.Left + (int)(w * 0.62), r.Bottom - 44);",
+    "  }",
+    "  public static void ClickPhotoSendButton(IntPtr hWnd) {",
+    "    RECT r;",
+    "    if (!GetWindowRect(hWnd, out r)) return;",
+    "    int w = r.Right - r.Left; int h = r.Bottom - r.Top;",
+    "    if (w < 200 || h < 200) return;",
+    "    ClickAt(r.Right - 62, r.Bottom - 56);",
     "  }",
     "  public static void PressEnter() {",
     "    keybd_event(0x0D, 0, 0, UIntPtr.Zero);",
@@ -3725,12 +3740,12 @@ window.downloadWindowsWhatsappAutoSender = async function() {
     "\"@",
     "",
     `$useDesktop = ${useDesktop}`,
+    `$sendText = ${sendTextFlag}`,
     `$sendPhoto = ${sendPhotoFlag}`,
     `$loadWaitSec = ${loadWaitSec}`,
     `$minGap = ${minGap}`,
     `$maxGap = ${maxGap}`,
     "",
-    "$wshell = New-Object -ComObject WScript.Shell",
     "function Get-WAHandle {",
     "  $proc = Get-Process | Where-Object { $_.MainWindowHandle -ne [IntPtr]::Zero -and [PJWinAuto]::IsWindowVisible($_.MainWindowHandle) -and ($_.ProcessName -match 'WhatsApp' -or $_.MainWindowTitle -match 'WhatsApp') } | Select-Object -First 1",
     "  if (-not $proc -and -not $useDesktop) {",
@@ -3757,24 +3772,34 @@ window.downloadWindowsWhatsappAutoSender = async function() {
     "foreach ($item in $items) {",
     "  $idx++",
     "  Write-Host ('[' + $idx + '/' + $items.Count + '] Sending to ' + [string]$item.id + ' - ' + [string]$item.name + ' (' + [string]$item.phone + ')...') -ForegroundColor Cyan",
-    "  $encodedMsg = [System.Uri]::EscapeDataString([string]$item.msg)",
-    "  if ($useDesktop) {",
-    "    $url = 'whatsapp://send?phone=' + [string]$item.phone + '&text=' + $encodedMsg",
+    "  if ($sendText -and [string]$item.msg) {",
+    "    $encodedMsg = [System.Uri]::EscapeDataString([string]$item.msg)",
+    "    if ($useDesktop) {",
+    "      $url = 'whatsapp://send?phone=' + [string]$item.phone + '&text=' + $encodedMsg",
+    "    } else {",
+    "      $url = 'https://web.whatsapp.com/send?phone=' + [string]$item.phone + '&text=' + $encodedMsg",
+    "    }",
     "  } else {",
-    "    $url = 'https://web.whatsapp.com/send?phone=' + [string]$item.phone + '&text=' + $encodedMsg",
+    "    if ($useDesktop) {",
+    "      $url = 'whatsapp://send?phone=' + [string]$item.phone",
+    "    } else {",
+    "      $url = 'https://web.whatsapp.com/send?phone=' + [string]$item.phone",
+    "    }",
     "  }",
     "  Start-Process $url",
     "  $waitNow = if ($idx -eq 1) { $loadWaitSec + 2 } else { $loadWaitSec }",
     "  Start-Sleep -Seconds $waitNow",
-    "  $waHwnd = Get-WAHandle",
-    "  [PJWinAuto]::ForceFocus($waHwnd)",
-    "  Start-Sleep -Milliseconds 300",
-    "  [PJWinAuto]::ClickInputBox($waHwnd)",
-    "  Start-Sleep -Milliseconds 300",
-    "  [PJWinAuto]::PressEnter()",
-    "  Write-Host '   -> Bill text sent!' -ForegroundColor Green",
+    "  if ($sendText -and [string]$item.msg) {",
+    "    $waHwnd = Get-WAHandle",
+    "    [PJWinAuto]::ForceFocus($waHwnd)",
+    "    Start-Sleep -Milliseconds 300",
+    "    [PJWinAuto]::ClickInputBox($waHwnd)",
+    "    Start-Sleep -Milliseconds 300",
+    "    [PJWinAuto]::PressEnter()",
+    "    Write-Host '   -> Bill text sent!' -ForegroundColor Green",
+    "    Start-Sleep -Milliseconds 1200",
+    "  }",
     "  if ($sendPhoto -and [string]$item.imgB64) {",
-    "    Start-Sleep -Milliseconds 1300",
     "    try {",
     "      $imgBytes = [System.Convert]::FromBase64String([string]$item.imgB64)",
     "      $ms = New-Object System.IO.MemoryStream(,$imgBytes)",
@@ -3791,8 +3816,14 @@ window.downloadWindowsWhatsappAutoSender = async function() {
     "      [PJWinAuto]::PressCtrlV()",
     "      Start-Sleep -Milliseconds 2800",
     "      [PJWinAuto]::ForceFocus($waHwnd)",
-    "      Start-Sleep -Milliseconds 300",
-    "      [PJWinAuto]::PressEnter()",
+    "      Start-Sleep -Milliseconds 250",
+    "      if ($useDesktop) {",
+    "        [PJWinAuto]::ClickPhotoSendButton($waHwnd)",
+    "      } else {",
+    "        [PJWinAuto]::ClickPhotoSendButton($waHwnd)",
+    "        Start-Sleep -Milliseconds 250",
+    "        [PJWinAuto]::PressEnter()",
+    "      }",
     "      $bmp.Dispose()",
     "      Write-Host '   -> Bill photo (.png) sent!' -ForegroundColor Green",
     "    } catch {",
@@ -3807,7 +3838,7 @@ window.downloadWindowsWhatsappAutoSender = async function() {
     "}",
     "[PJWinAuto]::RestoreConsole()",
     "Write-Host '============================================================' -ForegroundColor Green",
-    "Write-Host '  ALL MESSAGES COMPLETED!' -ForegroundColor Green",
+    "Write-Host '  ALL BILL PHOTOS COMPLETED!' -ForegroundColor Green",
     "Write-Host '============================================================' -ForegroundColor Green"
   ];
 
