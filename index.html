@@ -342,8 +342,8 @@
         <span id="print-modal-title">प्रिन्ट पूर्वावलोकन (A4 / रसिद Print Preview)</span>
       </div>
       <div class="flex items-center gap-2">
-        <button onclick="window.print()" class="bg-teal-600 hover:bg-teal-500 text-white text-xs font-semibold px-4 py-1.5 rounded-lg flex items-center gap-1.5">
-          <i data-lucide="printer" class="w-4 h-4"></i> प्रिन्ट गर्नुहोस् (Print)
+        <button onclick="window.print()" class="bg-teal-600 hover:bg-teal-500 text-white text-xs font-semibold px-4 py-1.5 rounded-lg flex items-center gap-1.5 cursor-pointer">
+          <i data-lucide="printer" class="w-4 h-4"></i> प्रिन्ट / Save as PDF
         </button>
         <button onclick="closePrintModal()" class="p-1.5 hover:bg-slate-700 rounded-lg"><i data-lucide="x" class="w-4 h-4"></i></button>
       </div>
@@ -6589,88 +6589,97 @@ function generateReportHTML(tab) {
         `;
       }
 
-      // मिति अनुसार रिडिङ क्रम मिलाउने
-      rds.sort((a, b) => String(a.entryDate || "").localeCompare(String(b.entryDate || "")));
+      const getReadingSortDateBS = (r) => {
+        const raw = String(r.entryDate || "").trim();
+        if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+        const mNum = getNepaliMonthNumber(r.month);
+        const yr = Number(r.year) || parseBS(st.activeBSDate).y;
+        return mNum > 0 ? formatBS(yr, mNum, getMonthDaysBS(yr, mNum)) : "0000-00-00";
+      };
 
-      // एउटै रसिद दोहोरिएर अर्को महिनामा नदेखियोस्
-      const usedPayIds = new Set();
-
+      // रिडिङ र भुक्तानी दुवैलाई वास्तविक मिति (BS Date) अनुसार एउटै क्रोनोलोजिकल क्रममा राख्ने।
+      // एउटै मितिमा रिडिङ र भुक्तानी दुवै परेको खण्डमा पहिले रिडिङ (kindOrder=0) अनि भुक्तानी (kindOrder=1) देखिन्छ।
+      const timelineEvents = [];
       rds.forEach((r) => {
-        const units = Number(r.units || 0);
-        const maint = Number(r.maintenanceAmount || 0);
-        const billOnly = Math.max(0, Number(r.billAmount || 0) - maint);
-        const pen = Number(r.penaltyAssessedAmount ?? (Number(r.penaltyAmount || 0) + Number(r.paidPenaltyAmount || 0)));
-
-        const tRule = getActiveTariffRule(r.entryDate || st.activeBSDate);
-        const minUnit = Number(tRule.minUnits || 6);
-        const extraRate = Number(tRule.extraRate || 140);
-        const extraUnits = Math.max(0, units - minUnit);
-        const extraAmt = r.extraAmount !== undefined ? Number(r.extraAmount) : (extraUnits * extraRate);
-
-        const totalRowAmt = billOnly + maint + pen;
-
-        // रिडिङ भएको BS वर्ष-महिना
-        const readingYearMonth = String(r.entryDate || "").slice(0, 7);
-        const readingMonthName = String(r.month || "").trim();
-
-        // यस महिनासँग सम्बन्धित प्रत्येक भुक्तानी छुट्टाछुट्टै निकाल्ने।
-        // Bulk payment मा p.month प्रायः महिनाको नाम हुन्छ;
-        // Single payment मा p.month मिति हुन सक्छ, त्यस अवस्थामा वास्तविक p.date प्रयोग हुन्छ।
-        const matchingPays = payments
-          .filter(p => {
-            if (p.id !== undefined && usedPayIds.has(p.id)) return false;
-
-            const pMonth = String(p.month || "").trim();
-            const pDateMonth = String(p.date || "").slice(0, 7);
-
-            const pMonthIsDate = /^\d{4}-\d{2}-\d{2}/.test(pMonth);
-            const monthNameMatch = pMonth && !pMonthIsDate &&
-              pMonth === readingMonthName;
-            const paymentDateMatch = readingYearMonth &&
-              pDateMonth === readingYearMonth;
-
-            return monthNameMatch || paymentDateMatch;
-          })
-          .sort((a, b) => String(a.date || "").localeCompare(String(b.date || "")));
-
-        matchingPays.forEach(p => {
-          if (p.id !== undefined) usedPayIds.add(p.id);
+        const dBS = getReadingSortDateBS(r);
+        timelineEvents.push({
+          kind: "reading",
+          kindOrder: 0,
+          serial: bsToSerialDays(dBS),
+          dateBS: dBS,
+          reading: r
         });
+      });
+      payments.forEach((pay) => {
+        const thisPaid = Number(pay.totalPaid || 0);
+        if (thisPaid <= 0) return;
+        const dBS = String(pay.date || "").trim();
+        timelineEvents.push({
+          kind: "payment",
+          kindOrder: 1,
+          serial: bsToSerialDays(dBS),
+          dateBS: dBS,
+          payment: pay
+        });
+      });
 
-        // Reading Row: यस महिनाको बिल पहिले बाँकीमा जोड्ने
-        runningDue = Math.round((runningDue + totalRowAmt) * 100) / 100;
-        const advAppliedOnRow = getReadingAdvanceApplied(r.id);
+      timelineEvents.sort((a, b) => {
+        if (a.serial !== b.serial) return a.serial - b.serial;
+        if (a.kindOrder !== b.kindOrder) return a.kindOrder - b.kindOrder;
+        const aKey = a.kind === "payment" ? String(a.payment?.receiptNo || "") : String(a.reading?.id || "");
+        const bKey = b.kind === "payment" ? String(b.payment?.receiptNo || "") : String(b.reading?.id || "");
+        return aKey.localeCompare(bKey);
+      });
 
-        tUnits += units;
-        tBillOnly += billOnly;
-        tMaint += maint;
-        tPen += pen;
-        tTotalAmt += totalRowAmt;
+      timelineEvents.forEach((ev) => {
+        if (ev.kind === "reading") {
+          const r = ev.reading;
+          const units = Number(r.units || 0);
+          const maint = Number(r.maintenanceAmount || 0);
+          const billOnly = Math.max(0, Number(r.billAmount || 0) - maint);
+          const pen = Number(r.penaltyAssessedAmount ?? (Number(r.penaltyAmount || 0) + Number(r.paidPenaltyAmount || 0)));
 
-        rows += `
-          <tr class="bg-white">
-            <td class="border border-slate-400 p-2 text-center align-middle font-bold">${sn++}</td>
-            <td class="border border-slate-400 p-2 font-bold text-teal-800 text-center">${r.month}${advAppliedOnRow > 0 ? `<div class="text-[10px] font-semibold text-emerald-700">अग्रिम: -${fmtMoney(advAppliedOnRow)}</div>` : ''}</td>
-            <td class="border border-slate-400 p-2 text-right font-mono">${r.prevReading}</td>
-            <td class="border border-slate-400 p-2 text-right font-mono font-bold">${r.currReading}</td>
-            <td class="border border-slate-400 p-2 text-right tabular-nums font-bold">${units}</td>
-            <td class="border border-slate-400 p-2 text-right tabular-nums">${extraUnits > 0 ? extraUnits : '-'}</td>
-            <td class="border border-slate-400 p-2 text-right tabular-nums">${extraAmt > 0 ? fmtMoney(extraAmt) : '-'}</td>
-            <td class="border border-slate-400 p-2 text-right tabular-nums">${fmtMoney(billOnly)}</td>
-            <td class="border border-slate-400 p-2 text-right tabular-nums text-amber-800">${fmtMoney(maint)}</td>
-            <td class="border border-slate-400 p-2 text-right tabular-nums text-red-700">${fmtMoney(pen)}</td>
-            <td class="border border-slate-400 p-2 text-right tabular-nums font-bold text-slate-900">${fmtMoney(totalRowAmt)}</td>
-            <td class="border border-slate-400 p-2 text-right tabular-nums">${advAppliedOnRow > 0 ? `<span class="text-emerald-700 font-semibold">अग्रिम ${fmtMoney(advAppliedOnRow)}</span>` : '-'}</td>
-            <td class="border border-slate-400 p-2 text-right tabular-nums font-bold ${runningDue < 0 ? 'text-emerald-700' : 'text-rose-700'}">${runningDue < 0 ? `अग्रिम ${fmtMoney(Math.abs(runningDue))}` : fmtMoney(runningDue)}</td>
-            <td class="border border-slate-400 p-2 text-center">-</td>
-          </tr>
-        `;
+          const tRule = getActiveTariffRule(r.entryDate || st.activeBSDate);
+          const minUnit = Number(tRule.minUnits || 6);
+          const extraRate = Number(tRule.extraRate || 140);
+          const extraUnits = Math.max(0, units - minUnit);
+          const extraAmt = r.extraAmount !== undefined ? Number(r.extraAmount) : (extraUnits * extraRate);
 
-        // जति पटक भुक्तानी भएको छ, त्यति नै छुट्टाछुट्टै मिति/रकम/रसिद Row
-        matchingPays.forEach(pay => {
+          const totalRowAmt = billOnly + maint + pen;
+          runningDue = Math.round((runningDue + totalRowAmt) * 100) / 100;
+          const advAppliedOnRow = getReadingAdvanceApplied(r.id);
+
+          tUnits += units;
+          tBillOnly += billOnly;
+          tMaint += maint;
+          tPen += pen;
+          tTotalAmt += totalRowAmt;
+
+          rows += `
+            <tr class="bg-white">
+              <td class="border border-slate-400 p-2 text-center align-middle font-bold">${sn++}</td>
+              <td class="border border-slate-400 p-2 font-bold text-teal-800 text-center">
+                ${r.month}
+                <div class="text-[10px] font-normal text-slate-500">${escapeHtmlSafe(r.entryDate || '-')}</div>
+                ${advAppliedOnRow > 0 ? `<div class="text-[10px] font-semibold text-emerald-700">अग्रिम: -${fmtMoney(advAppliedOnRow)}</div>` : ''}
+              </td>
+              <td class="border border-slate-400 p-2 text-right font-mono">${r.prevReading}</td>
+              <td class="border border-slate-400 p-2 text-right font-mono font-bold">${r.currReading}</td>
+              <td class="border border-slate-400 p-2 text-right tabular-nums font-bold">${units}</td>
+              <td class="border border-slate-400 p-2 text-right tabular-nums">${extraUnits > 0 ? extraUnits : '-'}</td>
+              <td class="border border-slate-400 p-2 text-right tabular-nums">${extraAmt > 0 ? fmtMoney(extraAmt) : '-'}</td>
+              <td class="border border-slate-400 p-2 text-right tabular-nums">${fmtMoney(billOnly)}</td>
+              <td class="border border-slate-400 p-2 text-right tabular-nums text-amber-800">${fmtMoney(maint)}</td>
+              <td class="border border-slate-400 p-2 text-right tabular-nums text-red-700">${fmtMoney(pen)}</td>
+              <td class="border border-slate-400 p-2 text-right tabular-nums font-bold text-slate-900">${fmtMoney(totalRowAmt)}</td>
+              <td class="border border-slate-400 p-2 text-right tabular-nums">${advAppliedOnRow > 0 ? `<span class="text-emerald-700 font-semibold">अग्रिम ${fmtMoney(advAppliedOnRow)}</span>` : '-'}</td>
+              <td class="border border-slate-400 p-2 text-right tabular-nums font-bold ${runningDue < 0 ? 'text-emerald-700' : 'text-rose-700'}">${runningDue < 0 ? `अग्रिम ${fmtMoney(Math.abs(runningDue))}` : fmtMoney(runningDue)}</td>
+              <td class="border border-slate-400 p-2 text-center">-</td>
+            </tr>
+          `;
+        } else {
+          const pay = ev.payment;
           const thisPaid = Number(pay.totalPaid || 0);
-          if (thisPaid <= 0) return;
-
           runningDue = Math.round((runningDue - thisPaid) * 100) / 100;
           tPaid += thisPaid;
 
@@ -6691,35 +6700,7 @@ function generateReportHTML(tab) {
               </td>
             </tr>
           `;
-        });
-      });
-
-      // कुनै भुक्तानी रसिद रिडिङ महिनासँग मेल नखाएको भए अन्त्यमा देखाउने ताकि जम्मा बाँकी सधैं मिलोस्
-      const unmatchedPays = payments
-        .filter(p => !(p.id !== undefined && usedPayIds.has(p.id)))
-        .sort((a, b) => String(a.date || "").localeCompare(String(b.date || "")));
-      unmatchedPays.forEach(pay => {
-        const thisPaid = Number(pay.totalPaid || 0);
-        if (thisPaid <= 0) return;
-        runningDue = Math.round((runningDue - thisPaid) * 100) / 100;
-        tPaid += thisPaid;
-        rows += `
-          <tr class="bg-emerald-50">
-            <td class="border border-slate-400 p-2 text-center">-</td>
-            <td colspan="10" class="border border-slate-400 p-2">
-              भुक्तानी मिति: <strong>${pay.date || '-'}</strong>
-            </td>
-            <td class="border border-slate-400 p-2 text-right font-bold text-emerald-700">
-              ${fmtMoney(thisPaid)}
-            </td>
-            <td class="border border-slate-400 p-2 text-right font-bold ${runningDue < 0 ? 'text-emerald-700' : 'text-rose-700'}">
-              ${runningDue < 0 ? `अग्रिम ${fmtMoney(Math.abs(runningDue))}` : fmtMoney(runningDue)}
-            </td>
-            <td class="border border-slate-400 p-2 text-center font-bold text-indigo-900">
-              ${pay.receiptNo || '-'}
-            </td>
-          </tr>
-        `;
+        }
       });
 
       return `
@@ -10423,12 +10404,125 @@ updateConnectivityBanner();
     if (typeof switchModule === "function") switchModule("offline-reading");
   };
 
+  const round2 = (v) => Math.round((Number(v) || 0) * 100) / 100;
+
+  function getOfflineCustomerFinancials(custId, monthName, entryDateBS) {
+    const st = window.ERP_STATE;
+    const c = st.customers.find(x => x.id === custId);
+    if (!c) return null;
+
+    const dt = entryDateBS || st.activeBSDate || getAutoTodayBS();
+    const targetMonthNum = getNepaliMonthNumber(monthName);
+    const targetYear = parseBS(dt).y;
+    const targetYM = targetMonthNum > 0 ? (targetYear * 12 + targetMonthNum) : 0;
+
+    const existing = (st.readings || []).find(r =>
+      r.customerId === custId &&
+      String(r.month || "").trim() === String(monthName || "").trim() &&
+      ((Number(r.year) || parseBS(r.entryDate || dt).y) === targetYear)
+    ) || (st.readings || []).find(r => r.customerId === custId && r.month === monthName);
+
+    let prevWaterDue = 0;
+    let prevMaintDue = 0;
+    let prevPenaltyDue = 0;
+    const seenEarlierMonths = new Set();
+
+    (st.readings || []).forEach(r => {
+      if (r.customerId !== custId) return;
+      if (existing && String(r.id) === String(existing.id)) return;
+      if (!existing && String(r.month || "").trim() === String(monthName || "").trim()) {
+        const rYr = Number(r.year) || parseBS(r.entryDate || dt).y;
+        if (rYr === targetYear) return;
+      }
+
+      const rMonthNum = getNepaliMonthNumber(r.month);
+      const rYear = Number(r.year) || parseBS(r.entryDate || dt).y;
+      const rYM = rMonthNum > 0 ? (rYear * 12 + rMonthNum) : 0;
+
+      let isEarlier = false;
+      if (targetYM > 0 && rYM > 0) isEarlier = rYM < targetYM;
+      else if (r.entryDate && dt) isEarlier = bsToSerialDays(r.entryDate) < bsToSerialDays(dt);
+      else isEarlier = String(r.month || "").trim() !== String(monthName || "").trim();
+
+      if (isEarlier) {
+        seenEarlierMonths.add(String(r.month || "").trim() + "::" + rYear);
+        const maintRem = Math.max(0, round2(Number(r.maintenanceAmount || 0) - Number(r.paidMaintAmount || 0)));
+        const waterOnlyTotal = Math.max(0, round2(Number(r.billAmount || 0) - Number(r.maintenanceAmount || 0)));
+        const waterRem = Math.max(0, round2(waterOnlyTotal - Number(r.paidAmount || 0)));
+        prevWaterDue = round2(prevWaterDue + waterRem);
+        prevMaintDue = round2(prevMaintDue + maintRem);
+        prevPenaltyDue = round2(prevPenaltyDue + Math.max(0, Number(r.penaltyAmount || 0)));
+      }
+    });
+
+    // Include unsynced outbox items from strictly earlier months
+    getOutbox().forEach(o => {
+      if (o.customerId !== custId || o.month === monthName) return;
+      const oMonthNum = getNepaliMonthNumber(o.month);
+      const oYear = parseBS(o.entryDate || dt).y;
+      const oYM = oMonthNum > 0 ? (oYear * 12 + oMonthNum) : 0;
+      const mKey = String(o.month || "").trim() + "::" + oYear;
+      if (seenEarlierMonths.has(mKey)) return;
+      if (targetYM > 0 && oYM > 0 && oYM < targetYM) {
+        const oMaint = Math.max(0, Number(o.maintenanceAmount || 0));
+        const oWater = Math.max(0, round2(Number(o.waterBillOnly ?? (Number(o.billAmount || 0) - oMaint))));
+        prevWaterDue = round2(prevWaterDue + oWater);
+        prevMaintDue = round2(prevMaintDue + oMaint);
+      }
+    });
+
+    const openingDue = Math.max(0, Number(c.openingDue || 0));
+    const prevWaterAndOpening = round2(openingDue + prevWaterDue);
+    const currentPenalty = existing ? Math.max(0, Number(existing.penaltyAmount || 0)) : 0;
+    const totalPenaltyDue = round2(prevPenaltyDue + currentPenalty);
+    const totalPrevDue = round2(prevWaterAndOpening + prevMaintDue + totalPenaltyDue);
+    const advanceAvailable = Math.max(0, Number(c.advanceBalance || 0));
+    const existingPaid = existing ? round2(Number(existing.paidAmount || 0) + Number(existing.paidMaintAmount || 0)) : 0;
+    const existingAdvApplied = existing ? getReadingAdvanceApplied(existing.id) : 0;
+
+    return {
+      customer: c,
+      existing,
+      openingDue,
+      prevWaterDue,
+      prevWaterAndOpening,
+      prevMaintDue,
+      prevPenaltyDue,
+      currentPenalty,
+      totalPenaltyDue,
+      totalPrevDue,
+      advanceAvailable,
+      existingPaid,
+      existingAdvApplied
+    };
+  }
+
+  function computeOfflineBillTotals(fin, currWaterBill, currMaint) {
+    const currentTotal = round2(currWaterBill + currMaint);
+    const grossPayable = round2(currentTotal + fin.totalPrevDue);
+    const payableBeforeAdvance = Math.max(0, round2(grossPayable - fin.existingPaid));
+    const advanceUsed = Math.min(fin.advanceAvailable, payableBeforeAdvance);
+    const netPayable = Math.max(0, round2(payableBeforeAdvance - advanceUsed));
+    const remainingAdvance = Math.max(0, round2(fin.advanceAvailable - advanceUsed));
+    return {
+      currWaterBill: round2(currWaterBill),
+      currMaint: round2(currMaint),
+      currentTotal,
+      grossPayable,
+      advanceUsed: round2(advanceUsed),
+      netPayable,
+      remainingAdvance
+    };
+  }
+
   function buildOfflineCustomerGridHtml() {
     const st = window.ERP_STATE;
     const outbox = getOutbox();
     const pendingMap = new Map(outbox.filter(x => x.month === offlineMonth).map(x => [x.customerId, x]));
     const erpMap = new Map((st.readings || []).filter(r => r.month === offlineMonth).map(r => [r.customerId, r]));
     const q = offlineSearch.trim().toLowerCase();
+    const dt = offlineEntryDate || st.activeBSDate || getAutoTodayBS();
+
     const filtered = st.customers.filter(c => {
       const hasP = pendingMap.has(c.id);
       const hasE = erpMap.has(c.id);
@@ -10443,17 +10537,38 @@ updateConnectivityBanner();
     return filtered.map(c => {
       const pItem = pendingMap.get(c.id);
       const eItem = erpMap.get(c.id);
+      const fin = getOfflineCustomerFinancials(c.id, offlineMonth, dt);
       const prev = pItem ? pItem.prevReading : (eItem ? Number(eItem.prevReading ?? c.lastReading ?? 0) : Number(c.lastReading ?? 0));
       const curr = pItem ? pItem.currReading : (eItem ? eItem.currReading : null);
       const units = pItem ? pItem.units : (eItem ? eItem.units : null);
-      const bill = pItem ? pItem.billAmount : (eItem ? Number(eItem.billAmount || 0) : null);
+
+      let currWaterBill = 0;
+      let currMaint = 0;
+      if (pItem) {
+        currMaint = Number(pItem.maintenanceAmount || 0);
+        currWaterBill = pItem.waterBillOnly !== undefined ? Number(pItem.waterBillOnly) : Math.max(0, round2(Number(pItem.billAmount || 0) - currMaint));
+      } else if (eItem) {
+        currMaint = Number(eItem.maintenanceAmount || 0);
+        currWaterBill = Math.max(0, round2(Number(eItem.billAmount || 0) - currMaint));
+      }
+
+      const totals = curr !== null ? computeOfflineBillTotals(fin, currWaterBill, currMaint) : null;
+
       const badge = pItem
         ? `<span class="px-2 py-0.5 rounded-lg bg-indigo-50 text-indigo-800 border border-indigo-200 text-[10px] font-bold">पठाउन बाँकी</span>`
         : (eItem
             ? `<span class="px-2 py-0.5 rounded-lg bg-teal-50 text-teal-800 border border-teal-200 text-[10px] font-bold">सफ्टवेयरमा सुरक्षित</span>`
             : `<span class="px-2 py-0.5 rounded-lg bg-amber-50 text-amber-800 border border-amber-200 text-[10px] font-bold">रिडिङ बाँकी</span>`);
+
+      const ledgerBadges = [
+        fin.prevWaterAndOpening > 0 ? `<span class="px-1.5 py-0.5 rounded bg-rose-50 text-rose-800 border border-rose-200">पहिलाको बाँकी: ${fmtMoney(fin.prevWaterAndOpening)}</span>` : "",
+        fin.prevMaintDue > 0 ? `<span class="px-1.5 py-0.5 rounded bg-amber-50 text-amber-900 border border-amber-200">मर्मत बाँकी: ${fmtMoney(fin.prevMaintDue)}</span>` : "",
+        fin.totalPenaltyDue > 0 ? `<span class="px-1.5 py-0.5 rounded bg-red-50 text-red-800 border border-red-200">जरिवाना: ${fmtMoney(fin.totalPenaltyDue)}</span>` : "",
+        fin.advanceAvailable > 0 ? `<span class="px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-800 border border-emerald-200">अग्रिम: ${fmtMoney(fin.advanceAvailable)}</span>` : ""
+      ].filter(Boolean).join("");
+
       return `
-        <div class="bg-white rounded-2xl border border-slate-200 p-4 shadow-sm flex flex-col justify-between gap-3">
+        <div class="bg-white rounded-2xl border border-slate-200 p-4 shadow-sm flex flex-col justify-between gap-2.5">
           <div class="flex items-start justify-between gap-2">
             <div>
               <div class="text-sm font-bold text-slate-900">${escapeHtmlSafe(c.name)}</div>
@@ -10461,16 +10576,32 @@ updateConnectivityBanner();
             </div>
             ${badge}
           </div>
-          <div class="flex items-end justify-between border-t border-slate-100 pt-2.5 text-xs">
+
+          ${ledgerBadges ? `<div class="flex flex-wrap gap-1 text-[10px] font-semibold tabular-nums">${ledgerBadges}</div>` : `<div class="text-[10px] text-slate-400">पहिलाको बाँकी / मर्मत बाँकी: रु. 0.00</div>`}
+
+          <div class="flex items-end justify-between border-t border-slate-100 pt-2.5 text-xs gap-2">
             <div class="tabular-nums text-slate-600">
               साविक: <strong class="text-slate-900">${prev}</strong>
               ${curr !== null ? ` → हाल: <strong class="text-teal-800">${curr}</strong> (${units} यु.)` : ""}
-              ${bill !== null ? `<div class="font-bold text-slate-900 mt-0.5">बिल: ${fmtMoney(bill)}</div>` : ""}
+              ${totals ? `
+                <div class="mt-0.5 text-[11px] text-slate-700">हालको बिल: <strong>${fmtMoney(totals.currentTotal)}</strong>${totals.advanceUsed > 0 ? ` · <span class="text-emerald-700">अग्रिम (-): ${fmtMoney(totals.advanceUsed)}</span>` : ""}</div>
+                <div class="font-bold mt-0.5 ${totals.netPayable > 0 ? 'text-rose-700' : 'text-emerald-700'}">
+                  ${totals.netPayable > 0 ? `कुल तिर्नुपर्ने: ${fmtMoney(totals.netPayable)}` : (totals.remainingAdvance > 0 ? `चुक्ता (बाँकी अग्रिम: ${fmtMoney(totals.remainingAdvance)})` : `चुक्ता (रु. 0.00)`)}
+                </div>
+              ` : ""}
             </div>
-            <button type="button" onclick="window.openOfflineReadingPrompt('${c.id}')"
-              class="px-3.5 py-2 rounded-xl bg-teal-700 hover:bg-teal-800 text-white font-semibold text-xs cursor-pointer shrink-0">
-              ${curr !== null ? "सच्याउनुहोस्" : "अङ्क राख्नुहोस्"}
-            </button>
+            <div class="flex flex-col gap-1.5 shrink-0">
+              <button type="button" onclick="window.openOfflineReadingPrompt('${c.id}')"
+                class="px-3 py-2 rounded-xl bg-teal-700 hover:bg-teal-800 text-white font-semibold text-xs cursor-pointer">
+                ${curr !== null ? "सच्याउनुहोस्" : "अङ्क राख्नुहोस्"}
+              </button>
+              ${curr !== null ? `
+                <button type="button" onclick="window.openOfflineBillPdf('${c.id}')"
+                  class="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-300 font-semibold text-[11px] cursor-pointer">
+                  बिल / PDF
+                </button>
+              ` : ""}
+            </div>
           </div>
         </div>
       `;
@@ -10509,6 +10640,11 @@ updateConnectivityBanner();
               <span class="px-3 py-1.5 rounded-xl text-xs font-semibold ${onlineNow ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' : 'bg-amber-50 text-amber-800 border border-amber-200'}">
                 ${onlineNow ? 'अनलाइन — सिङ्क गर्न तयार' : 'अफलाइन — डाटा फोनमा सुरक्षित छ'}
               </span>
+              <button type="button" onclick="window.openAllOfflineBillsPdf()" ${doneCount === 0 ? 'disabled' : ''}
+                class="bg-slate-900 hover:bg-slate-800 disabled:bg-slate-200 disabled:text-slate-500 text-white text-xs font-bold px-3.5 py-2.5 rounded-xl shadow-sm transition cursor-pointer flex items-center gap-1.5">
+                <i data-lucide="file-text" class="w-4 h-4"></i>
+                <span>बिल PDF / प्रिन्ट (${doneCount})</span>
+              </button>
               <button type="button" onclick="window.syncOfflineOutboxToCloud()" ${(!onlineNow || outbox.length === 0) ? 'disabled' : ''}
                 class="bg-teal-700 hover:bg-teal-800 disabled:bg-slate-200 disabled:text-slate-500 text-white text-xs font-bold px-4 py-2.5 rounded-xl shadow-sm transition cursor-pointer flex items-center gap-2">
                 <i data-lucide="cloud-upload" class="w-4 h-4"></i>
@@ -10602,6 +10738,7 @@ updateConnectivityBanner();
                   </div>
                   <div class="flex items-center gap-2">
                     <span class="font-bold text-teal-800 tabular-nums">${fmtMoney(item.billAmount)}</span>
+                    <button type="button" onclick="window.openOfflineBillPdf('${item.customerId}')" class="px-2.5 py-1 rounded-lg bg-slate-100 text-slate-800 border border-slate-300 font-semibold cursor-pointer">बिल / PDF</button>
                     <button type="button" onclick="window.removeOfflineOutboxItem('${item.key}')" class="px-2.5 py-1 rounded-lg bg-rose-50 text-rose-700 border border-rose-200 font-semibold cursor-pointer">हटाउनुहोस्</button>
                   </div>
                 </div>
@@ -10648,10 +10785,12 @@ updateConnectivityBanner();
     const st = window.ERP_STATE;
     const c = st.customers.find(x => x.id === custId);
     if (!c) return;
+    const dt = offlineEntryDate || st.activeBSDate || getAutoTodayBS();
+    const fin = getOfflineCustomerFinancials(custId, offlineMonth, dt);
     const key = custId + "::" + offlineMonth;
     const outbox = getOutbox();
     const pItem = outbox.find(x => x.key === key);
-    const eItem = (st.readings || []).find(r => r.customerId === custId && r.month === offlineMonth);
+    const eItem = fin.existing;
     const prev = pItem ? pItem.prevReading : (eItem ? Number(eItem.prevReading ?? c.lastReading ?? 0) : Number(c.lastReading ?? 0));
     const currVal = pItem ? pItem.currReading : (eItem ? eItem.currReading : "");
     const maintVal = pItem ? (pItem.maintenanceAmount || 0) : (eItem ? (eItem.maintenanceAmount || 0) : 0);
@@ -10665,24 +10804,45 @@ updateConnectivityBanner();
     }
     modal.innerHTML = `
       <div class="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
-        <div class="bg-white w-full sm:max-w-md rounded-t-3xl sm:rounded-2xl shadow-2xl border border-slate-200 overflow-hidden">
-          <div class="bg-teal-700 text-white px-5 py-3.5 flex items-center justify-between">
+        <div class="bg-white w-full sm:max-w-lg rounded-t-3xl sm:rounded-2xl shadow-2xl border border-slate-200 overflow-hidden max-h-[94vh] flex flex-col">
+          <div class="bg-teal-700 text-white px-5 py-3.5 flex items-center justify-between shrink-0">
             <div>
               <div class="font-bold text-sm">${escapeHtmlSafe(c.name)} (${escapeHtmlSafe(c.id)})</div>
               <div class="text-[11px] text-teal-100">${escapeHtmlSafe(offlineMonth)} · साविक अङ्क: ${prev}</div>
             </div>
             <button type="button" onclick="document.getElementById('offline-reading-modal-wrap').innerHTML=''" class="text-teal-100 hover:text-white font-bold px-2 cursor-pointer">✕</button>
           </div>
-          <form onsubmit="window.saveOfflineReadingEntry(event, '${c.id}', ${prev})" class="p-5 space-y-3.5 text-xs">
+
+          <form onsubmit="window.saveOfflineReadingEntry(event, '${c.id}', ${prev}, false)" class="p-5 space-y-3.5 text-xs overflow-y-auto">
+            <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-[11px] tabular-nums">
+              <div>
+                <div class="text-slate-500">पहिलाको बाँकी (+)</div>
+                <div class="font-bold ${fin.prevWaterAndOpening > 0 ? 'text-rose-700' : 'text-slate-700'}">${fmtMoney(fin.prevWaterAndOpening)}</div>
+              </div>
+              <div>
+                <div class="text-slate-500">मर्मत बाँकी (+)</div>
+                <div class="font-bold ${fin.prevMaintDue > 0 ? 'text-amber-800' : 'text-slate-700'}">${fmtMoney(fin.prevMaintDue)}</div>
+              </div>
+              <div>
+                <div class="text-slate-500">जरिवाना (+)</div>
+                <div class="font-bold ${fin.totalPenaltyDue > 0 ? 'text-red-700' : 'text-slate-700'}">${fmtMoney(fin.totalPenaltyDue)}</div>
+              </div>
+              <div>
+                <div class="text-slate-500">अग्रिम भुक्तानी (−)</div>
+                <div class="font-bold text-emerald-700">${fmtMoney(fin.advanceAvailable)}</div>
+              </div>
+            </div>
+
             <div>
               <label class="block font-semibold text-slate-700 mb-1">हालको मिटर अङ्क (Current Reading) *</label>
-              <input type="number" id="off-rd-curr" inputmode="numeric" min="${prev}" value="${currVal}" required oninput="window.previewOfflineEntryBill(${prev})"
+              <input type="number" id="off-rd-curr" inputmode="numeric" min="${prev}" value="${currVal}" required oninput="window.previewOfflineEntryBill('${c.id}', ${prev})"
                 class="w-full text-xl font-mono font-bold text-right border-2 border-teal-600 rounded-xl px-3.5 py-2.5 focus:ring-2 focus:ring-teal-500 outline-none">
             </div>
+
             <div class="grid grid-cols-2 gap-3">
               <div>
-                <label class="block font-semibold text-slate-700 mb-1">मर्मत खर्च (रू.)</label>
-                <input type="number" id="off-rd-maint" inputmode="decimal" min="0" value="${maintVal}" oninput="window.previewOfflineEntryBill(${prev})"
+                <label class="block font-semibold text-slate-700 mb-1">हालको मर्मत खर्च (रू.)</label>
+                <input type="number" id="off-rd-maint" inputmode="decimal" min="0" value="${maintVal}" oninput="window.previewOfflineEntryBill('${c.id}', ${prev})"
                   class="w-full font-mono font-bold text-right border border-slate-300 rounded-xl px-3 py-2">
               </div>
               <div>
@@ -10691,54 +10851,84 @@ updateConnectivityBanner();
                   class="w-full border border-slate-300 rounded-xl px-3 py-2">
               </div>
             </div>
-            <div id="off-rd-preview" class="bg-slate-50 border border-slate-200 rounded-xl p-3 text-slate-700"></div>
-            <button type="submit" class="w-full bg-teal-700 hover:bg-teal-800 text-white font-bold py-3 rounded-xl shadow-sm cursor-pointer">
-              अफलाइनमा सुरक्षित गर्नुहोस् (Save Offline)
-            </button>
+
+            <div id="off-rd-preview" class="bg-slate-50 border border-slate-200 rounded-xl p-3 text-slate-700 space-y-1"></div>
+
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
+              <button type="submit" class="w-full bg-teal-700 hover:bg-teal-800 text-white font-bold py-3 rounded-xl shadow-sm cursor-pointer">
+                अफलाइनमा सुरक्षित गर्नुहोस्
+              </button>
+              <button type="button" onclick="window.saveOfflineReadingEntry(event, '${c.id}', ${prev}, true)" class="w-full bg-slate-900 hover:bg-slate-800 text-white font-bold py-3 rounded-xl shadow-sm cursor-pointer">
+                सेभ गरी बिल / PDF हेर्नुहोस्
+              </button>
+            </div>
           </form>
         </div>
       </div>
     `;
-    window.previewOfflineEntryBill(prev);
+    window.previewOfflineEntryBill(c.id, prev);
     setTimeout(() => {
       const el = document.getElementById("off-rd-curr");
       if (el) { el.focus(); el.select?.(); }
     }, 40);
   };
 
-  window.previewOfflineEntryBill = function(prev) {
+  window.previewOfflineEntryBill = function(custId, prev) {
     const currEl = document.getElementById("off-rd-curr");
     const maintEl = document.getElementById("off-rd-maint");
     const prevBox = document.getElementById("off-rd-preview");
     if (!currEl || !prevBox) return;
-    if (currEl.value === "") { prevBox.innerHTML = "हालको अङ्क राख्नुहोस्।"; return; }
+
+    const dt = offlineEntryDate || window.ERP_STATE.activeBSDate || getAutoTodayBS();
+    const fin = getOfflineCustomerFinancials(custId, offlineMonth, dt);
+
+    if (currEl.value === "") {
+      prevBox.innerHTML = `<div class="text-slate-500">हालको अङ्क राखेपछि पहिलाको बाँकी, मर्मत बाँकी जोड्ने र अग्रिम घटाउने पूर्ण हिसाब यहाँ देखिन्छ।</div>`;
+      return;
+    }
     const curr = Number(currEl.value);
     const maint = Math.max(0, Number(maintEl?.value || 0));
     if (curr < prev) {
-      prevBox.innerHTML = "<span class='text-rose-700 font-bold'>हालको अङ्क साविक (" + prev + ") भन्दा कम हुन सक्दैन!</span>";
+      prevBox.innerHTML = `<span class="text-rose-700 font-bold">हालको अङ्क साविक (${prev}) भन्दा कम हुन सक्दैन!</span>`;
       return;
     }
+
     const units = curr - prev;
-    const calc = calculateWaterBill(units, offlineEntryDate || window.ERP_STATE.activeBSDate);
-    const total = Math.round((calc.totalBill + maint) * 100) / 100;
-    prevBox.innerHTML = "खपत: <strong>" + units + " युनिट</strong> · पानी बिल: <strong>" + fmtMoney(calc.totalBill) + "</strong> · जम्मा: <strong class='text-teal-800'>" + fmtMoney(total) + "</strong>";
+    const calc = calculateWaterBill(units, dt);
+    const totals = computeOfflineBillTotals(fin, calc.totalBill, maint);
+
+    prevBox.innerHTML = `
+      <div class="flex justify-between"><span>खपत युनिट:</span><strong class="tabular-nums">${units} युनिट</strong></div>
+      <div class="flex justify-between"><span>(+) हालको पानी महसुल:</span><strong class="tabular-nums">${fmtMoney(totals.currWaterBill)}</strong></div>
+      ${totals.currMaint > 0 ? `<div class="flex justify-between text-amber-800"><span>(+) हालको मर्मत शुल्क:</span><strong class="tabular-nums">${fmtMoney(totals.currMaint)}</strong></div>` : ""}
+      ${fin.prevWaterAndOpening > 0 ? `<div class="flex justify-between text-rose-700"><span>(+) पहिलाको पानी / ओपनिङ बाँकी:</span><strong class="tabular-nums">${fmtMoney(fin.prevWaterAndOpening)}</strong></div>` : ""}
+      ${fin.prevMaintDue > 0 ? `<div class="flex justify-between text-amber-800"><span>(+) पहिलाको मर्मत बाँकी:</span><strong class="tabular-nums">${fmtMoney(fin.prevMaintDue)}</strong></div>` : ""}
+      ${fin.totalPenaltyDue > 0 ? `<div class="flex justify-between text-red-700"><span>(+) जरिवाना:</span><strong class="tabular-nums">${fmtMoney(fin.totalPenaltyDue)}</strong></div>` : ""}
+      ${fin.existingPaid > 0 ? `<div class="flex justify-between text-slate-600"><span>(−) यस महिनामा भुक्तानी भइसकेको:</span><strong class="tabular-nums">-${fmtMoney(fin.existingPaid)}</strong></div>` : ""}
+      ${totals.advanceUsed > 0 ? `<div class="flex justify-between text-emerald-700"><span>(−) अग्रिम भुक्तानी मिलान:</span><strong class="tabular-nums">-${fmtMoney(totals.advanceUsed)}</strong></div>` : ""}
+      <div class="flex justify-between border-t border-slate-300 pt-1.5 mt-1 text-sm font-bold ${totals.netPayable > 0 ? 'text-rose-700' : 'text-emerald-700'}">
+        <span>${totals.netPayable > 0 ? '= कुल तिर्नुपर्ने जम्मा:' : '= हिसाब अवस्था:'}</span>
+        <span class="tabular-nums">${totals.netPayable > 0 ? fmtMoney(totals.netPayable) : (totals.remainingAdvance > 0 ? `चुक्ता (बाँकी अग्रिम ${fmtMoney(totals.remainingAdvance)})` : 'चुक्ता (रु. 0.00)')}</span>
+      </div>
+    `;
   };
 
-  window.saveOfflineReadingEntry = function(e, custId, prev) {
-    e.preventDefault();
+  window.saveOfflineReadingEntry = function(e, custId, prev, openBillAfter = false) {
+    if (e && typeof e.preventDefault === "function") e.preventDefault();
     const st = window.ERP_STATE;
     const c = st.customers.find(x => x.id === custId);
     if (!c) return;
-    const curr = Number(document.getElementById("off-rd-curr").value);
+    const currEl = document.getElementById("off-rd-curr");
+    const curr = Number(currEl.value);
     const maint = Math.max(0, Number(document.getElementById("off-rd-maint").value || 0));
     const remark = document.getElementById("off-rd-remark").value.trim();
-    if (!Number.isFinite(curr) || curr < prev) {
-      return showToast("हालको अङ्क साविकभन्दा कम हुन सक्दैन।", "error");
+    if (currEl.value === "" || !Number.isFinite(curr) || curr < prev) {
+      return showToast("हालको अङ्क साविकभन्दा कम वा खाली हुन सक्दैन।", "error");
     }
-    const dt = offlineEntryDate || st.activeBSDate;
+    const dt = offlineEntryDate || st.activeBSDate || getAutoTodayBS();
     const units = curr - prev;
     const calc = calculateWaterBill(units, dt);
-    const total = Math.round((calc.totalBill + maint) * 100) / 100;
+    const total = round2(calc.totalBill + maint);
     const key = custId + "::" + offlineMonth;
 
     const outbox = getOutbox();
@@ -10751,6 +10941,7 @@ updateConnectivityBanner();
       prevReading: prev,
       currReading: curr,
       units,
+      waterBillOnly: round2(calc.totalBill),
       maintenanceAmount: maint,
       billAmount: total,
       remark,
@@ -10764,6 +10955,167 @@ updateConnectivityBanner();
     document.getElementById("offline-reading-modal-wrap").innerHTML = "";
     renderCurrentModule();
     showToast(c.name + " (" + units + " युनिट) अफलाइनमा सुरक्षित भयो!", "success");
+    if (openBillAfter) {
+      window.openOfflineBillPdf(custId);
+    }
+  };
+
+  function buildSingleOfflineBillCardHtml(c, pItem, eItem) {
+    const st = window.ERP_STATE;
+    const s = st.settings || {};
+    const dt = (pItem && pItem.entryDate) || (eItem && eItem.entryDate) || offlineEntryDate || st.activeBSDate || getAutoTodayBS();
+    const yr = parseBS(dt).y;
+    const fin = getOfflineCustomerFinancials(c.id, offlineMonth, dt);
+
+    const prev = pItem ? pItem.prevReading : (eItem ? Number(eItem.prevReading ?? c.lastReading ?? 0) : Number(c.lastReading ?? 0));
+    const curr = pItem ? pItem.currReading : (eItem ? eItem.currReading : 0);
+    const units = pItem ? pItem.units : (eItem ? eItem.units : 0);
+    const currMaint = pItem ? Number(pItem.maintenanceAmount || 0) : (eItem ? Number(eItem.maintenanceAmount || 0) : 0);
+    const currWater = pItem
+      ? (pItem.waterBillOnly !== undefined ? Number(pItem.waterBillOnly) : Math.max(0, round2(Number(pItem.billAmount || 0) - currMaint)))
+      : (eItem ? Math.max(0, round2(Number(eItem.billAmount || 0) - currMaint)) : 0);
+    const totals = computeOfflineBillTotals(fin, currWater, currMaint);
+    const remark = (pItem && pItem.remark) || (eItem && eItem.remark) || "";
+
+    return `
+      <div class="border-2 border-slate-800 rounded-xl p-4 bg-white text-xs text-slate-900 space-y-2.5" style="break-inside: avoid;">
+        <div class="text-center border-b-2 border-slate-800 pb-2">
+          <div class="text-sm font-bold">${escapeHtmlSafe(s.committeeName || "प्रगति जल उपभोक्ता समिति")}</div>
+          <div class="text-[10px] text-slate-600">${escapeHtmlSafe(s.address || "")} ${s.phone ? " | फोन: " + escapeHtmlSafe(s.phone) : ""}</div>
+          <div class="mt-1 inline-block px-2.5 py-0.5 bg-slate-900 text-white text-[10px] font-bold rounded">खानेपानी मिटर रिडिङ तथा महसुल बिल (${escapeHtmlSafe(offlineMonth)} ${yr})</div>
+        </div>
+
+        <div class="grid grid-cols-2 gap-x-3 gap-y-1 text-[11px] bg-slate-50 border border-slate-300 rounded p-2">
+          <div><strong>ग्राहक नं.:</strong> ${escapeHtmlSafe(c.id)}</div>
+          <div><strong>मिति (BS):</strong> ${escapeHtmlSafe(dt)}</div>
+          <div class="col-span-2"><strong>नाम:</strong> ${escapeHtmlSafe(c.name)}</div>
+          <div class="truncate"><strong>ठेगाना:</strong> ${escapeHtmlSafe(c.address || "-")}</div>
+          <div><strong>मिटर नं.:</strong> ${escapeHtmlSafe(c.meterNo || "-")}</div>
+        </div>
+
+        <div class="grid grid-cols-3 gap-2 text-center border border-slate-400 rounded p-2 bg-white tabular-nums">
+          <div>
+            <div class="text-[10px] text-slate-500">साविक अङ्क</div>
+            <div class="font-mono font-bold text-sm">${prev}</div>
+          </div>
+          <div class="border-x border-slate-300">
+            <div class="text-[10px] text-slate-500">हालको अङ्क</div>
+            <div class="font-mono font-bold text-sm text-teal-800">${curr}</div>
+          </div>
+          <div>
+            <div class="text-[10px] text-slate-500">खपत युनिट</div>
+            <div class="font-mono font-bold text-sm">${units} यु.</div>
+          </div>
+        </div>
+
+        <table class="w-full text-[11px] border-collapse border border-slate-400 tabular-nums">
+          <tbody>
+            <tr>
+              <td class="border border-slate-300 px-2 py-1">(+) हालको पानी महसुल</td>
+              <td class="border border-slate-300 px-2 py-1 text-right font-semibold">${fmtMoney(totals.currWaterBill)}</td>
+            </tr>
+            <tr>
+              <td class="border border-slate-300 px-2 py-1">(+) हालको मर्मत शुल्क</td>
+              <td class="border border-slate-300 px-2 py-1 text-right font-semibold">${fmtMoney(totals.currMaint)}</td>
+            </tr>
+            <tr>
+              <td class="border border-slate-300 px-2 py-1">(+) पहिलाको बाँकी (पानी/ओपनिङ)</td>
+              <td class="border border-slate-300 px-2 py-1 text-right font-semibold ${fin.prevWaterAndOpening > 0 ? 'text-rose-700' : ''}">${fmtMoney(fin.prevWaterAndOpening)}</td>
+            </tr>
+            <tr>
+              <td class="border border-slate-300 px-2 py-1">(+) पहिलाको मर्मत बाँकी</td>
+              <td class="border border-slate-300 px-2 py-1 text-right font-semibold ${fin.prevMaintDue > 0 ? 'text-amber-800' : ''}">${fmtMoney(fin.prevMaintDue)}</td>
+            </tr>
+            ${fin.totalPenaltyDue > 0 ? `
+              <tr>
+                <td class="border border-slate-300 px-2 py-1">(+) जरिवाना</td>
+                <td class="border border-slate-300 px-2 py-1 text-right font-semibold text-red-700">${fmtMoney(fin.totalPenaltyDue)}</td>
+              </tr>
+            ` : ""}
+            <tr class="bg-slate-50 font-bold">
+              <td class="border border-slate-300 px-2 py-1">कुल जम्मा रकम</td>
+              <td class="border border-slate-300 px-2 py-1 text-right">${fmtMoney(totals.grossPayable)}</td>
+            </tr>
+            ${fin.existingPaid > 0 ? `
+              <tr>
+                <td class="border border-slate-300 px-2 py-1 text-slate-700">(−) भुक्तानी भइसकेको</td>
+                <td class="border border-slate-300 px-2 py-1 text-right font-semibold">-${fmtMoney(fin.existingPaid)}</td>
+              </tr>
+            ` : ""}
+            ${totals.advanceUsed > 0 ? `
+              <tr>
+                <td class="border border-slate-300 px-2 py-1 text-emerald-700">(−) अग्रिम भुक्तानी मिलान</td>
+                <td class="border border-slate-300 px-2 py-1 text-right font-semibold text-emerald-700">-${fmtMoney(totals.advanceUsed)}</td>
+              </tr>
+            ` : ""}
+            <tr class="bg-slate-100 font-bold text-xs">
+              <td class="border border-slate-400 px-2 py-1.5">${totals.netPayable > 0 ? 'खुद तिर्नुपर्ने जम्मा' : 'अन्तिम हिसाब'}</td>
+              <td class="border border-slate-400 px-2 py-1.5 text-right ${totals.netPayable > 0 ? 'text-rose-700' : 'text-emerald-700'}">
+                ${totals.netPayable > 0 ? fmtMoney(totals.netPayable) : (totals.remainingAdvance > 0 ? `बाँकी अग्रिम ${fmtMoney(totals.remainingAdvance)}` : 'चुक्ता (रु. 0.00)')}
+              </td>
+            </tr>
+          </tbody>
+        </table>
+
+        ${remark ? `<div class="text-[10px] text-slate-600"><strong>कैफियत:</strong> ${escapeHtmlSafe(remark)}</div>` : ""}
+
+        <div class="flex justify-between items-end pt-2 text-[10px] text-slate-600">
+          <span>अवस्था: ${pItem ? 'अफलाइन रिडिङ' : 'सफ्टवेयर बिल'}</span>
+          <span>मिटर रिडर सही: ______________</span>
+        </div>
+      </div>
+    `;
+  }
+
+  window.openOfflineBillPdf = function(custId) {
+    const st = window.ERP_STATE;
+    const c = st.customers.find(x => x.id === custId);
+    if (!c) return;
+    const pItem = getOutbox().find(x => x.customerId === custId && x.month === offlineMonth) || null;
+    const eItem = (st.readings || []).find(r => r.customerId === custId && r.month === offlineMonth) || null;
+    if (!pItem && !eItem) {
+      return showToast("पहिले यस महिनाको मिटर अङ्क राख्नुहोस्।", "warning");
+    }
+    const html = `
+      <div class="no-print mb-3 bg-teal-50 border border-teal-200 rounded-xl p-3 flex flex-wrap items-center justify-between gap-2 text-xs text-teal-900">
+        <span>PDF बनाउन माथि दायाँ रहेको <strong>प्रिन्ट / Save as PDF</strong> बटन थिचेर Destination मा <strong>Save as PDF</strong> छान्नुहोस्।</span>
+        <button type="button" onclick="window.print()" class="bg-teal-700 hover:bg-teal-800 text-white font-bold px-3 py-1.5 rounded-lg cursor-pointer">Save as PDF / Print</button>
+      </div>
+      <div class="max-w-md mx-auto">
+        ${buildSingleOfflineBillCardHtml(c, pItem, eItem)}
+      </div>
+    `;
+    openPrintModal(`खानेपानी बिल (PDF) - ${c.name} (${offlineMonth})`, html);
+  };
+
+  window.openAllOfflineBillsPdf = function() {
+    const st = window.ERP_STATE;
+    const outbox = getOutbox();
+    const pendingMap = new Map(outbox.filter(x => x.month === offlineMonth).map(x => [x.customerId, x]));
+    const erpMap = new Map((st.readings || []).filter(r => r.month === offlineMonth).map(r => [r.customerId, r]));
+
+    const cards = [];
+    st.customers.forEach(c => {
+      const pItem = pendingMap.get(c.id) || null;
+      const eItem = erpMap.get(c.id) || null;
+      if (!pItem && !eItem) return;
+      cards.push(buildSingleOfflineBillCardHtml(c, pItem, eItem));
+    });
+
+    if (!cards.length) {
+      return showToast(`${offlineMonth} महिनाको कुनै बिल तयार छैन।`, "warning");
+    }
+
+    const html = `
+      <div class="no-print mb-3 bg-teal-50 border border-teal-200 rounded-xl p-3 flex flex-wrap items-center justify-between gap-2 text-xs text-teal-900">
+        <span>कुल ${cards.length} वटा बिल तयार छन्। PDF डाउनलोड गर्न <strong>Save as PDF / Print</strong> थिच्नुहोस्।</span>
+        <button type="button" onclick="window.print()" class="bg-teal-700 hover:bg-teal-800 text-white font-bold px-3 py-1.5 rounded-lg cursor-pointer">Save as PDF / Print</button>
+      </div>
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        ${cards.join("")}
+      </div>
+    `;
+    openPrintModal(`सबै ग्राहक मिटर बिल (PDF) - ${offlineMonth}`, html);
   };
 
   window.syncOfflineOutboxToCloud = async function() {
