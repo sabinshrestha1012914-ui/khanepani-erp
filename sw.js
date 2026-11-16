@@ -1,5 +1,5 @@
-// Service Worker for Pragati Jal ERP (Mobile + PC Desktop PWA with Auto-Update)
-const CACHE_NAME = "pragati-jal-erp-v6";
+// Service Worker for Pragati Jal ERP (Mobile + PC Desktop PWA with Auto-Update & Offline Meter Reading)
+const CACHE_NAME = "pragati-jal-erp-v7";
 const APP_SHELL = [
   "./",
   "./index.html",
@@ -39,17 +39,18 @@ self.addEventListener("fetch", (event) => {
 
   const url = new URL(req.url);
 
-  // Never intercept Firebase / Firestore / Google Auth live API calls
+  // Never intercept live Firebase Firestore / Auth API calls
   if (
     url.hostname.includes("firestore.googleapis.com") ||
     url.hostname.includes("identitytoolkit.googleapis.com") ||
     url.hostname.includes("securetoken.googleapis.com") ||
-    url.hostname.includes("firebase")
+    url.hostname.includes("firebaseio.com")
   ) {
     return;
   }
 
-  // Network-First for HTML & root navigation so updates on GitHub Pages apply immediately!
+  // Network-First for HTML & root navigation so updates on GitHub Pages apply immediately,
+  // with full offline fallback to cached index.html
   const isNavigation = req.mode === "navigate" || (req.headers.get("accept") || "").includes("text/html");
   if (isNavigation && url.origin === self.location.origin) {
     event.respondWith(
@@ -85,12 +86,13 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // External CDN assets (Tailwind, Lucide, Google Fonts): Cache-First with network fallback
+  // External CDN & Firebase SDK scripts: Cache-First so offline startup works cleanly
   if (
     url.hostname.includes("cdn.tailwindcss.com") ||
     url.hostname.includes("unpkg.com") ||
     url.hostname.includes("fonts.googleapis.com") ||
-    url.hostname.includes("fonts.gstatic.com")
+    url.hostname.includes("fonts.gstatic.com") ||
+    url.hostname.includes("www.gstatic.com")
   ) {
     event.respondWith(
       caches.match(req).then((cached) => {
@@ -101,7 +103,7 @@ self.addEventListener("fetch", (event) => {
             caches.open(CACHE_NAME).then((cache) => cache.put(req, copy));
           }
           return res;
-        });
+        }).catch(() => cached);
       })
     );
   }
