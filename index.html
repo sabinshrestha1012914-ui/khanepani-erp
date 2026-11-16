@@ -299,18 +299,30 @@
 
 <!-- ==================== ANTI-BLOCK BULK WHATSAPP MODAL ==================== -->
 <div id="whatsapp-modal" class="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm hidden items-center justify-center p-4">
-  <div class="bg-white rounded-2xl max-w-2xl w-full shadow-2xl border border-slate-200 overflow-hidden">
-    <div class="bg-emerald-700 text-white px-5 py-4 flex items-center justify-between">
+  <div class="bg-white rounded-2xl max-w-3xl w-full max-h-[92vh] flex flex-col shadow-2xl border border-slate-200 overflow-hidden">
+    <div class="bg-emerald-700 text-white px-5 py-4 flex items-center justify-between shrink-0">
       <div class="flex items-center gap-2">
         <i data-lucide="message-circle" class="w-5 h-5"></i>
         <div>
           <h3 class="font-bold text-sm sm:text-base">Anti-Block Bulk WhatsApp र बिल PDF पठाउने प्रणाली</h3>
-          <p class="text-[11px] text-emerald-100">फोन नं. भएका ग्राहकलाई मात्र ६–१० सेकेन्डको अन्तरालमा बिल मेसेज र PDF/इमेज सहित पठाइनेछ</p>
+          <p class="text-[11px] text-emerald-100">तपाईंकै ब्राउजरको WhatsApp Web / WhatsApp App मार्फत फोन नं. भएका ग्राहकलाई बिल पठाउने प्रणाली</p>
         </div>
       </div>
       <button onclick="closeWhatsappModal()" class="p-1 hover:bg-emerald-800 rounded-lg cursor-pointer"><i data-lucide="x" class="w-5 h-5"></i></button>
     </div>
-    <div class="p-5 space-y-3.5">
+    <div class="p-5 space-y-3 overflow-y-auto">
+      <div class="bg-sky-50 border border-sky-200 rounded-xl px-3.5 py-2.5 text-[11px] text-sky-950 space-y-1">
+        <div class="font-bold flex items-center gap-1.5 text-sky-900">
+          <i data-lucide="info" class="w-3.5 h-3.5 shrink-0"></i>
+          मेसेज कहाँबाट र कसरी जान्छ? (महत्त्वपूर्ण जानकारी)
+        </div>
+        <p>यो मेसेज सफ्टवेयरको सर्भरबाट स्वतः जाँदैन — यसले तपाईंकै डिभाइसमा खुलेको <strong>WhatsApp Web / WhatsApp App</strong> खोलेर बिल मेसेज भरिदिन्छ। हरेक च्याट खुलेपछि WhatsApp भित्र हरियो <strong>Send (➤)</strong> थिच्नुहोला। यदि ब्राउजर (Brave/Chrome) ले स्वचालित Pop-up रोक्यो भने तलको सूचीबाट प्रत्येक ग्राहकको <strong>WhatsApp खोल्नुहोस्</strong> बटनमा सिधै क्लिक गर्नुहोस् (यो ब्राउजरले रोक्दैन)।</p>
+      </div>
+
+      <div id="wa-popup-blocked-alert" class="hidden bg-rose-50 border border-rose-300 rounded-xl px-3.5 py-2.5 text-xs text-rose-900">
+        <strong>⚠️ ब्राउजरले स्वचालित Pop-up रोक्यो!</strong> त्यसैले WhatsApp ट्याब खुलेन। समाधान: (१) ब्राउजरको माथि Address Bar मा Pop-up <strong>Allow</strong> गर्नुहोस्, वा (२) तलको सूचीबाट प्रत्येक ग्राहकको हरियो <strong>WhatsApp खोल्नुहोस्</strong> बटनमा सिधै क्लिक गर्नुहोस्।
+      </div>
+
       <div id="wa-phone-stats" class="flex flex-wrap items-center justify-between gap-2 bg-teal-50/80 border border-teal-200 rounded-xl px-3.5 py-2.5 text-xs">
         <div class="flex flex-wrap items-center gap-2">
           <span class="px-2 py-0.5 rounded-lg bg-emerald-100 text-emerald-900 font-bold">फोन नं. भएका: <span id="wa-valid-count">0</span> जना</span>
@@ -321,29 +333,41 @@
         </button>
       </div>
       <div id="wa-skipped-names" class="hidden text-[11px] text-amber-900 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2"></div>
+
       <div class="flex items-center justify-between bg-slate-50 p-3 rounded-xl border border-slate-200 text-xs">
-        <div><span class="text-slate-500">प्रगति (Progress):</span><strong id="wa-progress-text" class="text-slate-900 ml-1">0 / 0</strong></div>
+        <div><span class="text-slate-500">खोलिएको / प्रगति (Opened):</span><strong id="wa-progress-text" class="text-slate-900 ml-1">0 / 0</strong></div>
         <div><span class="text-slate-500">अर्को मेसेज टाइमर:</span><strong id="wa-timer-text" class="text-emerald-700 ml-1 tabular-nums">तयार</strong></div>
       </div>
       <div class="w-full bg-slate-200 rounded-full h-2.5 overflow-hidden">
         <div id="wa-progress-bar" class="bg-emerald-600 h-2.5 transition-all duration-300" style="width: 0%"></div>
       </div>
-      <div id="wa-current-preview" class="bg-emerald-50/70 border border-emerald-200 rounded-xl p-3 text-xs font-mono whitespace-pre-wrap text-slate-800 max-h-44 overflow-y-auto"></div>
+
+      <div id="wa-current-preview" class="bg-emerald-50/70 border border-emerald-200 rounded-xl p-3 text-xs font-mono whitespace-pre-wrap text-slate-800 max-h-36 overflow-y-auto"></div>
+
       <div class="flex flex-wrap items-center justify-between gap-2 pt-1">
         <div class="flex flex-wrap gap-2">
           <button id="wa-start-btn" onclick="startBulkWhatsappQueue()" class="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold px-4 py-2 rounded-xl flex items-center gap-1.5 cursor-pointer">
-            <i data-lucide="play" class="w-4 h-4"></i> सुरु गर्नुहोस् (Start Safe Queue)
+            <i data-lucide="play" class="w-4 h-4"></i> स्वचालित सुरु (Start Auto Queue)
           </button>
           <button id="wa-pause-btn" onclick="pauseBulkWhatsappQueue()" class="hidden bg-amber-500 hover:bg-amber-600 text-white text-xs font-semibold px-4 py-2 rounded-xl cursor-pointer">रोक्नुहोस् (Pause)</button>
-          <button onclick="sendNextWhatsappNow()" class="bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold px-3 py-2 rounded-xl cursor-pointer">अहिले पठाउनुहोस् (Send Next)</button>
+          <button onclick="sendNextWhatsappNow(false)" class="bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold px-3 py-2 rounded-xl cursor-pointer">अर्को खोल्नुहोस् (Open Next)</button>
           <button type="button" onclick="openCurrentWaBillPdf()" class="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold px-3 py-2 rounded-xl flex items-center gap-1 cursor-pointer">
             <i data-lucide="file-text" class="w-3.5 h-3.5"></i> बिल PDF
           </button>
           <button type="button" onclick="shareOrCopyCurrentWaBill()" class="bg-teal-700 hover:bg-teal-800 text-white text-xs font-semibold px-3 py-2 rounded-xl flex items-center gap-1 cursor-pointer">
             <i data-lucide="share-2" class="w-3.5 h-3.5"></i> बिल Share / इमेज Copy
           </button>
+          <button type="button" onclick="resetBulkWhatsappQueue()" class="bg-slate-200 hover:bg-slate-300 text-slate-800 text-xs font-semibold px-3 py-2 rounded-xl cursor-pointer">रिसेट</button>
         </div>
         <button onclick="closeWhatsappModal()" class="text-xs text-slate-500 hover:text-slate-800 px-3 py-2 cursor-pointer">बन्द गर्नुहोस्</button>
+      </div>
+
+      <div class="border border-slate-200 rounded-xl overflow-hidden">
+        <div class="bg-slate-100 px-3 py-2 text-[11px] font-bold text-slate-700 flex items-center justify-between">
+          <span>फोन नं. भएका ग्राहक सूची — सिधै क्लिक गरेर पठाउनुहोस् (Pop-up Block हुँदैन)</span>
+          <span id="wa-list-summary" class="text-emerald-800"></span>
+        </div>
+        <div id="wa-queue-list" class="max-h-56 overflow-y-auto divide-y divide-slate-100 bg-white text-xs"></div>
       </div>
     </div>
   </div>
@@ -2819,8 +2843,9 @@ let waSkippedNoPhone = [];
 let waMonth = "";
 
 function updateWhatsappModalUI() {
-  document.getElementById("wa-progress-text").textContent = `${waIndex} / ${waQueue.length}`;
-  const pct = waQueue.length ? Math.round((waIndex / waQueue.length) * 100) : 0;
+  const sentCount = waQueue.filter(x => x.sent).length;
+  document.getElementById("wa-progress-text").textContent = `${sentCount} / ${waQueue.length}`;
+  const pct = waQueue.length ? Math.round((sentCount / waQueue.length) * 100) : 0;
   document.getElementById("wa-progress-bar").style.width = pct + "%";
 
   const validEl = document.getElementById("wa-valid-count");
@@ -2848,15 +2873,95 @@ function updateWhatsappModalUI() {
     pdfAllBtn.innerHTML = `<i data-lucide="file-text" class="w-3.5 h-3.5"></i> फोन नं. भएकाको सबै बिल PDF (${waQueue.length})`;
   }
 
+  const blockedAlert = document.getElementById("wa-popup-blocked-alert");
+  if (blockedAlert) {
+    const anyBlocked = waQueue.some(x => x.blocked);
+    blockedAlert.classList.toggle("hidden", !anyBlocked);
+  }
+
   const current = waQueue[waIndex];
   document.getElementById("wa-current-preview").textContent = current
-    ? `पठाउन लागिएको (${current.customer.name} - ${current.customer.phone}):\n\n${current.msg}`
-    : "✅ फोन नं. भएका सबै ग्राहकहरूलाई सुरक्षित रूपमा व्हाट्सएप मेसेज पठाउने कार्य सम्पन्न भयो!";
+    ? `अबको पालो (${current.customer.name} - ${current.customer.phone}):\n\n${current.msg}`
+    : (sentCount === waQueue.length && waQueue.length > 0
+      ? "✅ फोन नं. भएका सबै ग्राहकको WhatsApp च्याट खोलियो! (यदि कुनै छुट्यो भने तलको सूचीबाट पुनः क्लिक गर्न सक्नुहुन्छ।)"
+      : "तलको सूचीबाट सिधै 'WhatsApp खोल्नुहोस्' थिचेर मेसेज पठाउनुहोस्।");
+
+  const summaryEl = document.getElementById("wa-list-summary");
+  if (summaryEl) {
+    summaryEl.textContent = `खोलिएको: ${sentCount} | बाँकी: ${Math.max(0, waQueue.length - sentCount)}`;
+  }
+
+  const listEl = document.getElementById("wa-queue-list");
+  if (listEl) {
+    listEl.innerHTML = waQueue.map((item, idx) => {
+      const fullPhone = item.phone || getValidWhatsappPhone(item.customer?.phone);
+      const waHref = fullPhone ? `https://wa.me/${fullPhone}?text=${encodeURIComponent(item.msg)}` : "#";
+      const isActive = idx === waIndex;
+      const badge = item.sent
+        ? `<span class="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-bold">खोलियो ✓</span>`
+        : (item.blocked
+          ? `<span class="px-2 py-0.5 rounded-full bg-rose-100 text-rose-800 text-[10px] font-bold">Pop-up रोकियो</span>`
+          : `<span class="px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 text-[10px] font-semibold">बाँकी</span>`);
+      return `
+        <div class="px-3 py-2 flex flex-wrap items-center justify-between gap-2 ${isActive ? 'bg-emerald-50/70' : ''}">
+          <div class="min-w-0 flex-1">
+            <div class="font-bold text-slate-800 truncate">${idx + 1}. ${escapeHtmlSafe(item.customer.id)} - ${escapeHtmlSafe(item.customer.name)}</div>
+            <div class="text-[11px] text-slate-500">${escapeHtmlSafe(item.customer.phone || fullPhone)} · ${badge}</div>
+          </div>
+          <div class="flex items-center gap-1.5 shrink-0">
+            <a href="${waHref}" target="_blank" rel="noopener noreferrer" onclick="markWaItemSent(${idx})"
+              class="px-2.5 py-1.5 rounded-lg ${item.sent ? 'bg-emerald-100 hover:bg-emerald-200 text-emerald-900' : 'bg-emerald-600 hover:bg-emerald-700 text-white'} text-[11px] font-bold inline-flex items-center gap-1">
+              WhatsApp खोल्नुहोस्
+            </a>
+            <button type="button" onclick="copyWaItemMessage(${idx})" class="px-2 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-[11px] font-semibold cursor-pointer">Copy</button>
+            <button type="button" onclick="openUnitCustomerBillPdf('${escapeHtmlSafe(item.customer.id)}','${escapeHtmlSafe(waMonth || item.reading?.month || selectedUnitMonth)}')" class="px-2 py-1.5 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-800 text-[11px] font-semibold cursor-pointer">PDF</button>
+          </div>
+        </div>
+      `;
+    }).join("") || `<div class="p-4 text-center text-slate-400">कुनै ग्राहक भेटिएन।</div>`;
+  }
   safeCreateIcons();
 }
 
+window.markWaItemSent = function(idx) {
+  const item = waQueue[idx];
+  if (!item) return;
+  item.sent = true;
+  item.blocked = false;
+  const nextPending = waQueue.findIndex((x, i) => i > idx && !x.sent);
+  waIndex = nextPending >= 0 ? nextPending : waQueue.findIndex(x => !x.sent);
+  if (waIndex < 0) waIndex = waQueue.length;
+  setTimeout(updateWhatsappModalUI, 150);
+};
+
+window.copyWaItemMessage = async function(idx) {
+  const item = waQueue[idx];
+  if (!item) return;
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(item.msg);
+      showToast(`${item.customer.name} को बिल मेसेज Copy भयो!`);
+    } else {
+      showToast("Copy समर्थन भएन, मेसेज म्यानुअल छान्नुहोस्।", "warning");
+    }
+  } catch (_) {
+    showToast("Copy गर्न सकिएन।", "warning");
+  }
+};
+
+window.resetBulkWhatsappQueue = function() {
+  pauseBulkWhatsappQueue();
+  waQueue.forEach(item => { item.sent = false; item.blocked = false; });
+  waIndex = 0;
+  document.getElementById("wa-timer-text").textContent = "तयार";
+  updateWhatsappModalUI();
+  showToast("WhatsApp सूची रिसेट गरियो।", "info");
+};
+
 function startBulkWhatsappQueue() {
-  if (waIndex >= waQueue.length) return;
+  const firstPending = waQueue.findIndex(x => !x.sent);
+  if (firstPending < 0) return showToast("सबै ग्राहकको सूची खुलिसकेको छ। पुनः पठाउन 'रिसेट' थिच्नुहोस्।", "info");
+  waIndex = firstPending;
   document.getElementById("wa-start-btn").classList.add("hidden");
   document.getElementById("wa-pause-btn").classList.remove("hidden");
 
@@ -2880,9 +2985,14 @@ function pauseBulkWhatsappQueue() {
 
 function sendNextWhatsappNow(continueLoop = false) {
   if (waIndex >= waQueue.length) {
-    pauseBulkWhatsappQueue();
-    document.getElementById("wa-timer-text").textContent = "सम्पन्न (Completed)";
-    return;
+    const nextPending = waQueue.findIndex(x => !x.sent);
+    if (nextPending >= 0) {
+      waIndex = nextPending;
+    } else {
+      pauseBulkWhatsappQueue();
+      document.getElementById("wa-timer-text").textContent = "सम्पन्न (Completed)";
+      return;
+    }
   }
   const item = waQueue[waIndex];
   const fullPhone = item.phone || getValidWhatsappPhone(item.customer?.phone);
@@ -2891,16 +3001,26 @@ function sendNextWhatsappNow(continueLoop = false) {
     updateWhatsappModalUI();
     return;
   }
-  window.open(`https://wa.me/${fullPhone}?text=${encodeURIComponent(item.msg)}`, "_blank");
+  const win = window.open(`https://wa.me/${fullPhone}?text=${encodeURIComponent(item.msg)}`, "_blank");
+  if (!win || win.closed || typeof win.closed === "undefined") {
+    item.blocked = true;
+    pauseBulkWhatsappQueue();
+    document.getElementById("wa-timer-text").textContent = "Pop-up रोकियो";
+    updateWhatsappModalUI();
+    showToast("ब्राउजरले Pop-up रोक्यो! Pop-up Allow गर्नुहोस् वा तलको सूचीबाट 'WhatsApp खोल्नुहोस्' थिच्नुहोस्।", "warning");
+    return;
+  }
 
+  item.blocked = false;
   item.sent = true;
-  waIndex++;
+  const nextPending = waQueue.findIndex((x, i) => i > waIndex && !x.sent);
+  waIndex = nextPending >= 0 ? nextPending : waQueue.length;
   updateWhatsappModalUI();
 
-  if (waIndex >= waQueue.length) {
+  if (waQueue.every(x => x.sent)) {
     pauseBulkWhatsappQueue();
     document.getElementById("wa-timer-text").textContent = "सम्पन्न (Completed)";
-    showToast("फोन नं. भएका सबै ग्राहकको व्हाट्सएप बिल पठाउने कार्य पूरा भयो!");
+    showToast("फोन नं. भएका सबै ग्राहकको WhatsApp च्याट खोलियो! (WhatsApp भित्र Send थिच्न नबिर्सनुहोस्)");
   } else if (continueLoop) {
     waCountdown = Math.floor(Math.random() * 5) + 6;
   }
@@ -9543,7 +9663,7 @@ window.openBulkWhatsappModal = function(month) {
       skippedItems.push({ id: c.id, name: c.name });
       return;
     }
-    validItems.push({ customer: c, reading: r, phone: fullPhone, msg: buildReadingWhatsappMessage(c, r), sent: false });
+    validItems.push({ customer: c, reading: r, phone: fullPhone, msg: buildReadingWhatsappMessage(c, r), sent: false, blocked: false });
   });
 
   if (!validItems.length) {
@@ -9555,6 +9675,7 @@ window.openBulkWhatsappModal = function(month) {
   waSkippedNoPhone = skippedItems;
   waIndex = 0;
   clearInterval(waTimerHandle);
+  document.getElementById("wa-timer-text").textContent = "तयार";
   updateWhatsappModalUI();
   document.getElementById("whatsapp-modal").classList.remove("hidden");
   document.getElementById("whatsapp-modal").classList.add("flex");
