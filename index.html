@@ -304,23 +304,63 @@
       <div class="flex items-center gap-2">
         <i data-lucide="message-circle" class="w-5 h-5"></i>
         <div>
-          <h3 class="font-bold text-sm sm:text-base">Anti-Block Bulk WhatsApp र बिल PDF पठाउने प्रणाली</h3>
-          <p class="text-[11px] text-emerald-100">तपाईंकै ब्राउजरको WhatsApp Web / WhatsApp App मार्फत फोन नं. भएका ग्राहकलाई बिल पठाउने प्रणाली</p>
+          <h3 class="font-bold text-sm sm:text-base">Anti-Block Bulk WhatsApp र बिल फोटो/PDF पठाउने प्रणाली</h3>
+          <p id="wa-mode-subtitle" class="text-[11px] text-emerald-100">तपाईंकै WhatsApp Web वा जडान गरिएको WhatsApp API मार्फत फोन नं. भएका ग्राहकलाई बिल पठाउने प्रणाली</p>
         </div>
       </div>
-      <button onclick="closeWhatsappModal()" class="p-1 hover:bg-emerald-800 rounded-lg cursor-pointer"><i data-lucide="x" class="w-5 h-5"></i></button>
+      <div class="flex items-center gap-2">
+        <button type="button" onclick="toggleWaApiConfigPanel()" class="bg-emerald-800/80 hover:bg-emerald-900 text-white text-[11px] font-semibold px-3 py-1.5 rounded-lg flex items-center gap-1 cursor-pointer">
+          <i data-lucide="settings" class="w-3.5 h-3.5"></i> अटो-सेन्ड API सेटिङ
+        </button>
+        <button onclick="closeWhatsappModal()" class="p-1 hover:bg-emerald-800 rounded-lg cursor-pointer"><i data-lucide="x" class="w-5 h-5"></i></button>
+      </div>
     </div>
     <div class="p-5 space-y-3 overflow-y-auto">
-      <div class="bg-sky-50 border border-sky-200 rounded-xl px-3.5 py-2.5 text-[11px] text-sky-950 space-y-1">
-        <div class="font-bold flex items-center gap-1.5 text-sky-900">
-          <i data-lucide="info" class="w-3.5 h-3.5 shrink-0"></i>
-          मेसेज कहाँबाट र कसरी जान्छ? (महत्त्वपूर्ण जानकारी)
+      <div id="wa-api-config-panel" class="hidden bg-slate-50 border border-slate-300 rounded-xl p-3.5 text-xs space-y-2.5">
+        <div class="flex items-center justify-between gap-2">
+          <strong class="text-slate-900">⚙️ पूर्ण स्वचालित WhatsApp API / Gateway सेटिङ (बिना क्लिक मेसेज + बिल फोटो पठाउन)</strong>
+          <button type="button" onclick="toggleWaApiConfigPanel(false)" class="text-[11px] text-slate-500 hover:text-slate-800 cursor-pointer">बन्द</button>
         </div>
-        <p>यो मेसेज सफ्टवेयरको सर्भरबाट स्वतः जाँदैन — यसले तपाईंकै डिभाइसमा खुलेको <strong>WhatsApp Web / WhatsApp App</strong> खोलेर बिल मेसेज भरिदिन्छ। हरेक च्याट खुलेपछि WhatsApp भित्र हरियो <strong>Send (➤)</strong> थिच्नुहोला। यदि ब्राउजर (Brave/Chrome) ले स्वचालित Pop-up रोक्यो भने तलको सूचीबाट प्रत्येक ग्राहकको <strong>WhatsApp खोल्नुहोस्</strong> बटनमा सिधै क्लिक गर्नुहोस् (यो ब्राउजरले रोक्दैन)।</p>
+        <p class="text-[11px] text-slate-600">निःशुल्क ब्राउजर WhatsApp Web मा सुरक्षाका कारण Send र फोटो आफैँ जाँदैन। १ क्लिकमै भटाभट <strong>बिल फोटो + मेसेज</strong> बिना थिची सिधै जान तल कुनै WhatsApp API वा Webhook जोड्नुहोस्:</p>
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
+          <div>
+            <label class="block text-[10px] font-semibold text-slate-600 mb-0.5">पठाउने माध्यम (Mode)</label>
+            <select id="wa-api-provider" onchange="onWaApiProviderChange()" class="w-full border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white font-semibold">
+              <option value="browser">ब्राउजर WhatsApp Web (निःशुल्क)</option>
+              <option value="ultramsg">UltraMsg API (फोटो + मेसेज अटो)</option>
+              <option value="greenapi">Green-API (फोटो + मेसेज अटो)</option>
+              <option value="meta">Meta WhatsApp Cloud API</option>
+              <option value="webhook">Custom Webhook / Local Bot</option>
+            </select>
+          </div>
+          <div id="wa-api-field-1-wrap">
+            <label id="wa-api-field-1-label" class="block text-[10px] font-semibold text-slate-600 mb-0.5">Instance / Phone ID / URL</label>
+            <input type="text" id="wa-api-field-1" class="w-full border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white" placeholder="">
+          </div>
+          <div id="wa-api-field-2-wrap">
+            <label id="wa-api-field-2-label" class="block text-[10px] font-semibold text-slate-600 mb-0.5">API Token / Secret</label>
+            <input type="password" id="wa-api-field-2" class="w-full border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white" placeholder="">
+          </div>
+        </div>
+        <div class="flex flex-wrap items-center justify-between gap-2 pt-1">
+          <div class="flex items-center gap-2">
+            <label class="text-[11px] text-slate-600">अन्तराल (सेकेन्ड):</label>
+            <input type="number" id="wa-api-delay" min="1" max="30" value="4" class="w-16 border border-slate-300 rounded-lg px-2 py-1 text-xs text-center bg-white">
+          </div>
+          <button type="button" onclick="saveWaApiConfig()" class="bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-semibold px-3.5 py-1.5 rounded-lg cursor-pointer">सेटिङ बचत गर्नुहोस्</button>
+        </div>
+      </div>
+
+      <div id="wa-mode-info-box" class="bg-sky-50 border border-sky-200 rounded-xl px-3.5 py-2.5 text-[11px] text-sky-950 space-y-1">
+        <div class="font-bold flex items-center justify-between gap-2 text-sky-900">
+          <span class="flex items-center gap-1.5"><i data-lucide="info" class="w-3.5 h-3.5 shrink-0"></i> मेसेज कहाँबाट र कसरी जान्छ?</span>
+          <span id="wa-active-mode-badge" class="px-2 py-0.5 rounded-md bg-sky-200/80 text-sky-950 text-[10px] font-bold">ब्राउजर मोड</span>
+        </div>
+        <p id="wa-mode-info-text">ब्राउजर मोडमा वेबसाइटले तपाईंकै <strong>WhatsApp Web / App</strong> खोलेर मेसेज भरिदिन्छ — WhatsApp को सुरक्षा नियमले गर्दा बाहिरी वेबसाइटले आफैँ Send थिच्न र फोटो Attach गर्न मिल्दैन। <strong>पूर्ण स्वचालित (१ क्लिकमै भटाभट बिल फोटो + मेसेज आफैँ जाने)</strong> बनाउने भए माथिको <strong>अटो-सेन्ड API सेटिङ</strong> बाट API/Webhook जोड्नुहोस्।</p>
       </div>
 
       <div id="wa-popup-blocked-alert" class="hidden bg-rose-50 border border-rose-300 rounded-xl px-3.5 py-2.5 text-xs text-rose-900">
-        <strong>⚠️ ब्राउजरले स्वचालित Pop-up रोक्यो!</strong> त्यसैले WhatsApp ट्याब खुलेन। समाधान: (१) ब्राउजरको माथि Address Bar मा Pop-up <strong>Allow</strong> गर्नुहोस्, वा (२) तलको सूचीबाट प्रत्येक ग्राहकको हरियो <strong>WhatsApp खोल्नुहोस्</strong> बटनमा सिधै क्लिक गर्नुहोस्।
+        <strong>⚠️ Chrome/Brave ले अर्को Pop-up रोक्यो!</strong> ब्राउजरको माथि Address Bar को दायाँ कुनामा देखिएको <strong>Pop-up Blocked आइकन</strong> मा क्लिक गरी <strong>Always allow pop-ups and redirects</strong> छान्नुहोस्, वा तलको सूचीबाट प्रत्येक ग्राहकको <strong>WhatsApp खोल्नुहोस्</strong> मा सिधै क्लिक गर्नुहोस्।
       </div>
 
       <div id="wa-phone-stats" class="flex flex-wrap items-center justify-between gap-2 bg-teal-50/80 border border-teal-200 rounded-xl px-3.5 py-2.5 text-xs">
@@ -334,8 +374,54 @@
       </div>
       <div id="wa-skipped-names" class="hidden text-[11px] text-amber-900 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2"></div>
 
+      <div id="wa-browser-options-row" class="flex items-center justify-between gap-2 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-[11px] text-slate-700">
+        <label class="inline-flex items-center gap-2 cursor-pointer font-medium">
+          <input type="checkbox" id="wa-auto-copy-img" checked class="rounded border-slate-300 text-emerald-600">
+          WhatsApp खुल्दा ग्राहकको बिल फोटो (.png) पनि Clipboard मा Copy होस् (WhatsApp भित्र Ctrl+V गरेर फोटो पठाउन)
+        </label>
+      </div>
+
+      <div class="bg-amber-50/80 border border-amber-300 rounded-xl p-3 text-xs space-y-2">
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <strong class="text-amber-950">🖥️ Excel कोड जस्तै १-क्लिक Windows Auto-Sender (कुनै API वा शुल्क नलाग्ने — आफैँ टाइप र Send गर्ने!)</strong>
+          <span class="px-2 py-0.5 rounded-md bg-amber-200/80 text-amber-950 text-[10px] font-bold">Anti-Block Gap</span>
+        </div>
+        <p class="text-[11px] text-amber-900 leading-relaxed">ब्राउजरले सुरक्षाका कारण अर्को ट्याबमा Send थिच्न दिँदैन। त्यसैले तपाईंको Excel कोडजस्तै Windows बाटै फोन नं. खोजेर <strong>मेसेज + बिल फोटो (.png)</strong> टाइप/पेस्ट गरी समयको ग्याप राखेर आफैँ Send थिच्ने फाइल डाउनलोड गर्नुहोस्:</p>
+        <div class="flex flex-wrap items-center gap-3 text-[11px] text-amber-950">
+          <label class="inline-flex items-center gap-1.5 font-semibold">
+            माध्यम:
+            <select id="wa-win-target" class="border border-amber-300 rounded-lg px-2 py-1 bg-white text-xs">
+              <option value="desktop">WhatsApp Desktop App (सबैभन्दा छिटो र पक्का)</option>
+              <option value="web">Browser WhatsApp Web (Chrome/Edge)</option>
+            </select>
+          </label>
+          <label class="inline-flex items-center gap-1.5 cursor-pointer font-semibold">
+            <input type="checkbox" id="wa-win-include-photo" checked class="rounded border-amber-400 text-emerald-700">
+            बिल फोटो (.png) पनि सँगै पठाउने
+          </label>
+          <label class="inline-flex items-center gap-1 font-semibold">
+            ग्याप (सेकेन्ड):
+            <input type="number" id="wa-win-min-gap" min="3" max="30" value="7" class="w-12 border border-amber-300 rounded-lg px-1.5 py-0.5 bg-white text-center">
+            –
+            <input type="number" id="wa-win-max-gap" min="4" max="60" value="12" class="w-12 border border-amber-300 rounded-lg px-1.5 py-0.5 bg-white text-center">
+          </label>
+        </div>
+        <div class="flex flex-wrap items-center gap-2 pt-0.5">
+          <button type="button" onclick="downloadWindowsWhatsappAutoSender()" class="bg-amber-600 hover:bg-amber-700 text-white text-[11px] font-bold px-3.5 py-2 rounded-xl flex items-center gap-1.5 cursor-pointer shadow-sm">
+            <i data-lucide="download" class="w-3.5 h-3.5"></i> १-क्लिक Windows Auto-Sender (.bat) डाउनलोड
+          </button>
+          <button type="button" onclick="downloadWhatsappExcelCsv()" class="bg-white hover:bg-amber-100 text-amber-950 border border-amber-300 text-[11px] font-semibold px-3 py-2 rounded-xl cursor-pointer">
+            📊 Excel फाइल (.csv) डाउनलोड
+          </button>
+          <button type="button" onclick="copyExcelWhatsappVbaCode()" class="bg-white hover:bg-amber-100 text-amber-950 border border-amber-300 text-[11px] font-semibold px-3 py-2 rounded-xl cursor-pointer">
+            📋 Excel VBA कोड Copy
+          </button>
+        </div>
+        <div class="text-[10px] text-amber-800">नोट: डाउनलोड भएको <strong>.bat</strong> फाइल Double-Click गर्नुहोस् (Windows SmartScreen आएमा <em>More info → Run anyway</em> थिच्नुहोस्)। चल्दै गर्दा किबोर्ड/माउस नचलाउनुहोला — सबै १५ जनालाई आफैँ पठाउँछ।</div>
+      </div>
+
       <div class="flex items-center justify-between bg-slate-50 p-3 rounded-xl border border-slate-200 text-xs">
-        <div><span class="text-slate-500">खोलिएको / प्रगति (Opened):</span><strong id="wa-progress-text" class="text-slate-900 ml-1">0 / 0</strong></div>
+        <div><span class="text-slate-500">प्रगति (Progress):</span><strong id="wa-progress-text" class="text-slate-900 ml-1">0 / 0</strong></div>
         <div><span class="text-slate-500">अर्को मेसेज टाइमर:</span><strong id="wa-timer-text" class="text-emerald-700 ml-1 tabular-nums">तयार</strong></div>
       </div>
       <div class="w-full bg-slate-200 rounded-full h-2.5 overflow-hidden">
@@ -350,12 +436,12 @@
             <i data-lucide="play" class="w-4 h-4"></i> स्वचालित सुरु (Start Auto Queue)
           </button>
           <button id="wa-pause-btn" onclick="pauseBulkWhatsappQueue()" class="hidden bg-amber-500 hover:bg-amber-600 text-white text-xs font-semibold px-4 py-2 rounded-xl cursor-pointer">रोक्नुहोस् (Pause)</button>
-          <button onclick="sendNextWhatsappNow(false)" class="bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold px-3 py-2 rounded-xl cursor-pointer">अर्को खोल्नुहोस् (Open Next)</button>
+          <button onclick="sendNextWhatsappNow(false)" class="bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold px-3 py-2 rounded-xl cursor-pointer">अर्को खोल्नुहोस् / पठाउनुहोस्</button>
           <button type="button" onclick="openCurrentWaBillPdf()" class="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold px-3 py-2 rounded-xl flex items-center gap-1 cursor-pointer">
             <i data-lucide="file-text" class="w-3.5 h-3.5"></i> बिल PDF
           </button>
           <button type="button" onclick="shareOrCopyCurrentWaBill()" class="bg-teal-700 hover:bg-teal-800 text-white text-xs font-semibold px-3 py-2 rounded-xl flex items-center gap-1 cursor-pointer">
-            <i data-lucide="share-2" class="w-3.5 h-3.5"></i> बिल Share / इमेज Copy
+            <i data-lucide="share-2" class="w-3.5 h-3.5"></i> बिल फोटो Share / Copy
           </button>
           <button type="button" onclick="resetBulkWhatsappQueue()" class="bg-slate-200 hover:bg-slate-300 text-slate-800 text-xs font-semibold px-3 py-2 rounded-xl cursor-pointer">रिसेट</button>
         </div>
@@ -364,7 +450,7 @@
 
       <div class="border border-slate-200 rounded-xl overflow-hidden">
         <div class="bg-slate-100 px-3 py-2 text-[11px] font-bold text-slate-700 flex items-center justify-between">
-          <span>फोन नं. भएका ग्राहक सूची — सिधै क्लिक गरेर पठाउनुहोस् (Pop-up Block हुँदैन)</span>
+          <span>फोन नं. भएका ग्राहक सूची (मेसेज र बिल फोटो/PDF सहित)</span>
           <span id="wa-list-summary" class="text-emerald-800"></span>
         </div>
         <div id="wa-queue-list" class="max-h-56 overflow-y-auto divide-y divide-slate-100 bg-white text-xs"></div>
@@ -2835,18 +2921,268 @@ function openBulkWhatsappModal(month) {
 
 function closeWhatsappModal() {
   clearInterval(waTimerHandle);
+  waApiRunning = false;
   document.getElementById("whatsapp-modal").classList.add("hidden");
   document.getElementById("whatsapp-modal").classList.remove("flex");
 }
 
 let waSkippedNoPhone = [];
 let waMonth = "";
+let waApiRunning = false;
+
+function getWaApiConfig() {
+  const cfg = (window.ERP_STATE?.settings?.waApiConfig) || {};
+  return {
+    provider: cfg.provider || "browser",
+    field1: cfg.field1 || "",
+    field2: cfg.field2 || "",
+    delaySec: Math.max(1, Math.min(30, Number(cfg.delaySec) || 4))
+  };
+}
+
+window.toggleWaApiConfigPanel = function(forceOpen) {
+  const panel = document.getElementById("wa-api-config-panel");
+  if (!panel) return;
+  const shouldOpen = typeof forceOpen === "boolean" ? forceOpen : panel.classList.contains("hidden");
+  panel.classList.toggle("hidden", !shouldOpen);
+  if (shouldOpen) {
+    const cfg = getWaApiConfig();
+    if (document.getElementById("wa-api-provider")) document.getElementById("wa-api-provider").value = cfg.provider;
+    if (document.getElementById("wa-api-field-1")) document.getElementById("wa-api-field-1").value = cfg.field1;
+    if (document.getElementById("wa-api-field-2")) document.getElementById("wa-api-field-2").value = cfg.field2;
+    if (document.getElementById("wa-api-delay")) document.getElementById("wa-api-delay").value = cfg.delaySec;
+    onWaApiProviderChange();
+  }
+};
+
+window.onWaApiProviderChange = function() {
+  const prov = document.getElementById("wa-api-provider")?.value || "browser";
+  const f1Wrap = document.getElementById("wa-api-field-1-wrap");
+  const f2Wrap = document.getElementById("wa-api-field-2-wrap");
+  const l1 = document.getElementById("wa-api-field-1-label");
+  const l2 = document.getElementById("wa-api-field-2-label");
+  const i1 = document.getElementById("wa-api-field-1");
+  const i2 = document.getElementById("wa-api-field-2");
+  if (!f1Wrap || !f2Wrap) return;
+  if (prov === "browser") {
+    f1Wrap.classList.add("opacity-50");
+    f2Wrap.classList.add("opacity-50");
+    if (l1) l1.textContent = "API आवश्यक छैन (ब्राउजर मोड)";
+    if (l2) l2.textContent = "API Token आवश्यक छैन";
+    if (i1) i1.placeholder = "-";
+    if (i2) i2.placeholder = "-";
+    return;
+  }
+  f1Wrap.classList.remove("opacity-50");
+  f2Wrap.classList.remove("opacity-50");
+  if (prov === "ultramsg") {
+    l1.textContent = "UltraMsg Instance ID";
+    l2.textContent = "UltraMsg Token";
+    i1.placeholder = "instance12345";
+    i2.placeholder = "token...";
+  } else if (prov === "greenapi") {
+    l1.textContent = "Green-API idInstance";
+    l2.textContent = "apiTokenInstance";
+    i1.placeholder = "1101xxxxxx";
+    i2.placeholder = "token...";
+  } else if (prov === "meta") {
+    l1.textContent = "Meta Phone Number ID";
+    l2.textContent = "Permanent Access Token";
+    i1.placeholder = "1029384756...";
+    i2.placeholder = "EAAG...";
+  } else {
+    l1.textContent = "Webhook URL (POST JSON)";
+    l2.textContent = "Bearer Secret (ऐच्छिक)";
+    i1.placeholder = "https://.../send-whatsapp";
+    i2.placeholder = "secret-token";
+  }
+};
+
+window.saveWaApiConfig = function() {
+  if (!window.ERP_STATE.settings) window.ERP_STATE.settings = {};
+  const provider = document.getElementById("wa-api-provider")?.value || "browser";
+  const field1 = (document.getElementById("wa-api-field-1")?.value || "").trim();
+  const field2 = (document.getElementById("wa-api-field-2")?.value || "").trim();
+  const delaySec = Math.max(1, Math.min(30, Number(document.getElementById("wa-api-delay")?.value) || 4));
+  window.ERP_STATE.settings.waApiConfig = { provider, field1, field2, delaySec };
+  if (typeof window.scheduleSave === "function") window.scheduleSave();
+  document.getElementById("wa-api-config-panel")?.classList.add("hidden");
+  updateWhatsappModalUI();
+  showToast(provider === "browser" ? "ब्राउजर WhatsApp Web मोड सक्रिय गरियो।" : `पूर्ण स्वचालित ${provider.toUpperCase()} API सेटिङ बचत भयो!`, "success");
+};
+
+function buildCustomerBillCanvas(c, r, targetMonth, fallbackMsg) {
+  const st = window.ERP_STATE;
+  const s = st.settings || {};
+  const fin = r && typeof window.getOfflineCustomerFinancials === "function"
+    ? window.getOfflineCustomerFinancials(c.id, targetMonth, r.entryDate || st.activeBSDate)
+    : null;
+
+  const canvas = document.createElement("canvas");
+  canvas.width = 800;
+  canvas.height = 760;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return null;
+
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.strokeStyle = "#0f172a";
+  ctx.lineWidth = 4;
+  ctx.strokeRect(20, 20, canvas.width - 40, canvas.height - 40);
+
+  ctx.fillStyle = "#0f766e";
+  ctx.fillRect(20, 20, canvas.width - 40, 102);
+  ctx.fillStyle = "#ffffff";
+  ctx.textAlign = "center";
+  ctx.font = "bold 25px sans-serif";
+  ctx.fillText(s.committeeName || "प्रगति जल उपभोक्ता समिति", canvas.width / 2, 58);
+  ctx.font = "15px sans-serif";
+  ctx.fillText(`${s.address || ""} | फोन: ${s.phone || ""}`, canvas.width / 2, 84);
+  ctx.font = "bold 15px sans-serif";
+  ctx.fillText(`खानेपानी मिटर रिडिङ तथा महसुल बिल (${targetMonth} ${r?.year || ""})`, canvas.width / 2, 108);
+
+  ctx.textAlign = "left";
+  ctx.fillStyle = "#0f172a";
+  ctx.font = "bold 18px sans-serif";
+  ctx.fillText(`ग्राहक नं.: ${c.id}`, 44, 158);
+  ctx.fillText(`नाम: ${c.name}`, 44, 186);
+  ctx.textAlign = "right";
+  ctx.font = "15px sans-serif";
+  ctx.fillStyle = "#334155";
+  ctx.fillText(`मिति (BS): ${r?.entryDate || st.activeBSDate}`, canvas.width - 44, 158);
+  ctx.fillText(`फोन: ${c.phone || "-"} | मिटर: ${c.meterNo || "-"}`, canvas.width - 44, 186);
+
+  if (r) {
+    ctx.strokeStyle = "#cbd5e1";
+    ctx.lineWidth = 1.5;
+    ctx.fillStyle = "#f8fafc";
+    ctx.fillRect(42, 210, canvas.width - 84, 62);
+    ctx.strokeRect(42, 210, canvas.width - 84, 62);
+    ctx.fillStyle = "#0f172a";
+    ctx.font = "bold 17px sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText(`साविक अङ्क: ${r.prevReading}`, 175, 248);
+    ctx.fillText(`हालको अङ्क: ${r.currReading}`, 400, 248);
+    ctx.fillText(`खपत युनिट: ${r.units} यु.`, 625, 248);
+  }
+
+  let rows = [];
+  if (r && fin) {
+    const currMaint = Number(r.maintenanceAmount || 0);
+    const currWater = Math.max(0, Math.round((Number(r.billAmount || 0) - currMaint) * 100) / 100);
+    const totalGross = Math.round((currWater + currMaint + fin.prevWaterAndOpening + fin.prevMaintDue + fin.totalPenaltyDue) * 100) / 100;
+    const payableBeforeAdv = Math.max(0, Math.round((totalGross - fin.existingPaid) * 100) / 100);
+    const advUsed = Math.min(fin.advanceAvailable, payableBeforeAdv);
+    const netPayable = Math.max(0, Math.round((payableBeforeAdv - advUsed) * 100) / 100);
+    rows = [
+      ["(+) हालको पानी महसुल", `रु. ${formatCleanAmount(currWater)}`, "#0f172a", false],
+      ["(+) हालको मर्मत शुल्क", `रु. ${formatCleanAmount(currMaint)}`, "#0f172a", false],
+      ["(+) पहिलाको बाँकी (पानी/ओपनिङ)", `रु. ${formatCleanAmount(fin.prevWaterAndOpening)}`, fin.prevWaterAndOpening > 0 ? "#be123c" : "#0f172a", false],
+      ["(+) पहिलाको मर्मत बाँकी", `रु. ${formatCleanAmount(fin.prevMaintDue)}`, fin.prevMaintDue > 0 ? "#c2410c" : "#0f172a", false]
+    ];
+    if (fin.totalPenaltyDue > 0) rows.push(["(+) जरिवाना", `रु. ${formatCleanAmount(fin.totalPenaltyDue)}`, "#be123c", false]);
+    if (fin.existingPaid > 0) rows.push(["(-) भुक्तानी भइसकेको", `- रु. ${formatCleanAmount(fin.existingPaid)}`, "#047857", false]);
+    if (advUsed > 0) rows.push(["(-) अग्रिम मिलान", `- रु. ${formatCleanAmount(advUsed)}`, "#047857", false]);
+    rows.push(["कुल जम्मा रकम", `रु. ${formatCleanAmount(totalGross)}`, "#0f172a", true]);
+    rows.push(["खुद तिर्नुपर्ने जम्मा", `रु. ${formatCleanAmount(netPayable)}`, netPayable > 0 ? "#be123c" : "#047857", true]);
+  } else {
+    String(fallbackMsg || "").split("\n").filter(Boolean).slice(0, 9).forEach(line => {
+      rows.push([line.slice(0, 56), "", "#0f172a", line.includes("जम्मा")]);
+    });
+  }
+
+  let yPos = 304;
+  rows.forEach(([label, val, color, bold]) => {
+    if (bold) {
+      ctx.fillStyle = "#f1f5f9";
+      ctx.fillRect(42, yPos - 26, canvas.width - 84, 38);
+    }
+    ctx.strokeStyle = "#e2e8f0";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(42, yPos + 12);
+    ctx.lineTo(canvas.width - 42, yPos + 12);
+    ctx.stroke();
+
+    ctx.textAlign = "left";
+    ctx.fillStyle = bold ? "#0f172a" : "#334155";
+    ctx.font = `${bold ? "bold " : ""}${bold ? 18 : 16}px sans-serif`;
+    ctx.fillText(label, 54, yPos);
+
+    if (val) {
+      ctx.textAlign = "right";
+      ctx.fillStyle = color || "#0f172a";
+      ctx.font = `bold ${bold ? 19 : 16}px sans-serif`;
+      ctx.fillText(val, canvas.width - 54, yPos);
+    }
+    yPos += 42;
+  });
+
+  ctx.textAlign = "center";
+  ctx.fillStyle = "#0f766e";
+  ctx.font = "bold 15px sans-serif";
+  ctx.fillText("कृपया समयमा पानीको महसुल भुक्तानी गर्नुहोला । धन्यवाद!", canvas.width / 2, canvas.height - 44);
+  return canvas;
+}
+
+function canvasToPngBlob(canvas) {
+  return new Promise(resolve => canvas.toBlob(blob => resolve(blob), "image/png"));
+}
+
+async function copyCustomerBillPngToClipboard(item) {
+  if (!item || !item.customer || !navigator.clipboard || !window.ClipboardItem) return false;
+  const canvas = buildCustomerBillCanvas(item.customer, item.reading, waMonth || item.reading?.month || selectedUnitMonth, item.msg);
+  if (!canvas) return false;
+  const blob = await canvasToPngBlob(canvas);
+  if (!blob) return false;
+  try {
+    await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+window.downloadCustomerBillPng = async function(idx) {
+  const item = waQueue[idx];
+  if (!item || !item.customer) return;
+  const tMonth = waMonth || item.reading?.month || selectedUnitMonth;
+  const canvas = buildCustomerBillCanvas(item.customer, item.reading, tMonth, item.msg);
+  if (!canvas) return;
+  const blob = await canvasToPngBlob(canvas);
+  if (!blob) return;
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `Bill_${item.customer.id}_${tMonth}.png`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 4000);
+  showToast(`${item.customer.name} को बिल फोटो (.png) डाउनलोड भयो!`);
+};
 
 function updateWhatsappModalUI() {
   const sentCount = waQueue.filter(x => x.sent).length;
   document.getElementById("wa-progress-text").textContent = `${sentCount} / ${waQueue.length}`;
   const pct = waQueue.length ? Math.round((sentCount / waQueue.length) * 100) : 0;
   document.getElementById("wa-progress-bar").style.width = pct + "%";
+
+  const cfg = getWaApiConfig();
+  const isApiMode = cfg.provider !== "browser";
+  const badgeEl = document.getElementById("wa-active-mode-badge");
+  const infoTextEl = document.getElementById("wa-mode-info-text");
+  const browserOptRow = document.getElementById("wa-browser-options-row");
+  if (badgeEl) {
+    badgeEl.textContent = isApiMode ? `अटो API मोड (${cfg.provider.toUpperCase()})` : "ब्राउजर मोड";
+    badgeEl.className = isApiMode
+      ? "px-2 py-0.5 rounded-md bg-emerald-600 text-white text-[10px] font-bold"
+      : "px-2 py-0.5 rounded-md bg-sky-200/80 text-sky-950 text-[10px] font-bold";
+  }
+  if (infoTextEl) {
+    infoTextEl.innerHTML = isApiMode
+      ? `अहिले <strong>पूर्ण स्वचालित API मोड (${escapeHtmlSafe(cfg.provider.toUpperCase())})</strong> सक्रिय छ। <strong>स्वचालित सुरु (Start Auto Queue)</strong> थिचेपछि हरेक ग्राहकको <strong>बिल फोटो (.png) र मेसेज</strong> बिना कुनै क्लिक भटाभट पठाइनेछ।`
+      : `ब्राउजर मोडमा वेबसाइटले तपाईंकै <strong>WhatsApp Web / App</strong> खोलेर मेसेज भरिदिन्छ — WhatsApp को सुरक्षा नियमले गर्दा बाहिरी वेबसाइटले आफैँ Send थिच्न र फोटो Attach गर्न मिल्दैन। <strong>१ क्लिकमै भटाभट बिल फोटो + मेसेज आफैँ जाने</strong> बनाउने भए माथिको <strong>अटो-सेन्ड API सेटिङ</strong> बाट UltraMsg / Green-API / Webhook जोड्नुहोस्।`;
+  }
+  if (browserOptRow) browserOptRow.classList.toggle("hidden", isApiMode);
 
   const validEl = document.getElementById("wa-valid-count");
   if (validEl) validEl.textContent = waQueue.length;
@@ -2875,7 +3211,7 @@ function updateWhatsappModalUI() {
 
   const blockedAlert = document.getElementById("wa-popup-blocked-alert");
   if (blockedAlert) {
-    const anyBlocked = waQueue.some(x => x.blocked);
+    const anyBlocked = !isApiMode && waQueue.some(x => x.blocked);
     blockedAlert.classList.toggle("hidden", !anyBlocked);
   }
 
@@ -2883,12 +3219,14 @@ function updateWhatsappModalUI() {
   document.getElementById("wa-current-preview").textContent = current
     ? `अबको पालो (${current.customer.name} - ${current.customer.phone}):\n\n${current.msg}`
     : (sentCount === waQueue.length && waQueue.length > 0
-      ? "✅ फोन नं. भएका सबै ग्राहकको WhatsApp च्याट खोलियो! (यदि कुनै छुट्यो भने तलको सूचीबाट पुनः क्लिक गर्न सक्नुहुन्छ।)"
+      ? (isApiMode
+        ? "✅ फोन नं. भएका सबै ग्राहकलाई बिल फोटो र मेसेज सफलतापूर्वक पठाइयो!"
+        : "✅ फोन नं. भएका सबै ग्राहकको WhatsApp च्याट खोलियो! (यदि कुनै छुट्यो भने तलको सूचीबाट पुनः क्लिक गर्न सक्नुहुन्छ।)")
       : "तलको सूचीबाट सिधै 'WhatsApp खोल्नुहोस्' थिचेर मेसेज पठाउनुहोस्।");
 
   const summaryEl = document.getElementById("wa-list-summary");
   if (summaryEl) {
-    summaryEl.textContent = `खोलिएको: ${sentCount} | बाँकी: ${Math.max(0, waQueue.length - sentCount)}`;
+    summaryEl.textContent = `${isApiMode ? "पठाइयो" : "खोलिएको"}: ${sentCount} | बाँकी: ${Math.max(0, waQueue.length - sentCount)}`;
   }
 
   const listEl = document.getElementById("wa-queue-list");
@@ -2898,10 +3236,12 @@ function updateWhatsappModalUI() {
       const waHref = fullPhone ? `https://wa.me/${fullPhone}?text=${encodeURIComponent(item.msg)}` : "#";
       const isActive = idx === waIndex;
       const badge = item.sent
-        ? `<span class="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-bold">खोलियो ✓</span>`
-        : (item.blocked
-          ? `<span class="px-2 py-0.5 rounded-full bg-rose-100 text-rose-800 text-[10px] font-bold">Pop-up रोकियो</span>`
-          : `<span class="px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 text-[10px] font-semibold">बाँकी</span>`);
+        ? `<span class="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-bold">${item.apiSent ? 'फोटो+मेसेज गयो ✓' : 'खोलियो ✓'}</span>`
+        : (item.error
+          ? `<span class="px-2 py-0.5 rounded-full bg-rose-100 text-rose-800 text-[10px] font-bold" title="${escapeHtmlSafe(item.error)}">त्रुटि: ${escapeHtmlSafe(item.error.slice(0, 32))}</span>`
+          : (item.blocked
+            ? `<span class="px-2 py-0.5 rounded-full bg-rose-100 text-rose-800 text-[10px] font-bold">Pop-up रोकियो</span>`
+            : `<span class="px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 text-[10px] font-semibold">बाँकी</span>`));
       return `
         <div class="px-3 py-2 flex flex-wrap items-center justify-between gap-2 ${isActive ? 'bg-emerald-50/70' : ''}">
           <div class="min-w-0 flex-1">
@@ -2913,6 +3253,7 @@ function updateWhatsappModalUI() {
               class="px-2.5 py-1.5 rounded-lg ${item.sent ? 'bg-emerald-100 hover:bg-emerald-200 text-emerald-900' : 'bg-emerald-600 hover:bg-emerald-700 text-white'} text-[11px] font-bold inline-flex items-center gap-1">
               WhatsApp खोल्नुहोस्
             </a>
+            <button type="button" onclick="downloadCustomerBillPng(${idx})" class="px-2 py-1.5 rounded-lg bg-teal-50 hover:bg-teal-100 text-teal-800 text-[11px] font-semibold cursor-pointer">फोटो</button>
             <button type="button" onclick="copyWaItemMessage(${idx})" class="px-2 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-[11px] font-semibold cursor-pointer">Copy</button>
             <button type="button" onclick="openUnitCustomerBillPdf('${escapeHtmlSafe(item.customer.id)}','${escapeHtmlSafe(waMonth || item.reading?.month || selectedUnitMonth)}')" class="px-2 py-1.5 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-800 text-[11px] font-semibold cursor-pointer">PDF</button>
           </div>
@@ -2928,6 +3269,10 @@ window.markWaItemSent = function(idx) {
   if (!item) return;
   item.sent = true;
   item.blocked = false;
+  item.error = "";
+  if (document.getElementById("wa-auto-copy-img")?.checked) {
+    copyCustomerBillPngToClipboard(item);
+  }
   const nextPending = waQueue.findIndex((x, i) => i > idx && !x.sent);
   waIndex = nextPending >= 0 ? nextPending : waQueue.findIndex(x => !x.sent);
   if (waIndex < 0) waIndex = waQueue.length;
@@ -2951,39 +3296,216 @@ window.copyWaItemMessage = async function(idx) {
 
 window.resetBulkWhatsappQueue = function() {
   pauseBulkWhatsappQueue();
-  waQueue.forEach(item => { item.sent = false; item.blocked = false; });
+  waQueue.forEach(item => { item.sent = false; item.blocked = false; item.apiSent = false; item.error = ""; });
   waIndex = 0;
   document.getElementById("wa-timer-text").textContent = "तयार";
   updateWhatsappModalUI();
   showToast("WhatsApp सूची रिसेट गरियो।", "info");
 };
 
-function startBulkWhatsappQueue() {
-  const firstPending = waQueue.findIndex(x => !x.sent);
-  if (firstPending < 0) return showToast("सबै ग्राहकको सूची खुलिसकेको छ। पुनः पठाउन 'रिसेट' थिच्नुहोस्।", "info");
-  waIndex = firstPending;
+async function sendSingleItemViaApi(item, cfg) {
+  const fullPhone = item.phone || getValidWhatsappPhone(item.customer?.phone);
+  if (!fullPhone) throw new Error("मान्य फोन नं. छैन");
+  const tMonth = waMonth || item.reading?.month || selectedUnitMonth;
+  const canvas = buildCustomerBillCanvas(item.customer, item.reading, tMonth, item.msg);
+  const dataUrl = canvas ? canvas.toDataURL("image/png") : "";
+  const blob = canvas ? await canvasToPngBlob(canvas) : null;
+  const fileName = `Bill_${item.customer.id}_${tMonth}.png`;
+
+  if (cfg.provider === "ultramsg") {
+    if (!cfg.field1 || !cfg.field2) throw new Error("UltraMsg Instance ID र Token आवश्यक छ");
+    const params = new URLSearchParams();
+    params.append("token", cfg.field2);
+    params.append("to", fullPhone);
+    params.append("image", dataUrl);
+    params.append("caption", item.msg);
+    const res = await fetch(`https://api.ultramsg.com/${encodeURIComponent(cfg.field1)}/messages/image`, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: params.toString()
+    });
+    const out = await res.json().catch(() => ({}));
+    if (!res.ok || out.error) throw new Error(out.error || `HTTP ${res.status}`);
+    return out;
+  }
+
+  if (cfg.provider === "greenapi") {
+    if (!cfg.field1 || !cfg.field2) throw new Error("Green-API idInstance र Token आवश्यक छ");
+    const fd = new FormData();
+    fd.append("chatId", `${fullPhone}@c.us`);
+    if (blob) fd.append("file", blob, fileName);
+    fd.append("caption", item.msg);
+    const res = await fetch(`https://api.green-api.com/waInstance${encodeURIComponent(cfg.field1)}/sendFileByUpload/${encodeURIComponent(cfg.field2)}`, {
+      method: "POST",
+      body: fd
+    });
+    const out = await res.json().catch(() => ({}));
+    if (!res.ok || out.error) throw new Error(out.message || out.error || `HTTP ${res.status}`);
+    return out;
+  }
+
+  if (cfg.provider === "meta") {
+    if (!cfg.field1 || !cfg.field2) throw new Error("Meta Phone Number ID र Access Token आवश्यक छ");
+    if (!blob) throw new Error("बिल इमेज बन्न सकेन");
+    const mFd = new FormData();
+    mFd.append("messaging_product", "whatsapp");
+    mFd.append("type", "image/png");
+    mFd.append("file", blob, fileName);
+    const mRes = await fetch(`https://graph.facebook.com/v20.0/${encodeURIComponent(cfg.field1)}/media`, {
+      method: "POST",
+      headers: { "Authorization": `Bearer ${cfg.field2}` },
+      body: mFd
+    });
+    const mOut = await mRes.json().catch(() => ({}));
+    if (!mRes.ok || !mOut.id) throw new Error(mOut?.error?.message || `Media Upload HTTP ${mRes.status}`);
+    const sRes = await fetch(`https://graph.facebook.com/v20.0/${encodeURIComponent(cfg.field1)}/messages`, {
+      method: "POST",
+      headers: { "Authorization": `Bearer ${cfg.field2}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        messaging_product: "whatsapp",
+        to: fullPhone,
+        type: "image",
+        image: { id: mOut.id, caption: item.msg }
+      })
+    });
+    const sOut = await sRes.json().catch(() => ({}));
+    if (!sRes.ok) throw new Error(sOut?.error?.message || `Send HTTP ${sRes.status}`);
+    return sOut;
+  }
+
+  if (cfg.provider === "webhook") {
+    if (!cfg.field1) throw new Error("Webhook URL राख्नुहोस्");
+    const headers = { "Content-Type": "application/json" };
+    if (cfg.field2) headers["Authorization"] = `Bearer ${cfg.field2}`;
+    const res = await fetch(cfg.field1, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        phone: fullPhone,
+        customerId: item.customer.id,
+        customerName: item.customer.name,
+        month: tMonth,
+        message: item.msg,
+        billImageBase64: dataUrl,
+        billFileName: fileName
+      })
+    });
+    if (!res.ok) throw new Error(`Webhook HTTP ${res.status}`);
+    return true;
+  }
+
+  throw new Error("API Provider मिलेन");
+}
+
+async function runWhatsappApiAutoQueue() {
+  const cfg = getWaApiConfig();
+  waApiRunning = true;
   document.getElementById("wa-start-btn").classList.add("hidden");
   document.getElementById("wa-pause-btn").classList.remove("hidden");
 
+  while (waApiRunning) {
+    const idx = waQueue.findIndex(x => !x.sent && !x.error);
+    if (idx < 0) break;
+    waIndex = idx;
+    const item = waQueue[idx];
+    document.getElementById("wa-timer-text").textContent = `${item.customer.name} लाई बिल फोटो+मेसेज पठाउँदै...`;
+    updateWhatsappModalUI();
+    try {
+      await sendSingleItemViaApi(item, cfg);
+      item.sent = true;
+      item.apiSent = true;
+      item.error = "";
+    } catch (err) {
+      item.error = String(err?.message || "पठाउन असफल");
+      showToast(`${item.customer.name}: ${item.error}`, "error");
+      if (item.error.includes("आवश्यक")) {
+        waApiRunning = false;
+        toggleWaApiConfigPanel(true);
+        break;
+      }
+    }
+    updateWhatsappModalUI();
+    const moreLeft = waQueue.some(x => !x.sent && !x.error);
+    if (!waApiRunning || !moreLeft) break;
+    for (let s = cfg.delaySec; s > 0 && waApiRunning; s--) {
+      document.getElementById("wa-timer-text").textContent = `अर्को ग्राहक (${s} सेकेन्डमा)...`;
+      await new Promise(r => setTimeout(r, 1000));
+    }
+  }
+
+  waApiRunning = false;
+  document.getElementById("wa-pause-btn").classList.add("hidden");
+  document.getElementById("wa-start-btn").classList.remove("hidden");
+  if (waQueue.every(x => x.sent)) {
+    document.getElementById("wa-timer-text").textContent = "सम्पन्न (सबै गयो)";
+    showToast("फोन नं. भएका सबै ग्राहकलाई बिल फोटो र मेसेज सफलतापूर्वक पठाइयो!", "success");
+  } else {
+    document.getElementById("wa-timer-text").textContent = "रोकियो / समाप्त";
+  }
+}
+
+function startBulkWhatsappQueue() {
+  const firstPending = waQueue.findIndex(x => !x.sent);
+  if (firstPending < 0) return showToast("सबै ग्राहकको सूची सम्पन्न भइसकेको छ। पुनः पठाउन 'रिसेट' थिच्नुहोस्।", "info");
+  waIndex = firstPending;
+
+  const cfg = getWaApiConfig();
+  if (cfg.provider !== "browser") {
+    waQueue.forEach(x => { if (!x.sent) x.error = ""; });
+    runWhatsappApiAutoQueue();
+    return;
+  }
+
+  document.getElementById("wa-start-btn").classList.add("hidden");
+  document.getElementById("wa-pause-btn").classList.remove("hidden");
+
+  // Open first immediately on user click so Chrome/Brave doesn't block the initial gesture
+  sendNextWhatsappNow(true);
+  if (!waQueue.some(x => !x.sent) || waQueue.some(x => x.blocked)) return;
+
   waCountdown = Math.floor(Math.random() * 5) + 6;
-  document.getElementById("wa-timer-text").textContent = `${waCountdown} सेकेन्डमा पठाउँदै...`;
+  document.getElementById("wa-timer-text").textContent = `${waCountdown} सेकेन्डमा अर्को खुल्दै...`;
 
   clearInterval(waTimerHandle);
   waTimerHandle = setInterval(() => {
     waCountdown--;
     if (waCountdown <= 0) sendNextWhatsappNow(true);
-    else document.getElementById("wa-timer-text").textContent = `${waCountdown} सेकेन्डमा पठाउँदै...`;
+    else document.getElementById("wa-timer-text").textContent = `${waCountdown} सेकेन्डमा अर्को खुल्दै...`;
   }, 1000);
 }
 
 function pauseBulkWhatsappQueue() {
   clearInterval(waTimerHandle);
+  waApiRunning = false;
   document.getElementById("wa-pause-btn").classList.add("hidden");
   document.getElementById("wa-start-btn").classList.remove("hidden");
   document.getElementById("wa-timer-text").textContent = "रोकिएको (Paused)";
 }
 
-function sendNextWhatsappNow(continueLoop = false) {
+async function sendNextWhatsappNow(continueLoop = false) {
+  const cfg = getWaApiConfig();
+  if (cfg.provider !== "browser" && !continueLoop) {
+    const idx = waIndex < waQueue.length && !waQueue[waIndex]?.sent ? waIndex : waQueue.findIndex(x => !x.sent);
+    if (idx < 0) return showToast("सबै पठाइसकियो।", "info");
+    const item = waQueue[idx];
+    document.getElementById("wa-timer-text").textContent = `${item.customer.name} लाई पठाउँदै...`;
+    try {
+      await sendSingleItemViaApi(item, cfg);
+      item.sent = true;
+      item.apiSent = true;
+      item.error = "";
+      showToast(`${item.customer.name} लाई बिल फोटो + मेसेज पठाइयो!`, "success");
+    } catch (err) {
+      item.error = String(err?.message || "असफल");
+      showToast(`${item.customer.name}: ${item.error}`, "error");
+    }
+    const nextPending = waQueue.findIndex((x, i) => i > idx && !x.sent);
+    waIndex = nextPending >= 0 ? nextPending : waQueue.length;
+    document.getElementById("wa-timer-text").textContent = waQueue.every(x => x.sent) ? "सम्पन्न" : "तयार";
+    updateWhatsappModalUI();
+    return;
+  }
+
   if (waIndex >= waQueue.length) {
     const nextPending = waQueue.findIndex(x => !x.sent);
     if (nextPending >= 0) {
@@ -3001,13 +3523,16 @@ function sendNextWhatsappNow(continueLoop = false) {
     updateWhatsappModalUI();
     return;
   }
+  if (document.getElementById("wa-auto-copy-img")?.checked) {
+    copyCustomerBillPngToClipboard(item);
+  }
   const win = window.open(`https://wa.me/${fullPhone}?text=${encodeURIComponent(item.msg)}`, "_blank");
   if (!win || win.closed || typeof win.closed === "undefined") {
     item.blocked = true;
     pauseBulkWhatsappQueue();
     document.getElementById("wa-timer-text").textContent = "Pop-up रोकियो";
     updateWhatsappModalUI();
-    showToast("ब्राउजरले Pop-up रोक्यो! Pop-up Allow गर्नुहोस् वा तलको सूचीबाट 'WhatsApp खोल्नुहोस्' थिच्नुहोस्।", "warning");
+    showToast("ब्राउजरले Pop-up रोक्यो! Address Bar मा Pop-up Allow गर्नुहोस् वा तलको सूचीबाट 'WhatsApp खोल्नुहोस्' थिच्नुहोस्।", "warning");
     return;
   }
 
@@ -3020,7 +3545,7 @@ function sendNextWhatsappNow(continueLoop = false) {
   if (waQueue.every(x => x.sent)) {
     pauseBulkWhatsappQueue();
     document.getElementById("wa-timer-text").textContent = "सम्पन्न (Completed)";
-    showToast("फोन नं. भएका सबै ग्राहकको WhatsApp च्याट खोलियो! (WhatsApp भित्र Send थिच्न नबिर्सनुहोस्)");
+    showToast("फोन नं. भएका सबै ग्राहकको WhatsApp च्याट खोलियो! (WhatsApp भित्र Send थिच्नुहोला)");
   } else if (continueLoop) {
     waCountdown = Math.floor(Math.random() * 5) + 6;
   }
@@ -3044,71 +3569,12 @@ window.openCurrentWaBillPdf = function() {
 window.shareOrCopyCurrentWaBill = async function() {
   const cur = waQueue[waIndex] || waQueue[Math.max(0, waIndex - 1)];
   if (!cur || !cur.customer) return showToast("कुनै ग्राहक चयन भएको छैन।", "warning");
-  const st = window.ERP_STATE;
-  const s = st.settings || {};
   const c = cur.customer;
   const r = cur.reading;
   const targetMonth = waMonth || r?.month || selectedUnitMonth;
 
-  const canvas = document.createElement("canvas");
-  canvas.width = 760;
-  canvas.height = 680;
-  const ctx = canvas.getContext("2d");
-  if (!ctx) return;
-
-  ctx.fillStyle = "#ffffff";
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-  ctx.strokeStyle = "#0f172a";
-  ctx.lineWidth = 4;
-  ctx.strokeRect(18, 18, canvas.width - 36, canvas.height - 36);
-
-  ctx.fillStyle = "#0f766e";
-  ctx.fillRect(18, 18, canvas.width - 36, 92);
-  ctx.fillStyle = "#ffffff";
-  ctx.textAlign = "center";
-  ctx.font = "bold 24px sans-serif";
-  ctx.fillText(s.committeeName || "प्रगति जल उपभोक्ता समिति", canvas.width / 2, 56);
-  ctx.font = "15px sans-serif";
-  ctx.fillText(`${s.address || ""} | फोन: ${s.phone || ""}`, canvas.width / 2, 82);
-  ctx.font = "bold 14px sans-serif";
-  ctx.fillText(`खानेपानी मिटर रिडिङ तथा महसुल बिल (${targetMonth} ${r?.year || ""})`, canvas.width / 2, 102);
-
-  ctx.textAlign = "left";
-  ctx.fillStyle = "#0f172a";
-  ctx.font = "bold 17px sans-serif";
-  ctx.fillText(`ग्राहक नं.: ${c.id}`, 42, 148);
-  ctx.fillText(`नाम: ${c.name}`, 42, 176);
-  ctx.font = "15px sans-serif";
-  ctx.fillStyle = "#334155";
-  ctx.fillText(`फोन: ${c.phone || "-"}`, 42, 202);
-  ctx.fillText(`मिति: ${r?.entryDate || st.activeBSDate}   |   मिटर नं.: ${c.meterNo || "-"}`, 42, 226);
-
-  if (r) {
-    ctx.strokeStyle = "#cbd5e1";
-    ctx.lineWidth = 1.5;
-    ctx.strokeRect(40, 244, canvas.width - 80, 56);
-    ctx.fillStyle = "#0f172a";
-    ctx.font = "bold 16px sans-serif";
-    ctx.textAlign = "center";
-    ctx.fillText(`साविक: ${r.prevReading}`, 165, 278);
-    ctx.fillText(`हालको: ${r.currReading}`, 380, 278);
-    ctx.fillText(`खपत युनिट: ${r.units} यु.`, 595, 278);
-  }
-
-  const lines = String(cur.msg || "").split("\n").filter(Boolean);
-  let yPos = 335;
-  ctx.textAlign = "left";
-  lines.forEach(line => {
-    if (line.includes("जम्मा तिर्नुपर्ने") || line.includes("जम्मा रकम")) {
-      ctx.fillStyle = "#be123c";
-      ctx.font = "bold 19px sans-serif";
-    } else {
-      ctx.fillStyle = "#1e293b";
-      ctx.font = "16px sans-serif";
-    }
-    ctx.fillText(line.slice(0, 58), 44, yPos);
-    yPos += 28;
-  });
+  const canvas = buildCustomerBillCanvas(c, r, targetMonth, cur.msg);
+  if (!canvas) return;
 
   canvas.toBlob(async (blob) => {
     if (!blob) return;
@@ -3142,6 +3608,239 @@ window.shareOrCopyCurrentWaBill = async function() {
       "success"
     );
   }, "image/png");
+};
+
+function utf8ToBase64Safe(str) {
+  const bytes = new TextEncoder().encode(String(str || ""));
+  let bin = "";
+  for (let i = 0; i < bytes.length; i++) {
+    bin += String.fromCharCode(bytes[i]);
+  }
+  return btoa(bin);
+}
+
+window.downloadWindowsWhatsappAutoSender = async function() {
+  if (!waQueue || !waQueue.length) return showToast("कुनै फोन नं. भएको ग्राहक सूची छैन।", "warning");
+  const targetMode = document.getElementById("wa-win-target")?.value || "desktop";
+  const includePhoto = !!document.getElementById("wa-win-include-photo")?.checked;
+  const minGap = Math.max(3, Math.min(60, Number(document.getElementById("wa-win-min-gap")?.value) || 7));
+  const maxGap = Math.max(minGap, Math.min(90, Number(document.getElementById("wa-win-max-gap")?.value) || 12));
+  const loadWaitSec = targetMode === "web" ? 9 : 5;
+
+  showToast("बिल फोटो र Windows Auto-Sender तयार पार्दैछ...", "info");
+
+  const payload = [];
+  for (const item of waQueue) {
+    const fullPhone = item.phone || getValidWhatsappPhone(item.customer?.phone);
+    if (!fullPhone) continue;
+    let imgB64 = "";
+    if (includePhoto) {
+      const tMonth = waMonth || item.reading?.month || selectedUnitMonth;
+      const canvas = buildCustomerBillCanvas(item.customer, item.reading, tMonth, item.msg);
+      if (canvas) {
+        const dataUrl = canvas.toDataURL("image/png");
+        imgB64 = dataUrl.split(",")[1] || "";
+      }
+    }
+    payload.push({
+      id: String(item.customer?.id || ""),
+      name: String(item.customer?.name || ""),
+      phone: String(fullPhone),
+      msg: String(item.msg || ""),
+      imgB64
+    });
+  }
+
+  if (!payload.length) return showToast("मान्य फोन नं. भएका ग्राहक भेटिएनन्।", "error");
+
+  const payloadB64 = utf8ToBase64Safe(JSON.stringify(payload));
+  const useDesktop = targetMode === "desktop" ? "$true" : "$false";
+  const sendPhotoFlag = includePhoto ? "$true" : "$false";
+
+  const psLines = [
+    "Add-Type -AssemblyName System.Windows.Forms",
+    "Add-Type -AssemblyName System.Drawing",
+    "Add-Type -TypeDefinition @\"",
+    "using System;",
+    "using System.Runtime.InteropServices;",
+    "public class PJWinFocus {",
+    "  [DllImport(\"user32.dll\")] public static extern bool SetForegroundWindow(IntPtr hWnd);",
+    "  [DllImport(\"user32.dll\")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);",
+    "}",
+    "\"@ -ErrorAction SilentlyContinue",
+    "",
+    `$useDesktop = ${useDesktop}`,
+    `$sendPhoto = ${sendPhotoFlag}`,
+    `$loadWaitSec = ${loadWaitSec}`,
+    `$minGap = ${minGap}`,
+    `$maxGap = ${maxGap}`,
+    "",
+    "$wshell = New-Object -ComObject WScript.Shell",
+    "function Focus-WA {",
+    "  $proc = Get-Process | Where-Object { $_.MainWindowHandle -ne [IntPtr]::Zero -and ($_.ProcessName -match 'WhatsApp' -or $_.MainWindowTitle -match 'WhatsApp') } | Select-Object -First 1",
+    "  if (-not $proc -and -not $useDesktop) {",
+    "    $proc = Get-Process | Where-Object { $_.MainWindowHandle -ne [IntPtr]::Zero -and $_.ProcessName -match 'chrome|msedge|brave' } | Select-Object -First 1",
+    "  }",
+    "  if ($proc) {",
+    "    [PJWinFocus]::ShowWindow($proc.MainWindowHandle, 9) | Out-Null",
+    "    [PJWinFocus]::SetForegroundWindow($proc.MainWindowHandle) | Out-Null",
+    "  } else {",
+    "    $wshell.AppActivate('WhatsApp') | Out-Null",
+    "  }",
+    "}",
+    "",
+    `$payloadB64 = "${payloadB64}"`,
+    "$jsonText = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($payloadB64))",
+    "$items = @($jsonText | ConvertFrom-Json)",
+    "",
+    "Write-Host '============================================================' -ForegroundColor Cyan",
+    "Write-Host '  Pragati Jal ERP - Windows Auto WhatsApp Sender (Anti-Block)' -ForegroundColor Green",
+    "Write-Host ('  Total Customers with Phone: ' + $items.Count + ' | Gap: ' + $minGap + '-' + $maxGap + 's') -ForegroundColor Yellow",
+    "Write-Host '  Please keep WhatsApp open and DO NOT touch keyboard/mouse!' -ForegroundColor White",
+    "Write-Host '============================================================' -ForegroundColor Cyan",
+    "Start-Sleep -Seconds 4",
+    "",
+    "$idx = 0",
+    "foreach ($item in $items) {",
+    "  $idx++",
+    "  Write-Host ('[' + $idx + '/' + $items.Count + '] Sending to ' + $item.id + ' - ' + $item.name + ' (' + $item.phone + ')...') -ForegroundColor Cyan",
+    "  $encodedMsg = [System.Uri]::EscapeDataString([string]$item.msg)",
+    "  if ($useDesktop) {",
+    "    $url = 'whatsapp://send?phone=' + $item.phone + '&text=' + $encodedMsg",
+    "  } else {",
+    "    $url = 'https://web.whatsapp.com/send?phone=' + $item.phone + '&text=' + $encodedMsg",
+    "  }",
+    "  Start-Process $url",
+    "  $waitNow = if ($idx -eq 1) { $loadWaitSec + 2 } else { $loadWaitSec }",
+    "  Start-Sleep -Seconds $waitNow",
+    "  Focus-WA",
+    "  Start-Sleep -Milliseconds 500",
+    "  [System.Windows.Forms.SendKeys]::SendWait('{ENTER}')",
+    "  Write-Host '   -> Bill text sent!' -ForegroundColor Green",
+    "  if ($sendPhoto -and $item.imgB64) {",
+    "    Start-Sleep -Milliseconds 1300",
+    "    try {",
+    "      $imgBytes = [System.Convert]::FromBase64String($item.imgB64)",
+    "      $ms = New-Object System.IO.MemoryStream(,$imgBytes)",
+    "      $rawImg = [System.Drawing.Image]::FromStream($ms)",
+    "      $bmp = New-Object System.Drawing.Bitmap($rawImg)",
+    "      [System.Windows.Forms.Clipboard]::SetImage($bmp)",
+    "      $rawImg.Dispose()",
+    "      $ms.Dispose()",
+    "      Focus-WA",
+    "      Start-Sleep -Milliseconds 450",
+    "      [System.Windows.Forms.SendKeys]::SendWait('^v')",
+    "      Start-Sleep -Milliseconds 2500",
+    "      Focus-WA",
+    "      Start-Sleep -Milliseconds 350",
+    "      [System.Windows.Forms.SendKeys]::SendWait('{ENTER}')",
+    "      $bmp.Dispose()",
+    "      Write-Host '   -> Bill photo (.png) sent!' -ForegroundColor Green",
+    "    } catch {",
+    "      Write-Host ('   -> Photo paste failed: ' + $_.Exception.Message) -ForegroundColor Red",
+    "    }",
+    "  }",
+    "  if ($idx -lt $items.Count) {",
+    "    $gap = Get-Random -Minimum $minGap -Maximum ($maxGap + 1)",
+    "    Write-Host ('   Waiting ' + $gap + 's (Anti-Block gap)...') -ForegroundColor DarkGray",
+    "    Start-Sleep -Seconds $gap",
+    "  }",
+    "}",
+    "Write-Host '============================================================' -ForegroundColor Green",
+    "Write-Host '  ALL MESSAGES COMPLETED!' -ForegroundColor Green",
+    "Write-Host '============================================================' -ForegroundColor Green"
+  ];
+
+  const batContent = [
+    "@echo off",
+    "chcp 65001 >nul",
+    "title Pragati Jal - Auto WhatsApp Sender",
+    "set \"PJ_BAT=%~f0\"",
+    "set \"PJ_PS=%TEMP%\\pj_wa_autosend_%RANDOM%.ps1\"",
+    "powershell -NoProfile -ExecutionPolicy Bypass -Command \"$lines=[System.IO.File]::ReadAllLines($env:PJ_BAT,[System.Text.Encoding]::UTF8); $s=-1; for($i=0;$i -lt $lines.Count;$i++){if($lines[$i] -eq '::PS_BEGIN::'){$s=$i+1;break}}; if($s -gt 0){[System.IO.File]::WriteAllLines($env:PJ_PS,[string[]]($lines[$s..($lines.Count-1)]),(New-Object System.Text.UTF8Encoding($true)))}\"",
+    "powershell -STA -NoProfile -ExecutionPolicy Bypass -File \"%PJ_PS%\"",
+    "del \"%PJ_PS%\" >nul 2>&1",
+    "pause",
+    "exit /b",
+    "::PS_BEGIN::",
+    ...psLines
+  ].join("\r\n");
+
+  const blob = new Blob([batContent], { type: "application/bat;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `Khanepani_Auto_WhatsApp_${waMonth || selectedUnitMonth || "Bills"}.bat`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+  showToast(`Windows Auto-Sender (${payload.length} ग्राहक) डाउनलोड भयो — Double-Click गरी चलाउनुहोस्!`, "success");
+};
+
+window.downloadWhatsappExcelCsv = function() {
+  if (!waQueue || !waQueue.length) return showToast("कुनै फोन नं. भएको ग्राहक सूची छैन।", "warning");
+  const escCsv = (val) => `"${String(val || "").replace(/"/g, '""')}"`;
+  const rows = [
+    ["CustomerID", "Name", "Phone", "BillMessage", "Status"]
+  ];
+  waQueue.forEach(item => {
+    const fullPhone = item.phone || getValidWhatsappPhone(item.customer?.phone);
+    if (!fullPhone) return;
+    rows.push([item.customer?.id || "", item.customer?.name || "", fullPhone, item.msg || "", ""]);
+  });
+  const csv = "\uFEFF" + rows.map(r => r.map(escCsv).join(",")).join("\r\n");
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `WhatsApp_Bills_${waMonth || selectedUnitMonth || "List"}.csv`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 4000);
+  showToast("Excel फाइल (.csv) डाउनलोड भयो!", "success");
+};
+
+window.copyExcelWhatsappVbaCode = async function() {
+  const minGap = Math.max(3, Math.min(60, Number(document.getElementById("wa-win-min-gap")?.value) || 7));
+  const maxGap = Math.max(minGap, Math.min(90, Number(document.getElementById("wa-win-max-gap")?.value) || 12));
+  const vba = [
+    "Sub AutoSendWhatsAppBills()",
+    "    Dim ws As Worksheet, lastRow As Long, r As Long",
+    "    Dim phone As String, msg As String, encMsg As String, url As String",
+    "    Dim gapSec As Integer",
+    "    Set ws = ActiveSheet",
+    "    lastRow = ws.Cells(ws.Rows.Count, 1).End(xlUp).Row",
+    "    Randomize",
+    "    For r = 2 To lastRow",
+    "        phone = Trim(CStr(ws.Cells(r, 3).Value))",
+    "        msg = CStr(ws.Cells(r, 4).Value)",
+    "        If phone <> \"\" And UCase(Trim(CStr(ws.Cells(r, 5).Value))) <> \"SENT\" Then",
+    "            encMsg = Application.WorksheetFunction.EncodeURL(msg)",
+    "            url = \"whatsapp://send?phone=\" & phone & \"&text=\" & encMsg",
+    "            ActiveWorkbook.FollowHyperlink Address:=url",
+    "            Application.Wait Now + TimeSerial(0, 0, 5)",
+    "            On Error Resume Next",
+    "            AppActivate \"WhatsApp\"",
+    "            On Error GoTo 0",
+    "            Application.Wait Now + TimeSerial(0, 0, 1)",
+    "            Application.SendKeys \"~\", True",
+    "            ws.Cells(r, 5).Value = \"SENT\"",
+    `            gapSec = Int((${maxGap} - ${minGap} + 1) * Rnd + ${minGap})`,
+    "            Application.Wait Now + TimeSerial(0, 0, gapSec)",
+    "        End If",
+    "    Next r",
+    "    MsgBox \"Phone no. vako sabai grahak lai WhatsApp pathaiyo!\", vbInformation",
+    "End Sub"
+  ].join("\r\n");
+
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(vba);
+      showToast("Excel VBA Macro कोड Copy भयो! Excel मा Alt+F11 थिची Module मा Paste गर्नुहोस्।", "success");
+    } else {
+      showToast("Clipboard उपलब्ध भएन।", "warning");
+    }
+  } catch (_) {
+    showToast("Copy गर्न सकिएन।", "warning");
+  }
 };
 
 // ============================================================================
@@ -9663,7 +10362,7 @@ window.openBulkWhatsappModal = function(month) {
       skippedItems.push({ id: c.id, name: c.name });
       return;
     }
-    validItems.push({ customer: c, reading: r, phone: fullPhone, msg: buildReadingWhatsappMessage(c, r), sent: false, blocked: false });
+    validItems.push({ customer: c, reading: r, phone: fullPhone, msg: buildReadingWhatsappMessage(c, r), sent: false, blocked: false, apiSent: false, error: "" });
   });
 
   if (!validItems.length) {
@@ -9674,7 +10373,11 @@ window.openBulkWhatsappModal = function(month) {
   waQueue = validItems;
   waSkippedNoPhone = skippedItems;
   waIndex = 0;
+  waApiRunning = false;
   clearInterval(waTimerHandle);
+  document.getElementById("wa-pause-btn")?.classList.add("hidden");
+  document.getElementById("wa-start-btn")?.classList.remove("hidden");
+  document.getElementById("wa-api-config-panel")?.classList.add("hidden");
   document.getElementById("wa-timer-text").textContent = "तयार";
   updateWhatsappModalUI();
   document.getElementById("whatsapp-modal").classList.remove("hidden");
