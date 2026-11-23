@@ -7,7 +7,8 @@ const APP_SHELL = [
   "./pwa-192x192.png?v=logo2",
   "./pwa-512x512.png?v=logo2",
   "./pwa-maskable-512x512.png?v=logo2",
-  "./apple-touch-icon.png?v=logo2"
+  "./apple-touch-icon.png?v=logo2",
+  "https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"
 ];
 
 self.addEventListener("install", (event) => {

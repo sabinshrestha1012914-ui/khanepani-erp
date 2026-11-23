@@ -167,7 +167,7 @@
       <button type="button" id="pwa-install-login-btn" onclick="triggerPWAInstall()" class="hidden w-full bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-300 font-semibold py-2 rounded-xl transition flex items-center justify-center gap-2 text-xs cursor-pointer">
         <i data-lucide="smartphone" class="w-4 h-4 text-teal-700"></i> मोबाइल / PC एप इन्स्टल गर्नुहोस् (Install App)
       </button>
-      <button type="button" id="offline-login-btn" onclick="window.enterOfflineReadingMode && window.enterOfflineReadingMode()" class="hidden w-full bg-amber-50 hover:bg-amber-100 text-amber-950 border border-amber-300 font-semibold py-2.5 rounded-xl transition flex items-center justify-center gap-2 text-xs cursor-pointer">
+      <button type="button" id="offline-login-btn" onclick="window.enterOfflineReadingMode && window.enterOfflineReadingMode()" class="w-full bg-amber-50 hover:bg-amber-100 text-amber-950 border border-amber-300 font-semibold py-2.5 rounded-xl transition flex items-center justify-center gap-2 text-xs cursor-pointer">
         <i data-lucide="wifi-off" class="w-4 h-4 text-amber-700"></i>
         <span id="offline-login-btn-text">अफलाइन मिटर रिडिङ खोल्नुहोस्</span>
       </button>
@@ -568,16 +568,29 @@
             setCloudBadge(true, "Admin Cloud Connected");
           } catch (e) {
             console.error("Admin verification failed", e);
+            const hasLocalCust = Array.isArray(window.ERP_STATE?.customers) && window.ERP_STATE.customers.length > 0;
+            const isOfflineErr = !navigator.onLine || String(e?.code || "").includes("unavailable") || /offline|network/i.test(String(e?.message || ""));
+            if (isOfflineErr && hasLocalCust) {
+              setCloudBadge(false, "अफलाइन मोड तयार");
+              window.refreshOfflineLoginButton?.();
+              window.enterOfflineReadingMode?.();
+              return;
+            }
             showLoginError("Admin अनुमति जाँच हुन सकेन। Firebase Security Rules र users/{uid} प्रोफाइल जाँच गर्नुहोस्।");
             await signOut(this.auth).catch(()=>{});
           }
         });
-        setCloudBadge(false, "Firebase जडान हुँदैछ…");
+        setCloudBadge(false, navigator.onLine ? "Firebase जडान हुँदैछ…" : "अफलाइन अवस्था");
       } catch (e) {
         console.error("Firebase initialization failed", e);
         this.enabled = false;
-        setCloudBadge(false, "Cloud unavailable");
-        showLoginError("Firebase जडान भएन। इन्टरनेट, Firebase config र Authentication सेटिङ जाँच गर्नुहोस्।");
+        setCloudBadge(false, navigator.onLine ? "Cloud unavailable" : "अफलाइन मोड");
+        window.refreshOfflineLoginButton?.();
+        if (!navigator.onLine && Array.isArray(window.ERP_STATE?.customers) && window.ERP_STATE.customers.length > 0) {
+          showLoginError("इन्टरनेट छैन — तलको 'अफलाइन मिटर रिडिङ खोल्नुहोस्' थिचेर बिना इन्टरनेट रिडिङ गर्न सक्नुहुन्छ।");
+        } else {
+          showLoginError("Firebase जडान भएन। इन्टरनेट, Firebase config र Authentication सेटिङ जाँच गर्नुहोस्।");
+        }
       }
     },
     async login(email, password) {
@@ -750,6 +763,7 @@
             applyingRemote = true;
             window.ERP_STATE = Object.assign({}, window.ERP_STATE, remote, { auth: { loggedIn: true, uid: this.currentUser.uid, email: this.currentUser.email || "" } });
             localStorage.setItem(LOCAL_KEY, JSON.stringify(safeState(window.ERP_STATE)));
+            window.refreshOfflineLoginButton?.();
             applyingRemote = false;
           }
         }
@@ -1533,9 +1547,11 @@ document.getElementById("login-form").addEventListener("submit", async function(
 });
 
 function logoutApp() {
+  window.PJ_OFFLINE_ONLY_MODE = false;
   window.ERP_STATE.auth.loggedIn = false;
   document.getElementById("app-shell").classList.add("hidden");
   document.getElementById("login-screen").classList.remove("hidden");
+  window.refreshOfflineLoginButton?.();
   window.cloudSync?.logout();
 }
 
@@ -13033,26 +13049,36 @@ updateConnectivityBanner();
     const txt = document.getElementById("offline-login-btn-text");
     if (!btn) return;
     try {
+      const memCount = Array.isArray(window.ERP_STATE?.customers) ? window.ERP_STATE.customers.length : 0;
       const raw = localStorage.getItem("KHANEPANI_ERP_LOCAL_BACKUP");
       const parsed = raw ? JSON.parse(raw) : null;
-      const custCount = Array.isArray(parsed?.customers) ? parsed.customers.length : 0;
+      const backupCount = Array.isArray(parsed?.customers) ? parsed.customers.length : 0;
+      const custCount = Math.max(memCount, backupCount);
       const pendingCount = getOutbox().length;
+      btn.classList.remove("hidden");
       if (custCount > 0) {
-        btn.classList.remove("hidden");
         if (txt) {
           txt.textContent = "अफलाइन मिटर रिडिङ खोल्नुहोस् (" + custCount + " ग्राहक" + (pendingCount ? " · " + pendingCount + " सिङ्क बाँकी" : "") + ")";
         }
-      } else {
-        btn.classList.add("hidden");
+      } else if (txt) {
+        txt.textContent = "अफलाइन मिटर रिडिङ (पहिले १ पटक अनलाइन लगइन गर्नुहोस्)";
       }
     } catch (_) {
-      btn.classList.add("hidden");
+      btn.classList.remove("hidden");
     }
   }
+  window.refreshOfflineLoginButton = refreshOfflineLoginButton;
 
   window.enterOfflineReadingMode = function() {
     if (!window.ERP_STATE?.customers?.length) {
-      return alert("फोनमा ग्राहक डाटा फेला परेन। पहिले कम्तीमा एकपटक अनलाइन लगइन गरी ग्राहक डाटा डाउनलोड गर्नुहोस्।");
+      const errEl = document.getElementById("login-error");
+      const msg = "फोनमा ग्राहक डाटा अझै डाउनलोड भएको छैन। पहिले १ पटक अनलाइन लगइन गर्नुहोस्, त्यसपछि बिना इन्टरनेट अफलाइन रिडिङ खुल्छ।";
+      if (errEl) {
+        errEl.textContent = msg;
+        errEl.classList.remove("hidden");
+      }
+      showToast?.(msg, "warning");
+      return;
     }
     window.PJ_OFFLINE_ONLY_MODE = true;
     window.ERP_STATE.auth = { loggedIn: true, uid: "offline-field", email: "अफलाइन मोड" };
@@ -13270,7 +13296,7 @@ updateConnectivityBanner();
       const pItem = pendingMap.get(c.id);
       const eItem = erpMap.get(c.id);
       const fin = getOfflineCustomerFinancials(c.id, offlineMonth, dt);
-      const prev = pItem ? pItem.prevReading : (eItem ? Number(eItem.prevReading ?? c.lastReading ?? 0) : Number(c.lastReading ?? 0));
+      const prev = Number(pItem ? (pItem.prevReading ?? c.lastReading ?? 0) : (eItem ? (eItem.prevReading ?? c.lastReading ?? 0) : (c.lastReading ?? 0))) || 0;
       const curr = pItem ? pItem.currReading : (eItem ? eItem.currReading : null);
       const units = pItem ? pItem.units : (eItem ? eItem.units : null);
 
@@ -13383,6 +13409,10 @@ updateConnectivityBanner();
               <span class="px-3 py-1.5 rounded-xl text-xs font-semibold ${onlineNow ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' : 'bg-amber-50 text-amber-800 border border-amber-200'}">
                 ${onlineNow ? 'अनलाइन — सिङ्क गर्न तयार' : 'अफलाइन — डाटा फोनमा सुरक्षित छ'}
               </span>
+              <button type="button" id="offline-ocr-prewarm-btn" onclick="window.prewarmOfflineMeterOcr && window.prewarmOfflineMeterOcr()"
+                class="bg-indigo-50 hover:bg-indigo-100 text-indigo-900 border border-indigo-200 text-xs font-bold px-3 py-2 rounded-xl shadow-sm transition cursor-pointer flex items-center gap-1.5">
+                <span>📥</span><span>अफलाइन क्यामेरा OCR तयार पार्नुहोस्</span>
+              </button>
               <button type="button" onclick="window.openAllOfflineBillsPdf()" ${doneCount === 0 ? 'disabled' : ''}
                 class="bg-slate-900 hover:bg-slate-800 disabled:bg-slate-200 disabled:text-slate-500 text-white text-xs font-bold px-3.5 py-2.5 rounded-xl shadow-sm transition cursor-pointer flex items-center gap-1.5">
                 <i data-lucide="file-text" class="w-4 h-4"></i>
@@ -13534,7 +13564,7 @@ updateConnectivityBanner();
     const outbox = getOutbox();
     const pItem = outbox.find(x => x.key === key);
     const eItem = fin.existing;
-    const prev = pItem ? pItem.prevReading : (eItem ? Number(eItem.prevReading ?? c.lastReading ?? 0) : Number(c.lastReading ?? 0));
+    const prev = Number(pItem ? (pItem.prevReading ?? c.lastReading ?? 0) : (eItem ? (eItem.prevReading ?? c.lastReading ?? 0) : (c.lastReading ?? 0))) || 0;
     const currVal = pItem ? pItem.currReading : (eItem ? eItem.currReading : "");
     const maintVal = pItem ? (pItem.maintenanceAmount || 0) : (eItem ? (eItem.maintenanceAmount || 0) : (fin.currUnlinkedMaint || 0));
     const includedIds = pItem
@@ -14074,8 +14104,8 @@ updateConnectivityBanner();
     return tesseractLoadPromise;
   }
 
-  function preprocessCanvasForDigits(srcCanvas) {
-    const scale = srcCanvas.width < 640 ? Math.min(3, Math.ceil(640 / Math.max(1, srcCanvas.width))) : 1;
+  function preprocessCanvasForDigits(srcCanvas, invert = false, bias = 6) {
+    const scale = srcCanvas.width < 720 ? Math.min(3, Math.ceil(720 / Math.max(1, srcCanvas.width))) : 1;
     const w = Math.max(1, Math.round(srcCanvas.width * scale));
     const h = Math.max(1, Math.round(srcCanvas.height * scale));
     const out = document.createElement("canvas");
@@ -14087,94 +14117,164 @@ updateConnectivityBanner();
 
     const img = ctx.getImageData(0, 0, w, h);
     const d = img.data;
-    const hist = new Array(256).fill(0);
     const gray = new Uint8Array(w * h);
-    let minG = 255;
-    let maxG = 0;
 
     for (let i = 0, p = 0; i < d.length; i += 4, p++) {
-      // Luminance emphasizing dark/white mechanical wheels while muting red dials slightly
-      const g = Math.max(0, Math.min(255, Math.round(0.25 * d[i] + 0.60 * d[i + 1] + 0.15 * d[i + 2])));
-      gray[p] = g;
-      if (g < minG) minG = g;
-      if (g > maxG) maxG = g;
+      // Suppress red decimal wheels slightly while keeping white/black digits crisp
+      const g = Math.max(0, Math.min(255, Math.round(0.22 * d[i] + 0.62 * d[i + 1] + 0.16 * d[i + 2])));
+      gray[p] = invert ? (255 - g) : g;
     }
 
-    const span = Math.max(1, maxG - minG);
-    for (let p = 0; p < gray.length; p++) {
-      const stretched = Math.round(((gray[p] - minG) / span) * 255);
-      gray[p] = stretched;
-      hist[stretched]++;
-    }
-
-    // Otsu threshold
-    const total = gray.length;
-    let sum = 0;
-    for (let t = 0; t < 256; t++) sum += t * hist[t];
-    let sumB = 0;
-    let wB = 0;
-    let maxVar = 0;
-    let threshold = 128;
-    for (let t = 0; t < 256; t++) {
-      wB += hist[t];
-      if (wB === 0) continue;
-      const wF = total - wB;
-      if (wF === 0) break;
-      sumB += t * hist[t];
-      const mB = sumB / wB;
-      const mF = (sum - sumB) / wF;
-      const betweenVar = wB * wF * (mB - mF) * (mB - mF);
-      if (betweenVar > maxVar) {
-        maxVar = betweenVar;
-        threshold = t;
+    // Integral image for fast local adaptive thresholding (handles glass glare & dark meter drums)
+    const integral = new Float64Array((w + 1) * (h + 1));
+    const stride = w + 1;
+    for (let y = 0; y < h; y++) {
+      let rowSum = 0;
+      const yOff = y * w;
+      const iOff = (y + 1) * stride;
+      const pOff = y * stride;
+      for (let x = 0; x < w; x++) {
+        rowSum += gray[yOff + x];
+        integral[iOff + x + 1] = integral[pOff + x + 1] + rowSum;
       }
     }
 
-    for (let i = 0, p = 0; i < d.length; i += 4, p++) {
-      const val = gray[p] >= threshold ? 255 : 0;
-      d[i] = val;
-      d[i + 1] = val;
-      d[i + 2] = val;
-      d[i + 3] = 255;
+    const r = Math.max(8, Math.round(Math.min(w, h) * 0.14));
+    for (let y = 0; y < h; y++) {
+      const y1 = Math.max(0, y - r);
+      const y2 = Math.min(h - 1, y + r);
+      for (let x = 0; x < w; x++) {
+        const x1 = Math.max(0, x - r);
+        const x2 = Math.min(w - 1, x + r);
+        const area = (x2 - x1 + 1) * (y2 - y1 + 1);
+        const sum =
+          integral[(y2 + 1) * stride + (x2 + 1)] -
+          integral[y1 * stride + (x2 + 1)] -
+          integral[(y2 + 1) * stride + x1] +
+          integral[y1 * stride + x1];
+        const localMean = sum / area;
+        const p = y * w + x;
+        const val = gray[p] < (localMean - bias) ? 0 : 255;
+        const di = p * 4;
+        d[di] = val;
+        d[di + 1] = val;
+        d[di + 2] = val;
+        d[di + 3] = 255;
+      }
     }
     ctx.putImageData(img, 0, 0);
     return out;
   }
 
-  async function runOfflineTesseractOcr(tightCanvas) {
-    const Tesseract = await ensureTesseractLoaded();
-    const binaryCanvas = preprocessCanvasForDigits(tightCanvas);
-    const res = await Tesseract.recognize(binaryCanvas, "eng", {
-      tessedit_char_whitelist: "0123456789",
-      tessedit_pageseg_mode: "7"
+  let tesseractWorkerPromise = null;
+
+  async function getTesseractDigitWorker() {
+    if (tesseractWorkerPromise) return tesseractWorkerPromise;
+    tesseractWorkerPromise = (async () => {
+      const Tesseract = await ensureTesseractLoaded();
+      if (typeof Tesseract.createWorker === "function") {
+        const worker = await Tesseract.createWorker("eng");
+        await worker.setParameters({
+          tessedit_char_whitelist: "0123456789",
+          tessedit_pageseg_mode: "7"
+        });
+        return { mode: "worker", worker };
+      }
+      return { mode: "direct", Tesseract };
+    })().catch((err) => {
+      tesseractWorkerPromise = null;
+      throw err;
     });
-    const raw = (res?.data?.text || "").replace(/\s+/g, "");
-    const match = raw.match(/\d+/g);
-    const reading = match ? match.join("") : "";
-    const conf = Number(res?.data?.confidence || 0);
+    return tesseractWorkerPromise;
+  }
+
+  window.prewarmOfflineMeterOcr = async function() {
+    const btn = document.getElementById("offline-ocr-prewarm-btn");
+    if (btn) {
+      btn.disabled = true;
+      btn.innerHTML = `<span>⏳</span><span>अफलाइन OCR तयार हुँदैछ...</span>`;
+    }
+    try {
+      await getTesseractDigitWorker();
+      try { localStorage.setItem("PJ_OFFLINE_OCR_READY", "1"); } catch (_) {}
+      if (btn) {
+        btn.innerHTML = `<span>✅</span><span>अफलाइन क्यामेरा OCR तयार छ</span>`;
+        btn.className = "bg-emerald-50 text-emerald-900 border border-emerald-300 text-xs font-bold px-3 py-2 rounded-xl shadow-sm flex items-center gap-1.5";
+      }
+      showToast?.("अफलाइन क्यामेरा OCR इन्जिन फोनमा सुरक्षित भयो! अब बिना इन्टरनेट पनि काम गर्छ।", "success");
+    } catch (err) {
+      if (btn) {
+        btn.disabled = false;
+        btn.innerHTML = `<span>📥</span><span>अफलाइन क्यामेरा OCR तयार पार्नुहोस्</span>`;
+      }
+      showToast?.(err?.message || "अफलाइन OCR डाउनलोड हुन सकेन। कृपया इन्टरनेट हुँदा प्रयास गर्नुहोस्।", "error");
+    }
+  };
+
+  async function runOfflineTesseractOcr(tightCanvas, prevReading) {
+    const engine = await getTesseractDigitWorker();
+    const prevDigitsLen = prevReading > 0 ? String(Math.round(prevReading)).length : 3;
+
+    // Test both inverted (white digits on black mechanical drums) and normal (black digits on white/LCD)
+    const variants = [
+      { canvas: preprocessCanvasForDigits(tightCanvas, true, 7), psm: "7" },
+      { canvas: preprocessCanvasForDigits(tightCanvas, true, 12), psm: "6" },
+      { canvas: preprocessCanvasForDigits(tightCanvas, false, 7), psm: "7" },
+      { canvas: preprocessCanvasForDigits(tightCanvas, false, 12), psm: "6" }
+    ];
+
+    let best = { reading: "", raw: "", conf: 0, score: -1 };
+    for (const v of variants) {
+      let res;
+      if (engine.mode === "worker") {
+        await engine.worker.setParameters({ tessedit_char_whitelist: "0123456789", tessedit_pageseg_mode: v.psm });
+        res = await engine.worker.recognize(v.canvas);
+      } else {
+        res = await engine.Tesseract.recognize(v.canvas, "eng");
+      }
+      const raw = (res?.data?.text || "").replace(/\s+/g, "");
+      const groups = raw.match(/\d+/g) || [];
+      // Join close digit fragments if separated by wheel dividers, or take longest sequence
+      const joined = groups.join("");
+      const candidate = joined.length <= 7 ? joined : (groups.sort((a, b) => b.length - a.length)[0] || "");
+      const conf = Number(res?.data?.confidence || 0);
+      if (!candidate) continue;
+      const numVal = Number(candidate);
+      const lenBonus = Math.min(candidate.length, 6) * 14;
+      const matchPrevLenBonus = candidate.length >= prevDigitsLen && candidate.length <= prevDigitsLen + 2 ? 18 : 0;
+      const realisticBonus = Number.isFinite(numVal) && numVal >= prevReading ? 15 : 0;
+      const score = conf + lenBonus + matchPrevLenBonus + realisticBonus;
+      if (score > best.score) {
+        best = { reading: String(Number(candidate)), raw: candidate, conf, score };
+      }
+    }
+
     return {
-      reading,
-      rawCounter: raw || reading,
-      confidence: conf >= 70 ? "high" : (conf >= 45 ? "medium" : "low"),
-      notes: reading
-        ? "अफलाइन यन्त्र OCR बाट पढिएको हो — कृपया फोटोसँग मिलाएर पुष्टि गर्नुहोस्।"
-        : "अङ्क स्पष्ट पढिएन — कृपया फ्ल्यास बालेर वा नजिकबाट पुनः फोटो खिच्नुहोस्।",
+      reading: best.reading,
+      rawCounter: best.raw || best.reading,
+      confidence: best.conf >= 68 ? "high" : (best.conf >= 42 ? "medium" : "low"),
+      notes: best.reading
+        ? "अफलाइन यन्त्र OCR बाट पढिएको हो — यान्त्रिक मिटरमा कहिलेकाहीँ सिसा चम्कँदा अङ्क फरक पर्न सक्छ, कृपया माथिको फोटो हेरेर जाँच गर्नुहोस्।"
+        : "अङ्क स्पष्ट पढिएन — कृपया मिटरको कालो अङ्क बक्सभरि जुम गरी फ्ल्यास बालेर पुनः खिच्नुहोस्।",
       engine: "offline-tesseract"
     };
   }
 
-  async function runServerGeminiOcr(uploadCanvas, prevReading) {
-    const dataUrl = uploadCanvas.toDataURL("image/jpeg", 0.88);
-    const base64 = dataUrl.split(",")[1] || "";
+  async function runServerGeminiOcr(wideCanvas, tightCanvas, prevReading) {
+    const fullUrl = wideCanvas.toDataURL("image/jpeg", 0.88);
+    const cropUrl = tightCanvas.toDataURL("image/jpeg", 0.90);
+    const imageBase64 = fullUrl.split(",")[1] || "";
+    const cropBase64 = cropUrl.split(",")[1] || "";
     const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 14000);
+    const timer = setTimeout(() => ctrl.abort(), 16000);
     try {
       const resp = await fetch("/api/ocr-meter", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         signal: ctrl.signal,
         body: JSON.stringify({
-          imageBase64: base64,
+          imageBase64,
+          cropBase64,
           mimeType: "image/jpeg",
           prevReading: Number.isFinite(Number(prevReading)) ? Number(prevReading) : undefined
         })
@@ -14197,10 +14297,8 @@ updateConnectivityBanner();
   }
 
   function buildCroppedCanvasesFromSource(sourceEl, srcW, srcH, isVideoFeed) {
-    // Tight crop matches visual guide box (~78% width x ~30% height centered)
-    // Context crop gives a slightly wider view for Gemini Vision (~90% width x ~52% height)
+    // Tight crop matches the green visual guide box; wideCanvas sends FULL frame so Gemini sees full dial + black/red wheels
     let cropX = 0, cropY = 0, cropW = srcW, cropH = srcH;
-    let wideX = 0, wideY = 0, wideW = srcW, wideH = srcH;
 
     if (isVideoFeed && sourceEl) {
       const rect = sourceEl.getBoundingClientRect();
@@ -14221,23 +14319,11 @@ updateConnectivityBanner();
       cropY = Math.max(0, Math.round((guideTop + offsetY) / scale));
       cropW = Math.min(srcW - cropX, Math.max(40, Math.round(guideW / scale)));
       cropH = Math.min(srcH - cropY, Math.max(40, Math.round(guideH / scale)));
-
-      const padX = Math.round(cropW * 0.14);
-      const padY = Math.round(cropH * 0.45);
-      wideX = Math.max(0, cropX - padX);
-      wideY = Math.max(0, cropY - padY);
-      wideW = Math.min(srcW - wideX, cropW + padX * 2);
-      wideH = Math.min(srcH - wideY, cropH + padY * 2);
     } else {
-      // Uploaded / native camera photo: take center 82% x 46% for tight crop, full image (capped 1280px) for Gemini
       cropX = Math.round(srcW * 0.08);
       cropY = Math.round(srcH * 0.25);
       cropW = Math.max(40, Math.round(srcW * 0.84));
       cropH = Math.max(40, Math.round(srcH * 0.50));
-      wideX = 0;
-      wideY = 0;
-      wideW = srcW;
-      wideH = srcH;
     }
 
     const tightCanvas = document.createElement("canvas");
@@ -14248,11 +14334,11 @@ updateConnectivityBanner();
     tightCanvas.getContext("2d").drawImage(sourceEl, cropX, cropY, cropW, cropH, 0, 0, tightCanvas.width, tightCanvas.height);
 
     const wideCanvas = document.createElement("canvas");
-    const maxWideW = 1100;
-    const wideScale = wideW > maxWideW ? maxWideW / wideW : 1;
-    wideCanvas.width = Math.max(1, Math.round(wideW * wideScale));
-    wideCanvas.height = Math.max(1, Math.round(wideH * wideScale));
-    wideCanvas.getContext("2d").drawImage(sourceEl, wideX, wideY, wideW, wideH, 0, 0, wideCanvas.width, wideCanvas.height);
+    const maxWideW = 1280;
+    const wideScale = srcW > maxWideW ? maxWideW / srcW : 1;
+    wideCanvas.width = Math.max(1, Math.round(srcW * wideScale));
+    wideCanvas.height = Math.max(1, Math.round(srcH * wideScale));
+    wideCanvas.getContext("2d").drawImage(sourceEl, 0, 0, srcW, srcH, 0, 0, wideCanvas.width, wideCanvas.height);
 
     return { tightCanvas, wideCanvas };
   }
@@ -14306,7 +14392,7 @@ updateConnectivityBanner();
     let result = null;
     if (navigator.onLine) {
       try {
-        result = await runServerGeminiOcr(wideCanvas, currentContext.prevReading);
+        result = await runServerGeminiOcr(wideCanvas, tightCanvas, currentContext.prevReading);
       } catch (err) {
         if (err && err.message !== "OCR_BACKEND_UNAVAILABLE") {
           console.warn("Gemini OCR fallback triggered:", err.message);
@@ -14319,7 +14405,7 @@ updateConnectivityBanner();
         statusEl.innerHTML = `<span class="inline-block w-3 h-3 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin align-middle mr-1.5"></span>अफलाइन यन्त्र OCR बाट अङ्क पढिँदैछ...`;
       }
       try {
-        result = await runOfflineTesseractOcr(tightCanvas);
+        result = await runOfflineTesseractOcr(tightCanvas, currentContext.prevReading);
       } catch (ocrErr) {
         result = {
           reading: "",
@@ -14420,17 +14506,30 @@ updateConnectivityBanner();
     }
   };
 
+  window.setMeterCameraZoom = async function(val) {
+    if (!activeStream) return;
+    const track = activeStream.getVideoTracks?.()[0];
+    if (!track) return;
+    try {
+      await track.applyConstraints({ advanced: [{ zoom: Number(val) }] });
+      const lbl = document.getElementById("cam-zoom-label");
+      if (lbl) lbl.textContent = Number(val).toFixed(1) + "x";
+    } catch (_) {}
+  };
+
   async function startLiveCameraFeed() {
     const stageLive = document.getElementById("cam-stage-live");
     const stageReview = document.getElementById("cam-stage-review");
     const errBox = document.getElementById("cam-live-error");
     const videoEl = document.getElementById("cam-meter-video");
     const torchBtn = document.getElementById("cam-torch-btn");
+    const zoomWrap = document.getElementById("cam-zoom-wrap");
 
     if (stageReview) stageReview.classList.add("hidden");
     if (stageLive) stageLive.classList.remove("hidden");
     if (errBox) { errBox.classList.add("hidden"); errBox.textContent = ""; }
     if (torchBtn) torchBtn.classList.add("hidden");
+    if (zoomWrap) zoomWrap.classList.add("hidden");
 
     stopCameraStream();
 
@@ -14446,8 +14545,8 @@ updateConnectivityBanner();
       const stream = await navigator.mediaDevices.getUserMedia({
         video: {
           facingMode: { ideal: "environment" },
-          width: { ideal: 1280 },
-          height: { ideal: 720 }
+          width: { ideal: 1920 },
+          height: { ideal: 1080 }
         },
         audio: false
       });
@@ -14463,6 +14562,22 @@ updateConnectivityBanner();
         if (torchBtn) {
           torchBtn.classList.remove("hidden");
           torchBtn.textContent = "🔦 फ्ल्यास: OFF";
+        }
+      }
+      if (caps && caps.zoom && Number(caps.zoom.max) > Number(caps.zoom.min || 1)) {
+        const zSlider = document.getElementById("cam-zoom-slider");
+        const zLbl = document.getElementById("cam-zoom-label");
+        if (zSlider && zoomWrap) {
+          const zMin = Number(caps.zoom.min || 1);
+          const zMax = Math.min(4, Number(caps.zoom.max || 3));
+          const zDef = Math.min(zMax, Math.max(zMin, 1.5));
+          zSlider.min = String(zMin);
+          zSlider.max = String(zMax);
+          zSlider.step = String(caps.zoom.step || 0.1);
+          zSlider.value = String(zDef);
+          if (zLbl) zLbl.textContent = zDef.toFixed(1) + "x";
+          zoomWrap.classList.remove("hidden");
+          await track.applyConstraints({ advanced: [{ zoom: zDef }] }).catch(() => {});
         }
       }
     } catch (err) {
@@ -14587,6 +14702,11 @@ updateConnectivityBanner();
             </div>
 
             <div id="cam-live-error" class="hidden bg-amber-950/70 border border-amber-500/50 text-amber-200 rounded-xl px-3 py-2 text-xs"></div>
+
+            <div id="cam-zoom-wrap" class="hidden bg-slate-800/80 border border-slate-700 rounded-xl px-3 py-2 flex items-center gap-2 text-xs">
+              <span class="text-slate-300 font-semibold shrink-0">🔍 जुम (<span id="cam-zoom-label">1.5x</span>):</span>
+              <input id="cam-zoom-slider" type="range" min="1" max="4" step="0.1" value="1.5" oninput="window.setMeterCameraZoom(this.value)" class="flex-1 accent-emerald-500 cursor-pointer">
+            </div>
 
             <div class="flex flex-wrap items-center justify-between gap-2">
               <button type="button" id="cam-torch-btn" onclick="window.toggleMeterCameraTorch()" class="hidden px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-semibold text-xs border border-slate-600 cursor-pointer">
