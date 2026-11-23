@@ -1,5 +1,5 @@
-// Service Worker for Pragati Jal ERP (Mobile + PC Desktop PWA with Auto-Update & Offline Meter Reading)
-const CACHE_NAME = "pragati-jal-erp-v7";
+// Service Worker for Pragati Jal ERP (Mobile + PC Desktop PWA with Auto-Update & Offline Meter Reading + Camera OCR)
+const CACHE_NAME = "pragati-jal-erp-v8";
 const APP_SHELL = [
   "./",
   "./index.html",
@@ -39,8 +39,9 @@ self.addEventListener("fetch", (event) => {
 
   const url = new URL(req.url);
 
-  // Never intercept live Firebase Firestore / Auth API calls
+  // Never intercept live Firebase or local backend /api/* calls
   if (
+    (url.origin === self.location.origin && url.pathname.startsWith("/api/")) ||
     url.hostname.includes("firestore.googleapis.com") ||
     url.hostname.includes("identitytoolkit.googleapis.com") ||
     url.hostname.includes("securetoken.googleapis.com") ||
@@ -86,10 +87,11 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // External CDN & Firebase SDK scripts: Cache-First so offline startup works cleanly
+  // External CDN, Firebase SDK & Tesseract.js OCR assets: Cache-First so offline startup & camera OCR work cleanly
   if (
     url.hostname.includes("cdn.tailwindcss.com") ||
     url.hostname.includes("unpkg.com") ||
+    url.hostname.includes("cdn.jsdelivr.net") ||
     url.hostname.includes("fonts.googleapis.com") ||
     url.hostname.includes("fonts.gstatic.com") ||
     url.hostname.includes("www.gstatic.com")
