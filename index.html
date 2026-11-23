@@ -6497,17 +6497,28 @@ function renderBankModule() {
     /bank|बैंक/i.test(String(i.mode || "")) &&
     i.bankId
   );
+  const directBankExpenses = (st.expenses || []).filter(e =>
+    /bank|बैंक/i.test(String(e.mode || "")) && e.bankId
+  );
+  const directBankPayroll = (st.staffPayroll || []).filter(p =>
+    /bank|बैंक/i.test(String(p.mode || "")) && p.bankId
+  );
 
   const bankBalances = st.bankAccounts.map(b => {
     const dep = st.bankTransactions.filter(t => t.bankId === b.id && t.type === "Deposit").reduce((a, c) => a + Number(c.amount), 0);
     const incDep = directBankIncomes.filter(i => i.bankId === b.id).reduce((a, c) => a + Number(c.amount || 0), 0);
     const wit = st.bankTransactions.filter(t => t.bankId === b.id && t.type === "Withdraw").reduce((a, c) => a + Number(c.amount), 0);
-    return { ...b, balance: Number(b.openingBalance) + dep + incDep - wit };
+    const expWit = directBankExpenses.filter(e => e.bankId === b.id).reduce((a, c) => a + Number(c.amount || 0), 0);
+    const payWit = directBankPayroll.filter(p => p.bankId === b.id).reduce((a, c) => a + Number(c.amount || 0), 0);
+    return { ...b, balance: Number(b.openingBalance) + dep + incDep - wit - expWit - payWit };
   });
   const unlinkedBankIncTotal = directBankIncomes
     .filter(i => !st.bankAccounts.some(b => b.id === i.bankId))
     .reduce((a, c) => a + Number(c.amount || 0), 0);
-  const totalAllBanks = bankBalances.reduce((s, b) => s + b.balance, 0) + Number(st.settings.openingBank || 0) + unlinkedBankIncTotal;
+  const unlinkedBankOutTotal = [...directBankExpenses, ...directBankPayroll]
+    .filter(x => !st.bankAccounts.some(b => b.id === x.bankId))
+    .reduce((a, c) => a + Number(c.amount || 0), 0);
+  const totalAllBanks = bankBalances.reduce((s, b) => s + b.balance, 0) + Number(st.settings.openingBank || 0) + unlinkedBankIncTotal - unlinkedBankOutTotal;
 
   const combinedTx = [
     ...(st.bankTransactions || []).map(t => ({ ...t })),
@@ -6518,7 +6529,26 @@ function renderBankModule() {
       type: "Deposit",
       amount: Number(i.amount || 0),
       remarks: `${i.category || 'आम्दानी'}${i.remarks ? ': ' + i.remarks : ''}`
-    }))
+    })),
+    ...directBankExpenses.map(e => ({
+      id: e.id,
+      bankId: e.bankId,
+      date: e.date,
+      type: "Withdraw",
+      amount: Number(e.amount || 0),
+      remarks: `खर्च भरपाई (${e.bharpaiNo || e.category})${e.remarks ? ': ' + e.remarks : ''}`
+    })),
+    ...directBankPayroll.map(p => {
+      const sf = (st.staffList || []).find(s => s.id === p.staffId);
+      return {
+        id: p.id,
+        bankId: p.bankId,
+        date: p.date,
+        type: "Withdraw",
+        amount: Number(p.amount || 0),
+        remarks: `तलब/पे-रोल (${sf ? sf.name : p.staffId} - ${p.month || ''})`
+      };
+    })
   ].sort((a, b) => bsToSerialDays(a.date) - bsToSerialDays(b.date));
 
   const filteredTx = combinedTx.filter(t => {
@@ -6832,40 +6862,250 @@ let expFilterCat = "ALL";
 var expFromBS = getFiscalYearInfoBS().fromBS;
 var expToBS = getFiscalYearInfoBS().toBS;
 
+let expBharpaiOpen = true;
+
+function buildCommitteeBharpaiHeaderHTML(title, docNo, dateBS, badgeColor = "bg-amber-800") {
+  const s = window.ERP_STATE?.settings || {};
+  return `
+    <div class="flex items-start justify-between border-b-2 border-slate-900 pb-3 gap-3">
+      <div class="flex items-center gap-3">
+        ${s.logoDataUrl
+          ? `<img src="${s.logoDataUrl}" class="w-16 h-16 object-contain shrink-0">`
+          : `<div class="w-14 h-14 rounded-full bg-teal-800 text-white flex items-center justify-center font-bold text-lg shrink-0">प्र.ज.</div>`}
+        <div class="space-y-0.5">
+          <div class="text-[10px] font-semibold text-slate-600">स्थापना: वि.सं. ${escapeHtmlSafe(s.estYear || '२०५६')} | दर्ता नं.: ${escapeHtmlSafe(s.regNo || '१७६')} | प्यान नं.: ${escapeHtmlSafe(s.panNo || '६२४९४४५८६')}</div>
+          <h2 class="text-xl font-extrabold text-slate-900 tracking-tight">${escapeHtmlSafe(s.committeeName || 'प्रगति जल उपभोक्ता समिति')}</h2>
+          <p class="text-xs text-slate-700">${escapeHtmlSafe(s.address || '')} | फोन: ${escapeHtmlSafe(s.phone || '')}</p>
+        </div>
+      </div>
+      <div class="text-right space-y-1 shrink-0">
+        <div class="inline-block px-3 py-1 ${badgeColor} text-white text-xs font-bold rounded">${escapeHtmlSafe(title)}</div>
+        <div class="text-xs font-bold text-slate-900">भरपाई / भौचर नं.: <span class="font-extrabold">${escapeHtmlSafe(docNo || '-')}</span></div>
+        <div class="text-xs font-bold text-teal-900">मिति (वि.सं.): ${escapeHtmlSafe(toNepaliDigits(dateBS || '-'))} (${escapeHtmlSafe(dateBS || '-')})</div>
+        <div class="text-[10px] text-slate-600">आ.व.: ${escapeHtmlSafe(s.patraSankhya || '२०८३/०८४')}</div>
+      </div>
+    </div>
+  `;
+}
+
+function buildOfficialSignatureFooterHTML(receiverTitle = "रकम बुझिलिनेको सही", receiverName = "", receiverPhone = "", receiverAddr = "", includeThumbBox = true) {
+  const s = window.ERP_STATE?.settings || {};
+  const officers = s.tamasukOfficers || {};
+  const prepName = officers.preparerName || s.authorizedPerson || "व्यवस्थापक";
+  const treasName = officers.treasurerName || "कोषाध्यक्ष";
+  const presName = officers.presidentName || "अध्यक्ष";
+  return `
+    <div class="pt-4 mt-2 border-t border-slate-300 space-y-4">
+      <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 text-[11px] items-end pt-2">
+        <div class="border border-slate-300 rounded-lg p-2.5 bg-slate-50/70 space-y-1">
+          <div class="font-bold text-slate-800 border-b border-slate-200 pb-1">${escapeHtmlSafe(receiverTitle)}</div>
+          <div class="flex items-end justify-between gap-2 pt-5">
+            <div class="flex-1 space-y-0.5">
+              <div class="border-b border-slate-500 h-4"></div>
+              <div><strong>नाम:</strong> ${escapeHtmlSafe(receiverName || '________________')}</div>
+              ${receiverAddr ? `<div><strong>ठेगाना:</strong> ${escapeHtmlSafe(receiverAddr)}</div>` : ""}
+              <div><strong>फोन / ना.नं.:</strong> ${escapeHtmlSafe(receiverPhone || '____________')}</div>
+            </div>
+            ${includeThumbBox ? `
+              <div class="w-16 text-center shrink-0">
+                <div class="w-14 h-14 mx-auto border border-dashed border-slate-500 rounded bg-white flex items-center justify-center text-[9px] text-slate-400">औँठा छाप</div>
+              </div>
+            ` : ""}
+          </div>
+        </div>
+
+        <div class="text-center space-y-1 pt-8">
+          <div class="border-b border-slate-600 w-44 mx-auto"></div>
+          <div class="font-bold text-slate-900">${escapeHtmlSafe(prepName)}</div>
+          <div class="text-[10px] text-slate-600">तयार / सिफारिस गर्ने (व्यवस्थापक/सचिव)</div>
+        </div>
+
+        <div class="text-center space-y-1 pt-8">
+          <div class="flex justify-center gap-3">
+            <div class="flex-1">
+              <div class="border-b border-slate-600 mb-1"></div>
+              <div class="font-bold text-slate-900 text-[10px]">${escapeHtmlSafe(treasName)}</div>
+              <div class="text-[9px] text-slate-600">कोषाध्यक्ष</div>
+            </div>
+            <div class="flex-1">
+              <div class="border-b border-slate-600 mb-1"></div>
+              <div class="font-bold text-slate-900 text-[10px]">${escapeHtmlSafe(presName)}</div>
+              <div class="text-[9px] text-slate-600">अध्यक्ष / प्रमाणित</div>
+            </div>
+          </div>
+          <div class="text-[9px] text-slate-500 pt-0.5">(संस्थाको आधिकारिक छाप)</div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
 function renderExpenseModule() {
+  ensureExtensionState();
   const st = window.ERP_STATE;
   const filtered = st.expenses.filter(ex => {
     const matchCat = expFilterCat === "ALL" || ex.category === expFilterCat;
     const matchDate = isDateBetweenBS(ex.date, expFromBS, expToBS);
     return matchCat && matchDate;
   });
-  const totalFiltered = filtered.reduce((s, e) => s + Number(e.amount), 0);
+  const totalFiltered = filtered.reduce((s, e) => s + Number(e.amount || 0), 0);
 
   return `
     <div class="space-y-6">
-      <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
-        <h3 class="text-base font-bold text-slate-800 mb-4">खर्च इन्ट्री (Expense Entry)</h3>
-        <form onsubmit="addExpenseEntry(event)" class="grid grid-cols-1 sm:grid-cols-4 gap-3 text-xs">
+      <datalist id="exp-staff-names-list">
+        ${(st.staffList || []).map(sf => `<option value="${escapeHtmlSafe(sf.name)}">${escapeHtmlSafe(sf.role || '')}</option>`).join("")}
+      </datalist>
+
+      <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-4">
+        <div class="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3">
           <div>
-            <label class="font-semibold text-slate-600 block mb-1">खर्च शीर्षक *</label>
-            <select id="exp-cat" class="w-full border border-slate-300 rounded-xl px-3 py-2 font-semibold">
-              ${EXPENSE_CATEGORIES.map(c => `<option value="${c}">${c}</option>`).join("")}
-            </select>
+            <h3 class="text-base font-bold text-slate-800 flex items-center gap-2">
+              <i data-lucide="file-text" class="w-5 h-5 text-rose-700"></i>
+              <span id="exp-form-title">खर्च तथा मर्मत भरपाई इन्ट्री (Expense &amp; Maintenance Bharpai)</span>
+            </h3>
+            <p class="text-xs text-slate-500">मर्मत तथा अन्य खर्च इन्ट्री गर्दा के-के मर्मत गरेको, को-को कति जना संलग्न भएको र आधिकारिक लिखित भरपाई प्रिन्ट गर्न मिल्छ।</p>
           </div>
-          <div>
-            <label class="font-semibold text-slate-600 block mb-1">मिति (Auto BS)</label>
-            <input type="text" id="exp-date" value="${st.activeBSDate}" class="w-full bg-teal-50 border border-teal-300 rounded-xl px-3 py-2 font-bold">
+          <button type="button" onclick="toggleExpBharpaiPanel()" class="bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 text-xs font-semibold px-3 py-1.5 rounded-xl cursor-pointer">
+            मर्मत / भरपाई विवरण देखाउनुहोस्/लुकाउनुहोस्
+          </button>
+        </div>
+
+        <form id="exp-entry-form" onsubmit="addExpenseEntry(event, false)" class="space-y-4 text-xs">
+          <input type="hidden" id="edit-exp-id" value="">
+          <div class="grid grid-cols-1 sm:grid-cols-5 gap-3">
+            <div>
+              <label class="font-semibold text-slate-600 block mb-1">खर्च शीर्षक *</label>
+              <select id="exp-cat" onchange="handleExpCategoryChange(this.value)" class="w-full border border-slate-300 rounded-xl px-3 py-2 font-semibold">
+                ${EXPENSE_CATEGORIES.map(c => `<option value="${escapeHtmlSafe(c)}" ${c === 'मर्मत खर्च' ? 'selected' : ''}>${escapeHtmlSafe(c)}</option>`).join("")}
+              </select>
+            </div>
+            <div>
+              <label class="font-semibold text-slate-600 block mb-1">मिति (Auto BS) *</label>
+              <input type="text" id="exp-date" value="${escapeHtmlSafe(st.activeBSDate)}" required class="w-full bg-teal-50 border border-teal-300 rounded-xl px-3 py-2 font-bold">
+            </div>
+            <div>
+              <label class="font-semibold text-slate-600 block mb-1">भरपाई / बिल नं.</label>
+              <input type="text" id="exp-bharpai-no" placeholder="स्वतः बन्छ (उदा: BHR-2083-101)" class="w-full border border-slate-300 rounded-xl px-3 py-2 font-semibold">
+            </div>
+            <div>
+              <label class="font-semibold text-slate-600 block mb-1">खर्च रकम (रू.) *</label>
+              <input type="number" id="exp-amount" required min="1" step="0.01" class="w-full border-2 border-rose-300 bg-rose-50/30 rounded-xl px-3 py-2 font-bold text-rose-950">
+            </div>
+            <div>
+              <label class="font-semibold text-slate-600 block mb-1">भुक्तानी माध्यम</label>
+              <select id="exp-mode" onchange="document.getElementById('exp-bank-wrap')?.classList.toggle('hidden', this.value !== 'Bank')" class="w-full border border-slate-300 rounded-xl px-3 py-2 font-semibold">
+                <option value="Cash">नगद (Cash)</option>
+                <option value="Bank">बैंक / चेक (Bank)</option>
+              </select>
+            </div>
           </div>
-          <div>
-            <label class="font-semibold text-slate-600 block mb-1">खर्च रकम (रू.) *</label>
-            <input type="number" id="exp-amount" required min="1" step="0.01" class="w-full border border-slate-300 rounded-xl px-3 py-2 font-bold">
+
+          <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div class="sm:col-span-2">
+              <label class="font-semibold text-slate-600 block mb-1">मुख्य काम / खर्चको संक्षिप्त विवरण</label>
+              <input type="text" id="exp-remarks" placeholder="उदा: मुख्य ट्याङ्की देखि दाप्चा चोक सम्म पाइप लाइन मर्मत तथा जडान" class="w-full border border-slate-300 rounded-xl px-3 py-2">
+            </div>
+            <div id="exp-bank-wrap" class="hidden">
+              <label class="font-semibold text-slate-600 block mb-1">बैंक खाता छान्नुहोस्</label>
+              <select id="exp-bank" class="w-full border border-slate-300 rounded-xl px-3 py-2 font-semibold">
+                ${(st.bankAccounts || []).length ? st.bankAccounts.map(b => `<option value="${escapeHtmlSafe(b.id)}">${escapeHtmlSafe(b.bankName)}</option>`).join("") : `<option value="">-- बैंक खाता छैन --</option>`}
+              </select>
+            </div>
           </div>
-          <div>
-            <label class="font-semibold text-slate-600 block mb-1">विवरण / बिल नं.</label>
-            <input type="text" id="exp-remarks" placeholder="खर्चको विवरण" class="w-full border border-slate-300 rounded-xl px-3 py-2">
+
+          <div id="exp-bharpai-panel" class="${expBharpaiOpen ? '' : 'hidden'} bg-amber-50/50 border border-amber-200 rounded-2xl p-4 space-y-4">
+            <div class="flex flex-wrap items-center justify-between gap-2 border-b border-amber-200 pb-2">
+              <div class="font-bold text-amber-950 flex items-center gap-1.5">
+                <i data-lucide="wrench" class="w-4 h-4 text-amber-700"></i>
+                <span>मर्मत काम, सामान तथा कामदार विवरण (लिखित भरपाईको लागि)</span>
+              </div>
+              <button type="button" onclick="syncExpAmountFromBreakdown()" class="bg-amber-600 hover:bg-amber-700 text-white text-[11px] font-semibold px-3 py-1 rounded-lg cursor-pointer">
+                तलको जम्मा रकम खर्च रकममा राख्नुहोस्
+              </button>
+            </div>
+
+            <div class="grid grid-cols-1 sm:grid-cols-4 gap-3">
+              <div>
+                <label class="font-semibold text-slate-700 block mb-1">मर्मत स्थान / क्षेत्र</label>
+                <input type="text" id="exp-work-site" placeholder="उदा: वडा नं. १० मुख्य लाइन / ट्याङ्की" class="w-full border border-slate-300 bg-white rounded-xl px-3 py-2">
+              </div>
+              <div>
+                <label class="font-semibold text-slate-700 block mb-1">काम गर्ने जम्मा संख्या (कति जना)</label>
+                <input type="number" id="exp-worker-count" min="0" value="1" placeholder="कति जना" class="w-full border border-slate-300 bg-white rounded-xl px-3 py-2 font-bold">
+              </div>
+              <div>
+                <label class="font-semibold text-slate-700 block mb-1">रकम बुझिलिनेको नाम (भरपाईमा)</label>
+                <input type="text" id="exp-receiver-name" list="exp-staff-names-list" placeholder="कामदार / ठेकेदार / पसलको नाम" class="w-full border border-slate-300 bg-white rounded-xl px-3 py-2 font-semibold">
+              </div>
+              <div>
+                <label class="font-semibold text-slate-700 block mb-1">बुझिलिनेको फोन / ना.नं. र ठेगाना</label>
+                <input type="text" id="exp-receiver-phone" placeholder="९८XXXXXXXX / ठेगाना" class="w-full border border-slate-300 bg-white rounded-xl px-3 py-2">
+              </div>
+            </div>
+
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+              <div class="bg-white border border-amber-200 rounded-xl p-3 space-y-2">
+                <div class="flex items-center justify-between">
+                  <span class="font-bold text-slate-800">१. के-के मर्मत गरेको / सामान विवरण</span>
+                  <button type="button" onclick="addExpRepairRow()" class="px-2.5 py-1 bg-teal-50 hover:bg-teal-100 text-teal-800 border border-teal-200 rounded-lg text-[11px] font-bold cursor-pointer">+ काम/सामान थप्नुहोस्</button>
+                </div>
+                <div class="overflow-x-auto">
+                  <table class="w-full text-[11px] border-collapse">
+                    <thead>
+                      <tr class="bg-slate-50 text-slate-600">
+                        <th class="p-1.5 text-left">के मर्मत गरेको / सामान *</th>
+                        <th class="p-1.5 w-14 text-center">परिमाण</th>
+                        <th class="p-1.5 w-20 text-right">दर (रू.)</th>
+                        <th class="p-1.5 w-24 text-right">जम्मा (रू.)</th>
+                        <th class="p-1.5 w-8"></th>
+                      </tr>
+                    </thead>
+                    <tbody id="exp-items-body" class="divide-y divide-slate-100">
+                      ${renderExpRepairRowHTML(1, "", 1, 0, 0)}
+                    </tbody>
+                  </table>
+                </div>
+                <div class="text-right text-[11px] font-bold text-slate-700 pt-1 border-t border-slate-100">
+                  काम/सामान जम्मा: <span id="exp-items-subtotal">रु. 0.00</span>
+                </div>
+              </div>
+
+              <div class="bg-white border border-amber-200 rounded-xl p-3 space-y-2">
+                <div class="flex items-center justify-between">
+                  <span class="font-bold text-slate-800">२. को-को संलग्न भएको (कामदार / प्राविधिक सूची)</span>
+                  <button type="button" onclick="addExpWorkerRow()" class="px-2.5 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-800 border border-indigo-200 rounded-lg text-[11px] font-bold cursor-pointer">+ कामदार थप्नुहोस्</button>
+                </div>
+                <div class="overflow-x-auto">
+                  <table class="w-full text-[11px] border-collapse">
+                    <thead>
+                      <tr class="bg-slate-50 text-slate-600">
+                        <th class="p-1.5 text-left">कामदारको नाम (को-को)</th>
+                        <th class="p-1.5 w-24 text-left">पद / काम</th>
+                        <th class="p-1.5 w-14 text-center">दिन</th>
+                        <th class="p-1.5 w-24 text-right">ज्याला (रू.)</th>
+                        <th class="p-1.5 w-8"></th>
+                      </tr>
+                    </thead>
+                    <tbody id="exp-workers-body" class="divide-y divide-slate-100">
+                      ${renderExpWorkerRowHTML(1, "", "प्लम्बर/मर्मत", 1, 0)}
+                    </tbody>
+                  </table>
+                </div>
+                <div class="text-right text-[11px] font-bold text-slate-700 pt-1 border-t border-slate-100">
+                  ज्याला जम्मा: <span id="exp-workers-subtotal">रु. 0.00</span> | कुल हिसाब: <span id="exp-combined-subtotal" class="text-rose-700">रु. 0.00</span>
+                </div>
+              </div>
+            </div>
           </div>
-          <div class="sm:col-span-4 flex justify-end">
-            <button type="submit" class="bg-rose-700 hover:bg-rose-800 text-white font-semibold px-5 py-2 rounded-xl cursor-pointer">खर्च सेभ गर्नुहोस्</button>
+
+          <div class="flex flex-wrap justify-end gap-2 pt-1">
+            <button type="button" id="exp-cancel-edit-btn" onclick="resetExpenseForm()" class="hidden bg-slate-200 hover:bg-slate-300 text-slate-800 font-semibold px-4 py-2 rounded-xl cursor-pointer">सच्याउन रद्द</button>
+            <button type="submit" class="bg-rose-700 hover:bg-rose-800 text-white font-semibold px-5 py-2.5 rounded-xl cursor-pointer flex items-center gap-1.5">
+              <i data-lucide="save" class="w-4 h-4"></i> <span id="exp-submit-label">खर्च सेभ गर्नुहोस्</span>
+            </button>
+            <button type="button" onclick="submitExpenseAndPrint(event)" class="bg-slate-900 hover:bg-slate-800 text-white font-semibold px-5 py-2.5 rounded-xl cursor-pointer flex items-center gap-1.5 shadow-sm">
+              <i data-lucide="printer" class="w-4 h-4 text-amber-300"></i> सेभ गरी भरपाई प्रिन्ट गर्नुहोस्
+            </button>
           </div>
         </form>
       </div>
@@ -6873,38 +7113,66 @@ function renderExpenseModule() {
       <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
         <div class="p-4 border-b border-slate-200 flex flex-wrap items-center justify-between gap-2">
           <div>
-            <h3 class="text-sm font-bold text-slate-800">शीर्षकगत तथा मिति अनुसार खर्च स्टेटमेन्ट</h3>
-            <p class="text-[11px] text-rose-700 font-semibold">छानिएको अवधि/शीर्षकको कुल खर्च: ${fmtMoney(totalFiltered)}</p>
+            <h3 class="text-sm font-bold text-slate-800">शीर्षकगत तथा मिति अनुसार खर्च एवं भरपाई अभिलेख</h3>
+            <p class="text-[11px] text-rose-700 font-semibold">छानिएको अवधि/शीर्षकको कुल खर्च: ${fmtMoney(totalFiltered)} (${filtered.length} अभिलेख)</p>
           </div>
           <div class="flex flex-wrap items-center gap-2 text-xs">
             <select onchange="expFilterCat=this.value; renderCurrentModule();" class="border border-slate-300 rounded-xl px-2.5 py-1.5 font-semibold">
               <option value="ALL">सबै खर्च शीर्षकहरू</option>
-              ${EXPENSE_CATEGORIES.map(c => `<option value="${c}" ${expFilterCat === c ? 'selected' : ''}>${c}</option>`).join("")}
+              ${EXPENSE_CATEGORIES.map(c => `<option value="${escapeHtmlSafe(c)}" ${expFilterCat === c ? 'selected' : ''}>${escapeHtmlSafe(c)}</option>`).join("")}
             </select>
-            <input type="text" value="${expFromBS}" onchange="expFromBS=this.value; renderCurrentModule();" class="w-24 border border-slate-300 rounded-xl px-2 py-1.5 text-center">
+            <input type="text" value="${escapeHtmlSafe(expFromBS)}" onchange="expFromBS=this.value; renderCurrentModule();" class="w-24 border border-slate-300 rounded-xl px-2 py-1.5 text-center">
             <span>देखि</span>
-            <input type="text" value="${expToBS}" onchange="expToBS=this.value; renderCurrentModule();" class="w-24 border border-slate-300 rounded-xl px-2 py-1.5 text-center">
+            <input type="text" value="${escapeHtmlSafe(expToBS)}" onchange="expToBS=this.value; renderCurrentModule();" class="w-24 border border-slate-300 rounded-xl px-2 py-1.5 text-center">
           </div>
         </div>
         <div class="overflow-x-auto">
           <table class="w-full text-xs text-left">
             <thead class="bg-slate-50 border-b border-slate-200">
               <tr>
-                <th class="p-3">मिति (BS)</th>
+                <th class="p-3">मिति / भरपाई नं.</th>
                 <th class="p-3">खर्च शीर्षक</th>
-                <th class="p-3">विवरण</th>
+                <th class="p-3">के मर्मत / विवरण</th>
+                <th class="p-3">को-को / कति जना</th>
                 <th class="p-3 text-right">खर्च रकम (रू.)</th>
+                <th class="p-3 text-center">भरपाई / कार्य</th>
               </tr>
             </thead>
             <tbody class="divide-y divide-slate-100">
-              ${filtered.slice().reverse().map(e => `
-                <tr class="hover:bg-slate-50">
-                  <td class="p-3 tabular-nums">${e.date}</td>
-                  <td class="p-3 font-semibold text-rose-800">${e.category}</td>
-                  <td class="p-3">${e.remarks || '-'}</td>
-                  <td class="p-3 text-right font-bold tabular-nums">${fmtMoney(e.amount)}</td>
-                </tr>
-              `).join("")}
+              ${filtered.slice().reverse().map(e => {
+                const itemsText = Array.isArray(e.repairItems) && e.repairItems.length
+                  ? e.repairItems.map(it => it.item).filter(Boolean).join(", ")
+                  : (e.remarks || "-");
+                const workersList = Array.isArray(e.workers) ? e.workers.filter(w => w && w.name) : [];
+                const wCount = Number(e.workerCount || workersList.length || 0);
+                const wNames = workersList.map(w => w.name).join(", ") || e.receiverName || "-";
+                return `
+                  <tr class="hover:bg-slate-50">
+                    <td class="p-3 tabular-nums">
+                      <div class="font-semibold">${escapeHtmlSafe(e.date)}</div>
+                      <div class="text-[10px] text-slate-500 font-bold">${escapeHtmlSafe(e.bharpaiNo || e.id)}</div>
+                    </td>
+                    <td class="p-3">
+                      <div class="font-semibold text-rose-800">${escapeHtmlSafe(e.category)}</div>
+                      ${e.workSite ? `<div class="text-[10px] text-slate-500">स्थान: ${escapeHtmlSafe(e.workSite)}</div>` : ""}
+                    </td>
+                    <td class="p-3 max-w-xs">
+                      <div class="font-medium text-slate-800">${escapeHtmlSafe(itemsText)}</div>
+                      ${e.remarks && itemsText !== e.remarks ? `<div class="text-[10px] text-slate-500">${escapeHtmlSafe(e.remarks)}</div>` : ""}
+                    </td>
+                    <td class="p-3">
+                      ${wCount > 0 ? `<span class="inline-block px-2 py-0.5 rounded-full bg-amber-100 text-amber-900 font-bold text-[10px] mr-1">${wCount} जना</span>` : ""}
+                      <span class="text-[11px] text-slate-700">${escapeHtmlSafe(wNames)}</span>
+                    </td>
+                    <td class="p-3 text-right font-bold tabular-nums">${fmtMoney(e.amount)}</td>
+                    <td class="p-3 text-center whitespace-nowrap space-x-1">
+                      <button type="button" onclick="printExpenseBharpai('${escapeHtmlSafe(e.id)}')" class="px-2.5 py-1 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 rounded-lg text-[10px] font-bold cursor-pointer">भरपाई प्रिन्ट</button>
+                      <button type="button" onclick="editExpenseEntry('${escapeHtmlSafe(e.id)}')" class="px-2 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-lg text-[10px] font-semibold cursor-pointer">सच्याउने</button>
+                      <button type="button" onclick="deleteExpenseEntry('${escapeHtmlSafe(e.id)}')" class="px-2 py-1 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-lg text-[10px] font-semibold cursor-pointer">हटाउने</button>
+                    </td>
+                  </tr>
+                `;
+              }).join("") || `<tr><td colspan="6" class="p-6 text-center text-slate-400">कुनै खर्च अभिलेख छैन।</td></tr>`}
             </tbody>
           </table>
         </div>
@@ -6913,19 +7181,387 @@ function renderExpenseModule() {
   `;
 }
 
-function addExpenseEntry(e) {
-  e.preventDefault();
-  window.ERP_STATE.expenses.push({
-    id: "EXP-" + Date.now(),
-    date: document.getElementById("exp-date").value.trim() || window.ERP_STATE.activeBSDate,
-    category: document.getElementById("exp-cat").value,
-    amount: Number(document.getElementById("exp-amount").value),
-    remarks: document.getElementById("exp-remarks").value.trim()
+function renderExpRepairRowHTML(idx, item = "", qty = 1, rate = 0, total = 0) {
+  return `
+    <tr class="exp-repair-row">
+      <td class="p-1"><input type="text" class="exp-ri-name w-full border border-slate-300 rounded px-2 py-1" value="${escapeHtmlSafe(item)}" placeholder="उदा: पाइप जडान / भल्भ"></td>
+      <td class="p-1"><input type="number" min="0" step="0.01" class="exp-ri-qty w-full border border-slate-300 rounded px-1.5 py-1 text-center" value="${Number(qty || 1)}" oninput="recalcExpRow(this)"></td>
+      <td class="p-1"><input type="number" min="0" step="0.01" class="exp-ri-rate w-full border border-slate-300 rounded px-1.5 py-1 text-right" value="${Number(rate || 0)}" oninput="recalcExpRow(this)"></td>
+      <td class="p-1"><input type="number" min="0" step="0.01" class="exp-ri-total w-full border border-slate-300 rounded px-1.5 py-1 text-right font-bold" value="${Number(total || 0)}" oninput="recalcExpenseBreakdown()"></td>
+      <td class="p-1 text-center"><button type="button" onclick="removeExpDynamicRow(this, 'repair')" class="text-rose-600 hover:text-rose-800 font-bold px-1 cursor-pointer">✕</button></td>
+    </tr>
+  `;
+}
+
+function renderExpWorkerRowHTML(idx, name = "", role = "प्लम्बर/मर्मत", days = 1, wage = 0) {
+  return `
+    <tr class="exp-worker-row">
+      <td class="p-1"><input type="text" list="exp-staff-names-list" class="exp-wk-name w-full border border-slate-300 rounded px-2 py-1" value="${escapeHtmlSafe(name)}" placeholder="कामदारको नाम" oninput="syncExpWorkerCountFromRows()"></td>
+      <td class="p-1"><input type="text" class="exp-wk-role w-full border border-slate-300 rounded px-1.5 py-1" value="${escapeHtmlSafe(role)}" placeholder="पद/काम"></td>
+      <td class="p-1"><input type="number" min="0" step="0.5" class="exp-wk-days w-full border border-slate-300 rounded px-1.5 py-1 text-center" value="${Number(days || 1)}"></td>
+      <td class="p-1"><input type="number" min="0" step="0.01" class="exp-wk-wage w-full border border-slate-300 rounded px-1.5 py-1 text-right font-bold" value="${Number(wage || 0)}" oninput="recalcExpenseBreakdown()"></td>
+      <td class="p-1 text-center"><button type="button" onclick="removeExpDynamicRow(this, 'worker')" class="text-rose-600 hover:text-rose-800 font-bold px-1 cursor-pointer">✕</button></td>
+    </tr>
+  `;
+}
+
+function toggleExpBharpaiPanel() {
+  expBharpaiOpen = !expBharpaiOpen;
+  document.getElementById("exp-bharpai-panel")?.classList.toggle("hidden", !expBharpaiOpen);
+}
+
+function handleExpCategoryChange(cat) {
+  if (cat === "मर्मत खर्च" || cat === "सामग्री खरिद") {
+    expBharpaiOpen = true;
+    document.getElementById("exp-bharpai-panel")?.classList.remove("hidden");
+  }
+}
+
+function addExpRepairRow(item = "", qty = 1, rate = 0, total = 0) {
+  const tbody = document.getElementById("exp-items-body");
+  if (!tbody) return;
+  tbody.insertAdjacentHTML("beforeend", renderExpRepairRowHTML(tbody.children.length + 1, item, qty, rate, total));
+}
+
+function addExpWorkerRow(name = "", role = "प्लम्बर/मर्मत", days = 1, wage = 0) {
+  const tbody = document.getElementById("exp-workers-body");
+  if (!tbody) return;
+  tbody.insertAdjacentHTML("beforeend", renderExpWorkerRowHTML(tbody.children.length + 1, name, role, days, wage));
+  syncExpWorkerCountFromRows();
+}
+
+function removeExpDynamicRow(btn, type) {
+  const tr = btn?.closest("tr");
+  const tbody = tr?.parentElement;
+  if (!tr || !tbody) return;
+  if (tbody.children.length <= 1) {
+    tr.querySelectorAll("input").forEach(inp => {
+      if (inp.type === "number") inp.value = inp.classList.contains("exp-ri-qty") || inp.classList.contains("exp-wk-days") ? "1" : "0";
+      else inp.value = "";
+    });
+  } else {
+    tr.remove();
+  }
+  if (type === "worker") syncExpWorkerCountFromRows();
+  recalcExpenseBreakdown();
+}
+
+function recalcExpRow(input) {
+  const tr = input?.closest("tr");
+  if (!tr) return;
+  const q = Number(tr.querySelector(".exp-ri-qty")?.value) || 0;
+  const r = Number(tr.querySelector(".exp-ri-rate")?.value) || 0;
+  const totEl = tr.querySelector(".exp-ri-total");
+  if (totEl) totEl.value = Math.round(q * r * 100) / 100;
+  recalcExpenseBreakdown();
+}
+
+function syncExpWorkerCountFromRows() {
+  const namedCount = Array.from(document.querySelectorAll("#exp-workers-body .exp-wk-name"))
+    .filter(inp => String(inp.value || "").trim().length > 0).length;
+  const countEl = document.getElementById("exp-worker-count");
+  if (countEl && namedCount > 0) countEl.value = namedCount;
+}
+
+function recalcExpenseBreakdown() {
+  let itemSum = 0;
+  document.querySelectorAll("#exp-items-body .exp-ri-total").forEach(el => { itemSum += Number(el.value) || 0; });
+  let wageSum = 0;
+  document.querySelectorAll("#exp-workers-body .exp-wk-wage").forEach(el => { wageSum += Number(el.value) || 0; });
+  const combined = Math.round((itemSum + wageSum) * 100) / 100;
+  const itemEl = document.getElementById("exp-items-subtotal");
+  const wageEl = document.getElementById("exp-workers-subtotal");
+  const combEl = document.getElementById("exp-combined-subtotal");
+  if (itemEl) itemEl.textContent = fmtMoney(itemSum);
+  if (wageEl) wageEl.textContent = fmtMoney(wageSum);
+  if (combEl) combEl.textContent = fmtMoney(combined);
+  return combined;
+}
+
+function syncExpAmountFromBreakdown() {
+  const combined = recalcExpenseBreakdown();
+  if (combined <= 0) return showToast("पहिले काम/सामान वा कामदार ज्याला रकम राख्नुहोस्।", "warning");
+  const amtEl = document.getElementById("exp-amount");
+  if (amtEl) amtEl.value = combined;
+}
+
+function collectExpenseBreakdownInputs() {
+  const repairItems = [];
+  document.querySelectorAll("#exp-items-body tr.exp-repair-row").forEach(tr => {
+    const item = String(tr.querySelector(".exp-ri-name")?.value || "").trim();
+    const qty = Number(tr.querySelector(".exp-ri-qty")?.value) || 0;
+    const rate = Number(tr.querySelector(".exp-ri-rate")?.value) || 0;
+    const total = Number(tr.querySelector(".exp-ri-total")?.value) || 0;
+    if (item || total > 0) repairItems.push({ item: item || "मर्मत कार्य", qty, rate, total });
   });
+  const workers = [];
+  document.querySelectorAll("#exp-workers-body tr.exp-worker-row").forEach(tr => {
+    const name = String(tr.querySelector(".exp-wk-name")?.value || "").trim();
+    const role = String(tr.querySelector(".exp-wk-role")?.value || "").trim();
+    const days = Number(tr.querySelector(".exp-wk-days")?.value) || 0;
+    const wage = Number(tr.querySelector(".exp-wk-wage")?.value) || 0;
+    if (name || wage > 0) workers.push({ name: name || "कामदार", role: role || "मर्मत", days, wage });
+  });
+  const rawCount = Number(document.getElementById("exp-worker-count")?.value) || 0;
+  const workerCount = Math.max(rawCount, workers.length);
+  return { repairItems, workers, workerCount };
+}
+
+function addExpenseEntry(e, shouldPrint = false) {
+  if (e) e.preventDefault();
+  ensureExtensionState();
+  const st = window.ERP_STATE;
+  const editId = document.getElementById("edit-exp-id")?.value.trim() || "";
+  const dt = document.getElementById("exp-date").value.trim() || st.activeBSDate;
+  const category = document.getElementById("exp-cat").value;
+  const mode = document.getElementById("exp-mode")?.value || "Cash";
+  const bankId = mode === "Bank" ? (document.getElementById("exp-bank")?.value || "") : "";
+  const remarks = document.getElementById("exp-remarks").value.trim();
+  const workSite = document.getElementById("exp-work-site")?.value.trim() || "";
+  const receiverName = document.getElementById("exp-receiver-name")?.value.trim() || "";
+  const receiverPhone = document.getElementById("exp-receiver-phone")?.value.trim() || "";
+  const { repairItems, workers, workerCount } = collectExpenseBreakdownInputs();
+
+  let amount = Number(document.getElementById("exp-amount")?.value) || 0;
+  const calcCombined = recalcExpenseBreakdown();
+  if (amount <= 0 && calcCombined > 0) amount = calcCombined;
+  if (amount <= 0) return showToast("कृपया मान्य खर्च रकम राख्नुहोस्।", "error");
+
+  let bharpaiNo = document.getElementById("exp-bharpai-no")?.value.trim() || "";
+  let savedId = editId;
+
+  if (editId) {
+    const idx = (st.expenses || []).findIndex(x => x.id === editId);
+    if (idx < 0) return showToast("खर्च रेकर्ड फेला परेन।", "error");
+    const prev = st.expenses[idx];
+    if (!bharpaiNo) bharpaiNo = prev.bharpaiNo || `BHR-${parseBS(dt).y}-${Number(st.settings.bharpaiCounter || 101)}`;
+    st.expenses[idx] = {
+      ...prev,
+      date: dt,
+      category,
+      amount,
+      remarks,
+      mode,
+      bankId,
+      bharpaiNo,
+      workSite,
+      workerCount,
+      workers,
+      repairItems,
+      receiverName: receiverName || workers[0]?.name || prev.receiverName || "",
+      receiverPhone
+    };
+    showToast("खर्च तथा भरपाई विवरण सच्याइयो!", "success");
+  } else {
+    const yr = parseBS(dt).y;
+    if (!bharpaiNo) {
+      const cnt = Number(st.settings.bharpaiCounter || 101);
+      st.settings.bharpaiCounter = cnt + 1;
+      bharpaiNo = `BHR-${yr}-${cnt}`;
+    }
+    savedId = "EXP-" + Date.now();
+    st.expenses.push({
+      id: savedId,
+      bharpaiNo,
+      date: dt,
+      category,
+      amount,
+      remarks,
+      mode,
+      bankId,
+      workSite,
+      workerCount,
+      workers,
+      repairItems,
+      receiverName: receiverName || workers[0]?.name || "",
+      receiverPhone
+    });
+    showToast("खर्च विवरण सुरक्षित भयो!", "success");
+  }
+
+  window.recalculateAllDynamicValues?.(false);
   window.cloudSync?.save();
   renderCurrentModule();
-  showToast("खर्च विवरण सुरक्षित भयो!");
+  if (shouldPrint && savedId) {
+    setTimeout(() => window.printExpenseBharpai(savedId), 60);
+  }
 }
+
+function submitExpenseAndPrint(e) {
+  e.preventDefault();
+  addExpenseEntry(null, true);
+}
+
+function resetExpenseForm() {
+  renderCurrentModule();
+}
+
+function editExpenseEntry(expId) {
+  const st = window.ERP_STATE;
+  const ex = (st.expenses || []).find(x => x.id === expId);
+  if (!ex) return;
+  expBharpaiOpen = true;
+  document.getElementById("exp-bharpai-panel")?.classList.remove("hidden");
+  document.getElementById("edit-exp-id").value = ex.id;
+  document.getElementById("exp-cat").value = ex.category || EXPENSE_CATEGORIES[0];
+  document.getElementById("exp-date").value = ex.date || st.activeBSDate;
+  document.getElementById("exp-bharpai-no").value = ex.bharpaiNo || "";
+  document.getElementById("exp-amount").value = Number(ex.amount || 0);
+  document.getElementById("exp-mode").value = ex.mode || "Cash";
+  document.getElementById("exp-bank-wrap")?.classList.toggle("hidden", (ex.mode || "Cash") !== "Bank");
+  if (ex.bankId && document.getElementById("exp-bank")) document.getElementById("exp-bank").value = ex.bankId;
+  document.getElementById("exp-remarks").value = ex.remarks || "";
+  document.getElementById("exp-work-site").value = ex.workSite || "";
+  document.getElementById("exp-worker-count").value = Number(ex.workerCount || (ex.workers || []).length || 1);
+  document.getElementById("exp-receiver-name").value = ex.receiverName || "";
+  document.getElementById("exp-receiver-phone").value = ex.receiverPhone || "";
+
+  const itemsBody = document.getElementById("exp-items-body");
+  if (itemsBody) {
+    const items = Array.isArray(ex.repairItems) && ex.repairItems.length ? ex.repairItems : [{ item: ex.remarks || "", qty: 1, rate: ex.amount || 0, total: ex.amount || 0 }];
+    itemsBody.innerHTML = items.map((it, i) => renderExpRepairRowHTML(i + 1, it.item, it.qty, it.rate, it.total)).join("");
+  }
+  const workersBody = document.getElementById("exp-workers-body");
+  if (workersBody) {
+    const wks = Array.isArray(ex.workers) && ex.workers.length ? ex.workers : [{ name: ex.receiverName || "", role: "प्लम्बर/मर्मत", days: 1, wage: 0 }];
+    workersBody.innerHTML = wks.map((w, i) => renderExpWorkerRowHTML(i + 1, w.name, w.role, w.days, w.wage)).join("");
+  }
+  recalcExpenseBreakdown();
+  document.getElementById("exp-form-title").textContent = `खर्च तथा भरपाई सच्याउँदै (${ex.bharpaiNo || ex.id})`;
+  document.getElementById("exp-submit-label").textContent = "अपडेट सेभ गर्नुहोस्";
+  document.getElementById("exp-cancel-edit-btn")?.classList.remove("hidden");
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
+function deleteExpenseEntry(expId) {
+  if (!verifyAdminPasswordBeforeDelete()) return;
+  const st = window.ERP_STATE;
+  const ex = (st.expenses || []).find(x => x.id === expId);
+  if (!ex) return;
+  if (!confirm(`के तपाईं "${ex.category}" (${fmtMoney(ex.amount)}) खर्च रेकर्ड हटाउन चाहनुहुन्छ?`)) return;
+  st.expenses = (st.expenses || []).filter(x => x.id !== expId);
+  window.recalculateAllDynamicValues?.(true);
+  window.cloudSync?.save();
+  renderCurrentModule();
+  showToast("खर्च रेकर्ड हटाइयो!", "info");
+}
+
+window.printExpenseBharpai = function(expId) {
+  const st = window.ERP_STATE;
+  const e = (st.expenses || []).find(x => x.id === expId);
+  if (!e) return showToast("भरपाई रेकर्ड फेला परेन।", "error");
+  const s = st.settings || {};
+  const bankObj = e.bankId ? (st.bankAccounts || []).find(b => b.id === e.bankId) : null;
+  const modeText = e.mode === "Bank" ? `बैंक / चेक (${bankObj?.bankName || 'Bank'})` : "नगद (Cash)";
+
+  const repairItems = Array.isArray(e.repairItems) && e.repairItems.length
+    ? e.repairItems
+    : [{ item: `${e.category}${e.remarks ? ' — ' + e.remarks : ''}`, qty: 1, rate: Number(e.amount || 0), total: Number(e.amount || 0) }];
+
+  const workers = Array.isArray(e.workers) ? e.workers.filter(w => w && (w.name || Number(w.wage || 0) > 0)) : [];
+  const workerCount = Number(e.workerCount || workers.length || 0);
+  const workerNamesStr = workers.length
+    ? workers.map(w => `${w.name}${w.role ? ` (${w.role})` : ''}`).join(", ")
+    : (e.receiverName || "सम्बद्ध कामदार/प्राविधिक");
+  const itemsDescStr = repairItems.map(it => it.item).filter(Boolean).join(", ");
+  const amt = Number(e.amount || 0);
+  const words = numberToNepaliWords(amt);
+  const docNo = e.bharpaiNo || e.id;
+  const receiverDisplay = e.receiverName || workers[0]?.name || "";
+
+  const html = `
+    <div class="border-2 border-slate-900 p-5 sm:p-6 rounded-lg space-y-4 bg-white text-slate-900">
+      ${buildCommitteeBharpaiHeaderHTML("खर्च तथा मर्मत भुक्तानी लिखित भरपाई", docNo, e.date, "bg-amber-800")}
+
+      <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs bg-slate-50 p-3 rounded border border-slate-300">
+        <div><strong>खर्च शीर्षक:</strong> ${escapeHtmlSafe(e.category)}</div>
+        <div><strong>भुक्तानी माध्यम:</strong> ${escapeHtmlSafe(modeText)}</div>
+        <div><strong>काम स्थान:</strong> ${escapeHtmlSafe(e.workSite || s.address || '-')}</div>
+        <div><strong>जम्मा जनशक्ति:</strong> <span class="font-bold text-amber-900">${workerCount > 0 ? toNepaliDigits(workerCount) + ' जना' : '-'}</span></div>
+      </div>
+
+      <div class="text-xs leading-6 bg-amber-50/40 border border-amber-300 rounded-lg p-3.5 text-justify">
+        <div class="font-bold text-slate-900 underline mb-1">लिखित भरपाई व्यहोरा:</div>
+        उपरोक्त सम्बन्धमा <strong>${escapeHtmlSafe(s.committeeName)}</strong> को निर्णय/निर्देशन अनुसार मिति <strong>${escapeHtmlSafe(toNepaliDigits(e.date))}</strong> मा
+        ${e.workSite ? `स्थान <strong>${escapeHtmlSafe(e.workSite)}</strong> मा ` : ""}
+        <strong>${escapeHtmlSafe(itemsDescStr || e.category)}</strong> कार्य/खर्च अन्तर्गत
+        ${workerCount > 0 ? `जम्मा <strong>${toNepaliDigits(workerCount)} जना</strong> (${escapeHtmlSafe(workerNamesStr)}) संलग्न भई ` : ""}
+        काम/खर्च सम्पन्न भएको हुँदा देहायको विवरण बमोजिमको कुल जम्मा रकम
+        <strong>${escapeHtmlSafe(formatNepaliMoney(amt))}</strong> (अक्षरेपी: <u>${escapeHtmlSafe(words)}</u>)
+        आजका मितिमा यस समितिको कोषबाट <strong>${escapeHtmlSafe(modeText)}</strong> मार्फत बुझिलिएको / भुक्तानी भएको साँचो हो भनी आ-आफ्नो राजीखुसीले यो आधिकारिक लिखित भरपाईमा सहीछाप गरी बुझाइयो ।
+      </div>
+
+      <div class="space-y-1.5">
+        <div class="text-xs font-bold text-slate-800">१. के-के मर्मत गरेको / काम तथा सामग्री विवरण:</div>
+        <table class="w-full text-xs border-collapse border border-slate-500">
+          <thead>
+            <tr class="bg-slate-100">
+              <th class="border border-slate-500 p-1.5 w-12 text-center">क्र.सं.</th>
+              <th class="border border-slate-500 p-1.5 text-left">के मर्मत गरेको / काम र सामानको विवरण</th>
+              <th class="border border-slate-500 p-1.5 w-20 text-center">परिमाण</th>
+              <th class="border border-slate-500 p-1.5 w-24 text-right">दर (रू.)</th>
+              <th class="border border-slate-500 p-1.5 w-28 text-right">रकम (रू.)</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${repairItems.map((it, idx) => `
+              <tr>
+                <td class="border border-slate-400 p-1.5 text-center">${toNepaliDigits(idx + 1)}</td>
+                <td class="border border-slate-400 p-1.5 font-medium">${escapeHtmlSafe(it.item)}</td>
+                <td class="border border-slate-400 p-1.5 text-center tabular-nums">${toNepaliDigits(it.qty || 1)}</td>
+                <td class="border border-slate-400 p-1.5 text-right tabular-nums">${fmtMoney(it.rate || 0)}</td>
+                <td class="border border-slate-400 p-1.5 text-right font-bold tabular-nums">${fmtMoney(it.total || 0)}</td>
+              </tr>
+            `).join("")}
+          </tbody>
+        </table>
+      </div>
+
+      <div class="space-y-1.5">
+        <div class="flex items-center justify-between text-xs font-bold text-slate-800">
+          <span>२. को-को संलग्न कामदार / प्राविधिक विवरण:</span>
+          <span class="px-2 py-0.5 bg-amber-100 text-amber-900 rounded border border-amber-300">जम्मा संख्या: ${workerCount > 0 ? toNepaliDigits(workerCount) : '०'} जना</span>
+        </div>
+        <table class="w-full text-xs border-collapse border border-slate-500">
+          <thead>
+            <tr class="bg-slate-100">
+              <th class="border border-slate-500 p-1.5 w-12 text-center">क्र.सं.</th>
+              <th class="border border-slate-500 p-1.5 text-left">कामदार / प्राविधिकको नाम (को-को)</th>
+              <th class="border border-slate-500 p-1.5 text-left">पद / जिम्मेवारी</th>
+              <th class="border border-slate-500 p-1.5 w-16 text-center">दिन</th>
+              <th class="border border-slate-500 p-1.5 w-24 text-right">ज्याला (रू.)</th>
+              <th class="border border-slate-500 p-1.5 w-32 text-center">कामदारको सही</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${workers.length > 0
+              ? workers.map((w, idx) => `
+                <tr>
+                  <td class="border border-slate-400 p-1.5 text-center">${toNepaliDigits(idx + 1)}</td>
+                  <td class="border border-slate-400 p-1.5 font-semibold">${escapeHtmlSafe(w.name)}</td>
+                  <td class="border border-slate-400 p-1.5">${escapeHtmlSafe(w.role || 'मर्मत/कामदार')}</td>
+                  <td class="border border-slate-400 p-1.5 text-center tabular-nums">${toNepaliDigits(w.days || 1)}</td>
+                  <td class="border border-slate-400 p-1.5 text-right font-bold tabular-nums">${fmtMoney(w.wage || 0)}</td>
+                  <td class="border border-slate-400 p-1.5 h-8"></td>
+                </tr>
+              `).join("")
+              : `<tr><td colspan="6" class="border border-slate-400 p-2 text-center text-slate-600">${workerCount > 0 ? `जम्मा ${toNepaliDigits(workerCount)} जना संलग्न (${escapeHtmlSafe(workerNamesStr)})` : 'व्यक्तिगत कामदार विवरण खाली छ — तल बुझिलिनेको सही रहनेछ।'}</td></tr>`}
+          </tbody>
+        </table>
+      </div>
+
+      <div class="flex flex-wrap items-center justify-between gap-2 p-3 bg-slate-100 border-2 border-slate-800 rounded text-xs">
+        <div><strong>अक्षरेपी जम्मा रकम:</strong> <u class="font-bold">${escapeHtmlSafe(words)}</u></div>
+        <div class="text-sm font-extrabold text-slate-950 tabular-nums">कुल जम्मा भुक्तानी: ${fmtMoney(amt)}</div>
+      </div>
+
+      ${e.remarks ? `<div class="text-xs text-slate-700"><strong>कैफियत:</strong> ${escapeHtmlSafe(e.remarks)}</div>` : ""}
+
+      ${buildOfficialSignatureFooterHTML("रकम बुझिलिने / मुख्य कामदारको सही", receiverDisplay, e.receiverPhone || "", "", true)}
+    </div>
+  `;
+  openPrintModal(`मर्मत / खर्च लिखित भरपाई - ${docNo}`, html);
+};
 
 // ============================================================================
 // 13. STAFF & PAYROLL MODULE
@@ -7011,81 +7647,136 @@ function renderStaffModule() {
       </div>
 
       <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
-        <h3 class="text-sm font-bold text-slate-800 mb-3">कर्मचारी मासिक तलब, भत्ता, पोसाक तथा TDS भुक्तानी इन्ट्री</h3>
-        <form onsubmit="addStaffPayrollEntry(event)" class="space-y-4 text-xs">
-          <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <div>
+        <div class="flex flex-wrap items-center justify-between gap-2 mb-3 border-b border-slate-100 pb-2">
+          <h3 id="pay-form-title" class="text-sm font-bold text-slate-800">कर्मचारी मासिक तलब, भत्ता, रिचार्ज, पेट्रोल तथा अन्य खर्च भुक्तानी (Payroll Entry)</h3>
+          <span class="text-[11px] font-semibold text-teal-800 bg-teal-50 border border-teal-200 px-2.5 py-1 rounded-lg">पे-रोल स्लिप + लिखित भरपाई प्रिन्ट सुविधा</span>
+        </div>
+        <form onsubmit="addStaffPayrollEntry(event, false)" class="space-y-4 text-xs">
+          <input type="hidden" id="edit-pay-id" value="">
+          <div class="grid grid-cols-1 sm:grid-cols-5 gap-3">
+            <div class="sm:col-span-2">
               <label class="font-semibold text-slate-600 block mb-1">कर्मचारी छान्नुहोस् *</label>
               <select id="stf-id" required class="w-full border border-slate-300 rounded-xl px-3 py-2 font-semibold cursor-pointer">
-                ${st.staffList.map(s => `<option value="${s.id}">${s.name} (${s.role})</option>`).join("")}
+                ${st.staffList.map(s => `<option value="${escapeHtmlSafe(s.id)}">${escapeHtmlSafe(s.name)} (${escapeHtmlSafe(s.role)})</option>`).join("")}
               </select>
             </div>
             <div>
               <label class="font-semibold text-slate-600 block mb-1">भुक्तानी महिना *</label>
               <select id="stf-month" class="w-full border border-slate-300 rounded-xl px-3 py-2 cursor-pointer">
-                ${NEPALI_MONTHS.map(m => `<option value="${m}" ${m === staffWageMonth ? 'selected' : ''}>${m}</option>`).join("")}
+                ${NEPALI_MONTHS.map(m => `<option value="${escapeHtmlSafe(m)}" ${m === staffWageMonth ? 'selected' : ''}>${escapeHtmlSafe(m)}</option>`).join("")}
               </select>
             </div>
             <div>
               <label class="font-semibold text-slate-600 block mb-1">भुक्तानी मिति (BS)</label>
-              <input type="text" id="stf-date" value="${st.activeBSDate}" class="w-full bg-teal-50 border border-teal-300 rounded-xl px-3 py-2 font-bold">
+              <input type="text" id="stf-date" value="${escapeHtmlSafe(st.activeBSDate)}" class="w-full bg-teal-50 border border-teal-300 rounded-xl px-3 py-2 font-bold">
+            </div>
+            <div>
+              <label class="font-semibold text-slate-600 block mb-1">पे-रोल / भरपाई नं.</label>
+              <input type="text" id="pay-receipt-no" placeholder="स्वतः बन्छ (PAY-...)" class="w-full border border-slate-300 rounded-xl px-3 py-2 font-semibold">
             </div>
           </div>
 
-          <div class="grid grid-cols-2 sm:grid-cols-6 gap-2 bg-slate-50 p-4 rounded-xl border border-slate-200">
-            <div><label class="font-semibold text-slate-700 block mb-1">तलब (Salary)</label><input type="number" id="pay-salary" value="0" min="0" oninput="calculatePayrollTotal()" class="w-full border border-slate-300 bg-white rounded-lg px-2 py-1.5 font-bold text-slate-800"></div>
-            <div><label class="font-semibold text-slate-700 block mb-1">भत्ता (Allowance)</label><input type="number" id="pay-allowance" value="0" min="0" oninput="calculatePayrollTotal()" class="w-full border border-slate-300 bg-white rounded-lg px-2 py-1.5 font-bold text-slate-800"></div>
-            <div><label class="font-semibold text-slate-700 block mb-1">पोसाक भत्ता</label><input type="number" id="pay-dress" value="0" min="0" oninput="calculatePayrollTotal()" class="w-full border border-slate-300 bg-white rounded-lg px-2 py-1.5 font-bold text-slate-800"></div>
-            <div><label class="font-semibold text-slate-700 block mb-1">चाडपर्व खर्च</label><input type="number" id="pay-festival" value="0" min="0" oninput="calculatePayrollTotal()" class="w-full border border-slate-300 bg-white rounded-lg px-2 py-1.5 font-bold text-slate-800"></div>
-            <div><label class="font-semibold text-rose-700 block mb-1">TDS (करकट्टी (-))</label><input type="number" id="pay-tds" value="0" min="0" oninput="calculatePayrollTotal()" class="w-full border border-rose-300 bg-rose-50 rounded-lg px-2 py-1.5 font-bold text-rose-700"></div>
-            <div><label class="font-semibold text-teal-800 block mb-1">कुल खुद भुक्तानी</label><input type="number" id="pay-net-total" readonly class="w-full border border-teal-300 bg-teal-50 rounded-lg px-2 py-1.5 font-bold text-teal-900 text-sm" value="0"></div>
+          <div class="grid grid-cols-2 sm:grid-cols-5 gap-2.5 bg-slate-50 p-4 rounded-xl border border-slate-200">
+            <div><label class="font-semibold text-slate-700 block mb-1">तलब (Salary)</label><input type="number" id="pay-salary" value="0" min="0" step="0.01" oninput="calculatePayrollTotal()" class="w-full border border-slate-300 bg-white rounded-lg px-2 py-1.5 font-bold text-slate-800"></div>
+            <div><label class="font-semibold text-slate-700 block mb-1">भत्ता (Allowance)</label><input type="number" id="pay-allowance" value="0" min="0" step="0.01" oninput="calculatePayrollTotal()" class="w-full border border-slate-300 bg-white rounded-lg px-2 py-1.5 font-bold text-slate-800"></div>
+            <div><label class="font-semibold text-slate-700 block mb-1">पोसाक भत्ता</label><input type="number" id="pay-dress" value="0" min="0" step="0.01" oninput="calculatePayrollTotal()" class="w-full border border-slate-300 bg-white rounded-lg px-2 py-1.5 font-bold text-slate-800"></div>
+            <div><label class="font-semibold text-slate-700 block mb-1">चाडपर्व खर्च</label><input type="number" id="pay-festival" value="0" min="0" step="0.01" oninput="calculatePayrollTotal()" class="w-full border border-slate-300 bg-white rounded-lg px-2 py-1.5 font-bold text-slate-800"></div>
+            <div><label class="font-semibold text-sky-800 block mb-1">रिचार्ज खर्च (Recharge)</label><input type="number" id="pay-recharge" value="0" min="0" step="0.01" oninput="calculatePayrollTotal()" class="w-full border border-sky-300 bg-white rounded-lg px-2 py-1.5 font-bold text-sky-900"></div>
+            <div><label class="font-semibold text-amber-800 block mb-1">पेट्रोल खर्च (Petrol)</label><input type="number" id="pay-petrol" value="0" min="0" step="0.01" oninput="calculatePayrollTotal()" class="w-full border border-amber-300 bg-white rounded-lg px-2 py-1.5 font-bold text-amber-900"></div>
+            <div><label class="font-semibold text-indigo-800 block mb-1">अन्य खर्च (Other Exp.)</label><input type="number" id="pay-other-exp" value="0" min="0" step="0.01" oninput="calculatePayrollTotal()" class="w-full border border-indigo-300 bg-white rounded-lg px-2 py-1.5 font-bold text-indigo-900"></div>
+            <div><label class="font-semibold text-rose-700 block mb-1">TDS करकट्टी (-)</label><input type="number" id="pay-tds" value="0" min="0" step="0.01" oninput="calculatePayrollTotal()" class="w-full border border-rose-300 bg-rose-50 rounded-lg px-2 py-1.5 font-bold text-rose-700"></div>
+            <div><label class="font-semibold text-rose-700 block mb-1">अन्य कट्टी / पेश्की (-)</label><input type="number" id="pay-deduction" value="0" min="0" step="0.01" oninput="calculatePayrollTotal()" class="w-full border border-rose-300 bg-rose-50 rounded-lg px-2 py-1.5 font-bold text-rose-700"></div>
+            <div><label class="font-semibold text-teal-800 block mb-1">कुल खुद भुक्तानी (Net)</label><input type="number" id="pay-net-total" readonly class="w-full border-2 border-teal-400 bg-teal-50 rounded-lg px-2 py-1.5 font-extrabold text-teal-950 text-sm" value="0"></div>
           </div>
 
-          <div><input type="text" id="stf-remarks" placeholder="थप कैफियत / विवरण (यदि छ भने)" class="w-full border border-slate-300 rounded-xl px-3 py-2"></div>
-          <div class="flex justify-end">
-            <button type="submit" class="bg-teal-700 hover:bg-teal-800 text-white font-semibold px-6 py-2.5 rounded-xl cursor-pointer flex items-center gap-2">
-              <i data-lucide="check-circle" class="w-4 h-4"></i> तलब तथा भत्ता भुक्तानी सुरक्षित गर्नुहोस्
+          <div class="grid grid-cols-1 sm:grid-cols-4 gap-3">
+            <div>
+              <label class="font-semibold text-slate-600 block mb-1">अन्य खर्चको शीर्षक/विवरण</label>
+              <input type="text" id="pay-other-note" placeholder="उदा: खाजा / मर्मत / यातायात" class="w-full border border-slate-300 rounded-xl px-3 py-2">
+            </div>
+            <div>
+              <label class="font-semibold text-slate-600 block mb-1">भुक्तानी माध्यम</label>
+              <select id="pay-mode" onchange="document.getElementById('pay-bank-wrap')?.classList.toggle('hidden', this.value !== 'Bank')" class="w-full border border-slate-300 rounded-xl px-3 py-2 font-semibold">
+                <option value="Cash">नगद (Cash)</option>
+                <option value="Bank">बैंक / चेक (Bank)</option>
+              </select>
+            </div>
+            <div id="pay-bank-wrap" class="hidden">
+              <label class="font-semibold text-slate-600 block mb-1">बैंक खाता</label>
+              <select id="pay-bank" class="w-full border border-slate-300 rounded-xl px-3 py-2 font-semibold">
+                ${(st.bankAccounts || []).length ? st.bankAccounts.map(b => `<option value="${escapeHtmlSafe(b.id)}">${escapeHtmlSafe(b.bankName)}</option>`).join("") : `<option value="">-- बैंक खाता छैन --</option>`}
+              </select>
+            </div>
+            <div class="sm:col-span-2">
+              <label class="font-semibold text-slate-600 block mb-1">थप कैफियत / विवरण</label>
+              <input type="text" id="stf-remarks" placeholder="थप कैफियत / विवरण (यदि छ भने)" class="w-full border border-slate-300 rounded-xl px-3 py-2">
+            </div>
+          </div>
+
+          <div class="flex flex-wrap justify-end gap-2">
+            <button type="button" id="pay-cancel-edit-btn" onclick="renderCurrentModule()" class="hidden bg-slate-200 hover:bg-slate-300 text-slate-800 font-semibold px-4 py-2.5 rounded-xl cursor-pointer">सच्याउन रद्द</button>
+            <button type="submit" class="bg-teal-700 hover:bg-teal-800 text-white font-semibold px-5 py-2.5 rounded-xl cursor-pointer flex items-center gap-2">
+              <i data-lucide="check-circle" class="w-4 h-4"></i> <span id="pay-submit-label">तलब तथा सुविधा भुक्तानी सुरक्षित गर्नुहोस्</span>
+            </button>
+            <button type="button" onclick="submitStaffPayrollAndPrint(event)" class="bg-slate-900 hover:bg-slate-800 text-white font-semibold px-5 py-2.5 rounded-xl cursor-pointer flex items-center gap-2 shadow-sm">
+              <i data-lucide="printer" class="w-4 h-4 text-amber-300"></i> सेभ गरी पे-रोल स्लिप / भरपाई प्रिन्ट गर्नुहोस्
             </button>
           </div>
         </form>
       </div>
 
       <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-        <div class="p-4 border-b border-slate-200 font-bold text-sm text-slate-800">कर्मचारी भुक्तानी अभिलेख (Payroll Ledger)</div>
+        <div class="p-4 border-b border-slate-200 flex flex-wrap items-center justify-between gap-2">
+          <div class="font-bold text-sm text-slate-800">कर्मचारी भुक्तानी अभिलेख (Payroll Ledger — ${st.staffPayroll.length} अभिलेख)</div>
+          <button type="button" onclick="printMonthlyPayrollRegister()" class="bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold px-3.5 py-2 rounded-xl shadow-sm cursor-pointer flex items-center gap-1.5">
+            <i data-lucide="printer" class="w-3.5 h-3.5"></i> ${escapeHtmlSafe(staffWageMonth)} महिनाको एकमुष्ट पे-रोल भरपाई प्रिन्ट
+          </button>
+        </div>
         <div class="overflow-x-auto">
           <table class="w-full text-xs text-left">
             <thead class="bg-slate-50 border-b border-slate-200">
               <tr>
-                <th class="p-3">मिति (BS)</th>
+                <th class="p-3">मिति / स्लिप नं.</th>
                 <th class="p-3">कर्मचारीको नाम</th>
                 <th class="p-3">महिना</th>
                 <th class="p-3 text-right">तलब</th>
-                <th class="p-3 text-right">भत्ता</th>
-                <th class="p-3 text-right">पोसाक</th>
-                <th class="p-3 text-right">चाडपर्व</th>
-                <th class="p-3 text-right text-rose-700">TDS</th>
+                <th class="p-3 text-right">भत्ता/पोसाक/चाड</th>
+                <th class="p-3 text-right text-sky-800">रिचार्ज</th>
+                <th class="p-3 text-right text-amber-800">पेट्रोल</th>
+                <th class="p-3 text-right text-indigo-800">अन्य खर्च</th>
+                <th class="p-3 text-right text-rose-700">कट्टी/TDS</th>
                 <th class="p-3 text-right text-teal-800">कुल खुद रकम</th>
-                <th class="p-3 text-center">कार्य</th>
+                <th class="p-3 text-center">स्लिप / भरपाई / कार्य</th>
               </tr>
             </thead>
             <tbody class="divide-y divide-slate-100">
               ${st.staffPayroll.slice().reverse().map(p => {
                 const sf = st.staffList.find(x => x.id === p.staffId) || { name: p.staffId };
+                const extraAllow = Number(p.allowance || 0) + Number(p.dress || 0) + Number(p.festival || 0);
+                const totalCut = Number(p.tds || 0) + Number(p.deduction || 0);
                 return `
                   <tr class="hover:bg-slate-50">
-                    <td class="p-3 tabular-nums">${p.date}</td>
-                    <td class="p-3 font-semibold">${sf.name}</td>
-                    <td class="p-3">${p.month}</td>
+                    <td class="p-3 tabular-nums">
+                      <div class="font-semibold">${escapeHtmlSafe(p.date)}</div>
+                      <div class="text-[10px] text-slate-500 font-bold">${escapeHtmlSafe(p.receiptNo || p.id)}</div>
+                    </td>
+                    <td class="p-3 font-semibold">${escapeHtmlSafe(sf.name)}</td>
+                    <td class="p-3">${escapeHtmlSafe(p.month)}</td>
                     <td class="p-3 text-right tabular-nums">${fmtMoney(p.salary || 0)}</td>
-                    <td class="p-3 text-right tabular-nums">${fmtMoney(p.allowance || 0)}</td>
-                    <td class="p-3 text-right tabular-nums">${fmtMoney(p.dress || 0)}</td>
-                    <td class="p-3 text-right tabular-nums">${fmtMoney(p.festival || 0)}</td>
-                    <td class="p-3 text-right tabular-nums text-rose-600">${fmtMoney(p.tds || 0)}</td>
+                    <td class="p-3 text-right tabular-nums">${fmtMoney(extraAllow)}</td>
+                    <td class="p-3 text-right tabular-nums text-sky-800">${fmtMoney(p.recharge || 0)}</td>
+                    <td class="p-3 text-right tabular-nums text-amber-800">${fmtMoney(p.petrol || 0)}</td>
+                    <td class="p-3 text-right tabular-nums text-indigo-800">${fmtMoney(p.otherExp || 0)}</td>
+                    <td class="p-3 text-right tabular-nums text-rose-600">${fmtMoney(totalCut)}</td>
                     <td class="p-3 text-right font-bold tabular-nums text-teal-800">${fmtMoney(p.amount || p.netTotal || 0)}</td>
-                    <td class="p-3 text-center"><button onclick="deleteStaffPayrollEntry('${p.id}')" class="px-2 py-1 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-lg text-[10px] font-semibold cursor-pointer">डिलिट</button></td>
+                    <td class="p-3 text-center whitespace-nowrap space-x-1">
+                      <button type="button" onclick="printStaffPayrollBharpai('${escapeHtmlSafe(p.id)}')" class="px-2.5 py-1 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 rounded-lg text-[10px] font-bold cursor-pointer">स्लिप / भरपाई</button>
+                      <button type="button" onclick="editStaffPayrollEntry('${escapeHtmlSafe(p.id)}')" class="px-2 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-lg text-[10px] font-semibold cursor-pointer">सच्याउने</button>
+                      <button type="button" onclick="deleteStaffPayrollEntry('${escapeHtmlSafe(p.id)}')" class="px-2 py-1 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-lg text-[10px] font-semibold cursor-pointer">डिलिट</button>
+                    </td>
                   </tr>
                 `;
-              }).join("")}
+              }).join("") || `<tr><td colspan="11" class="p-6 text-center text-slate-400">कुनै तलब भुक्तानी रेकर्ड छैन।</td></tr>`}
             </tbody>
           </table>
         </div>
@@ -7095,12 +7786,18 @@ function renderStaffModule() {
 }
 
 function calculatePayrollTotal() {
-  const salary = Number(document.getElementById("pay-salary").value) || 0;
-  const allowance = Number(document.getElementById("pay-allowance").value) || 0;
-  const dress = Number(document.getElementById("pay-dress").value) || 0;
-  const festival = Number(document.getElementById("pay-festival").value) || 0;
-  const tds = Number(document.getElementById("pay-tds").value) || 0;
-  document.getElementById("pay-net-total").value = Math.max(0, (salary + allowance + dress + festival) - tds);
+  const salary = Number(document.getElementById("pay-salary")?.value) || 0;
+  const allowance = Number(document.getElementById("pay-allowance")?.value) || 0;
+  const dress = Number(document.getElementById("pay-dress")?.value) || 0;
+  const festival = Number(document.getElementById("pay-festival")?.value) || 0;
+  const recharge = Number(document.getElementById("pay-recharge")?.value) || 0;
+  const petrol = Number(document.getElementById("pay-petrol")?.value) || 0;
+  const otherExp = Number(document.getElementById("pay-other-exp")?.value) || 0;
+  const tds = Number(document.getElementById("pay-tds")?.value) || 0;
+  const deduction = Number(document.getElementById("pay-deduction")?.value) || 0;
+  const gross = salary + allowance + dress + festival + recharge + petrol + otherExp;
+  const netEl = document.getElementById("pay-net-total");
+  if (netEl) netEl.value = Math.max(0, Math.round((gross - (tds + deduction)) * 100) / 100);
 }
 
 function saveStaffMemberData(e) {
@@ -7153,29 +7850,122 @@ function deleteStaffMember(staffId) {
   }
 }
 
-function addStaffPayrollEntry(e) {
-  e.preventDefault();
+function addStaffPayrollEntry(e, shouldPrint = false) {
+  if (e) e.preventDefault();
+  ensureExtensionState();
+  const st = window.ERP_STATE;
+  const editId = document.getElementById("edit-pay-id")?.value.trim() || "";
+  const staffId = document.getElementById("stf-id")?.value;
+  if (!staffId) return showToast("कृपया कर्मचारी छान्नुहोस्।", "error");
+  const month = document.getElementById("stf-month").value;
+  const dt = document.getElementById("stf-date").value.trim() || st.activeBSDate;
   const salary = Number(document.getElementById("pay-salary").value) || 0;
   const allowance = Number(document.getElementById("pay-allowance").value) || 0;
   const dress = Number(document.getElementById("pay-dress").value) || 0;
   const festival = Number(document.getElementById("pay-festival").value) || 0;
+  const recharge = Number(document.getElementById("pay-recharge")?.value) || 0;
+  const petrol = Number(document.getElementById("pay-petrol")?.value) || 0;
+  const otherExp = Number(document.getElementById("pay-other-exp")?.value) || 0;
+  const otherNote = document.getElementById("pay-other-note")?.value.trim() || "";
   const tds = Number(document.getElementById("pay-tds").value) || 0;
-  const netTotal = Math.max(0, (salary + allowance + dress + festival) - tds);
+  const deduction = Number(document.getElementById("pay-deduction")?.value) || 0;
+  const mode = document.getElementById("pay-mode")?.value || "Cash";
+  const bankId = mode === "Bank" ? (document.getElementById("pay-bank")?.value || "") : "";
+  const grossTotal = Math.round((salary + allowance + dress + festival + recharge + petrol + otherExp) * 100) / 100;
+  const netTotal = Math.max(0, Math.round((grossTotal - (tds + deduction)) * 100) / 100);
+  const remarks = document.getElementById("stf-remarks").value.trim();
 
-  window.ERP_STATE.staffPayroll.push({
-    id: "PAYR-" + Date.now(),
-    staffId: document.getElementById("stf-id").value,
-    month: document.getElementById("stf-month").value,
-    date: document.getElementById("stf-date").value.trim() || window.ERP_STATE.activeBSDate,
-    type: "मासिक तलब/भत्ता",
-    salary, allowance, dress, festival, tds,
-    amount: netTotal,
-    remarks: document.getElementById("stf-remarks").value.trim()
-  });
+  if (grossTotal <= 0 && netTotal <= 0) {
+    return showToast("कम्तिमा तलब, भत्ता, रिचार्ज, पेट्रोल वा अन्य खर्च रकम राख्नुहोस्।", "error");
+  }
 
-  window.recalculateAllDynamicValues(true);
+  let receiptNo = document.getElementById("pay-receipt-no")?.value.trim() || "";
+  let savedId = editId;
+
+  if (editId) {
+    const idx = st.staffPayroll.findIndex(p => p.id === editId);
+    if (idx < 0) return showToast("भुक्तानी रेकर्ड फेला परेन।", "error");
+    const prev = st.staffPayroll[idx];
+    if (!receiptNo) receiptNo = prev.receiptNo || `PAY-${parseBS(dt).y}-${Number(st.settings.payrollReceiptCounter || 101)}`;
+    st.staffPayroll[idx] = {
+      ...prev,
+      staffId,
+      month,
+      date: dt,
+      receiptNo,
+      type: "मासिक तलब/भत्ता/सुविधा",
+      salary, allowance, dress, festival, recharge, petrol, otherExp, otherNote, tds, deduction,
+      grossTotal,
+      mode, bankId,
+      amount: netTotal,
+      remarks
+    };
+    showToast("कर्मचारी पे-रोल तथा भरपाई विवरण सच्याइयो!", "success");
+  } else {
+    const yr = parseBS(dt).y;
+    if (!receiptNo) {
+      const cnt = Number(st.settings.payrollReceiptCounter || 101);
+      st.settings.payrollReceiptCounter = cnt + 1;
+      receiptNo = `PAY-${yr}-${cnt}`;
+    }
+    savedId = "PAYR-" + Date.now();
+    st.staffPayroll.push({
+      id: savedId,
+      receiptNo,
+      staffId,
+      month,
+      date: dt,
+      type: "मासिक तलब/भत्ता/सुविधा",
+      salary, allowance, dress, festival, recharge, petrol, otherExp, otherNote, tds, deduction,
+      grossTotal,
+      mode, bankId,
+      amount: netTotal,
+      remarks
+    });
+    showToast("कर्मचारीको तलब, रिचार्ज, पेट्रोल तथा सुविधा विवरण सेभ भयो!", "success");
+  }
+
+  window.recalculateAllDynamicValues(false);
+  window.cloudSync?.save();
   renderCurrentModule();
-  showToast("कर्मचारीको तलब तथा भत्ता विवरण सफलतापूर्वक सेभ भयो!", "success");
+  if (shouldPrint && savedId) {
+    setTimeout(() => window.printStaffPayrollBharpai(savedId), 60);
+  }
+}
+
+function submitStaffPayrollAndPrint(e) {
+  e.preventDefault();
+  addStaffPayrollEntry(null, true);
+}
+
+function editStaffPayrollEntry(payId) {
+  const st = window.ERP_STATE;
+  const p = (st.staffPayroll || []).find(x => x.id === payId);
+  if (!p) return;
+  document.getElementById("edit-pay-id").value = p.id;
+  document.getElementById("stf-id").value = p.staffId || "";
+  document.getElementById("stf-month").value = p.month || staffWageMonth;
+  document.getElementById("stf-date").value = p.date || st.activeBSDate;
+  document.getElementById("pay-receipt-no").value = p.receiptNo || "";
+  document.getElementById("pay-salary").value = Number(p.salary || 0);
+  document.getElementById("pay-allowance").value = Number(p.allowance || 0);
+  document.getElementById("pay-dress").value = Number(p.dress || 0);
+  document.getElementById("pay-festival").value = Number(p.festival || 0);
+  document.getElementById("pay-recharge").value = Number(p.recharge || 0);
+  document.getElementById("pay-petrol").value = Number(p.petrol || 0);
+  document.getElementById("pay-other-exp").value = Number(p.otherExp || 0);
+  document.getElementById("pay-other-note").value = p.otherNote || "";
+  document.getElementById("pay-tds").value = Number(p.tds || 0);
+  document.getElementById("pay-deduction").value = Number(p.deduction || 0);
+  document.getElementById("pay-mode").value = p.mode || "Cash";
+  document.getElementById("pay-bank-wrap")?.classList.toggle("hidden", (p.mode || "Cash") !== "Bank");
+  if (p.bankId && document.getElementById("pay-bank")) document.getElementById("pay-bank").value = p.bankId;
+  document.getElementById("stf-remarks").value = p.remarks || "";
+  calculatePayrollTotal();
+  document.getElementById("pay-form-title").textContent = `कर्मचारी पे-रोल सच्याउँदै (${p.receiptNo || p.id})`;
+  document.getElementById("pay-submit-label").textContent = "अपडेट सेभ गर्नुहोस्";
+  document.getElementById("pay-cancel-edit-btn")?.classList.remove("hidden");
+  window.scrollTo({ top: 0, behavior: "smooth" });
 }
 
 function deleteStaffPayrollEntry(payId) {
@@ -7183,10 +7973,203 @@ function deleteStaffPayrollEntry(payId) {
   if (confirm("के तपाईं यो कर्मचारी भुक्तानी रेकर्ड डिलिट गर्न चाहनुहुन्छ?")) {
     window.ERP_STATE.staffPayroll = window.ERP_STATE.staffPayroll.filter(p => p.id !== payId);
     window.recalculateAllDynamicValues(true);
+    window.cloudSync?.save();
     renderCurrentModule();
     showToast("भुक्तानी रेकर्ड सफलतापूर्वक हटाइयो!", "info");
   }
 }
+
+window.printStaffPayrollBharpai = function(payId) {
+  const st = window.ERP_STATE;
+  const p = (st.staffPayroll || []).find(x => x.id === payId);
+  if (!p) return showToast("पे-रोल भरपाई फेला परेन।", "error");
+  const sf = st.staffList.find(x => x.id === p.staffId) || { id: p.staffId, name: p.staffId, role: "-", phone: "-" };
+  const s = st.settings || {};
+  const bankObj = p.bankId ? (st.bankAccounts || []).find(b => b.id === p.bankId) : null;
+  const modeText = p.mode === "Bank" ? `बैंक / चेक (${bankObj?.bankName || 'Bank'})` : "नगद (Cash)";
+
+  const salary = Number(p.salary || 0);
+  const allowance = Number(p.allowance || 0);
+  const dress = Number(p.dress || 0);
+  const festival = Number(p.festival || 0);
+  const recharge = Number(p.recharge || 0);
+  const petrol = Number(p.petrol || 0);
+  const otherExp = Number(p.otherExp || 0);
+  const tds = Number(p.tds || 0);
+  const deduction = Number(p.deduction || 0);
+  const gross = Number(p.grossTotal || (salary + allowance + dress + festival + recharge + petrol + otherExp));
+  const totalDed = tds + deduction;
+  const net = Number(p.amount ?? p.netTotal ?? Math.max(0, gross - totalDed));
+  const words = numberToNepaliWords(net);
+  const docNo = p.receiptNo || p.id;
+
+  const extraTags = [];
+  if (salary > 0) extraTags.push("मासिक तलब");
+  if (allowance + dress + festival > 0) extraTags.push("भत्ता/पोसाक/चाडपर्व");
+  if (recharge > 0) extraTags.push("मोबाइल रिचार्ज");
+  if (petrol > 0) extraTags.push("पेट्रोल खर्च");
+  if (otherExp > 0) extraTags.push(p.otherNote ? p.otherNote : "अन्य खर्च");
+  const itemsPhrase = extraTags.length ? extraTags.join(", ") : "मासिक तलब तथा सुविधा";
+
+  const html = `
+    <div class="border-2 border-slate-900 p-5 sm:p-6 rounded-lg space-y-4 bg-white text-slate-900">
+      ${buildCommitteeBharpaiHeaderHTML("पे-रोल स्लिप तथा लिखित भरपाई (PAYROLL SLIP)", docNo, p.date, "bg-teal-800")}
+
+      <div class="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs bg-slate-50 p-3 rounded border border-slate-300">
+        <div><strong>कर्मचारीको नाम:</strong> ${escapeHtmlSafe(sf.name)}</div>
+        <div><strong>पद / जिम्मेवारी:</strong> ${escapeHtmlSafe(sf.role || '-')}</div>
+        <div><strong>मोबाइल नं.:</strong> ${escapeHtmlSafe(sf.phone || '-')}</div>
+        <div><strong>भुक्तानी महिना:</strong> <span class="font-bold text-teal-900">${escapeHtmlSafe(p.month || '-')}</span></div>
+        <div><strong>भुक्तानी माध्यम:</strong> ${escapeHtmlSafe(modeText)}</div>
+        <div><strong>स्लिप / भरपाई नं.:</strong> ${escapeHtmlSafe(docNo)}</div>
+      </div>
+
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+        <table class="w-full border-collapse border border-slate-500">
+          <thead>
+            <tr class="bg-teal-50">
+              <th class="border border-slate-500 p-2 text-left">भुक्तानी / सुविधा शीर्षक (Earnings)</th>
+              <th class="border border-slate-500 p-2 text-right w-28">रकम (रू.)</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td class="border border-slate-400 p-1.5">१. आधारभूत मासिक तलब (Salary)</td><td class="border border-slate-400 p-1.5 text-right tabular-nums">${fmtMoney(salary)}</td></tr>
+            <tr><td class="border border-slate-400 p-1.5">२. नियमित भत्ता (Allowance)</td><td class="border border-slate-400 p-1.5 text-right tabular-nums">${fmtMoney(allowance)}</td></tr>
+            <tr><td class="border border-slate-400 p-1.5">३. पोसाक भत्ता (Dress Allowance)</td><td class="border border-slate-400 p-1.5 text-right tabular-nums">${fmtMoney(dress)}</td></tr>
+            <tr><td class="border border-slate-400 p-1.5">४. चाडपर्व खर्च (Festival)</td><td class="border border-slate-400 p-1.5 text-right tabular-nums">${fmtMoney(festival)}</td></tr>
+            <tr><td class="border border-slate-400 p-1.5 font-semibold text-sky-900">५. मोबाइल रिचार्ज खर्च (Recharge)</td><td class="border border-slate-400 p-1.5 text-right tabular-nums font-semibold">${fmtMoney(recharge)}</td></tr>
+            <tr><td class="border border-slate-400 p-1.5 font-semibold text-amber-900">६. पेट्रोल / इन्धन खर्च (Petrol)</td><td class="border border-slate-400 p-1.5 text-right tabular-nums font-semibold">${fmtMoney(petrol)}</td></tr>
+            <tr><td class="border border-slate-400 p-1.5 font-semibold text-indigo-900">७. अन्य खर्च ${p.otherNote ? `(${escapeHtmlSafe(p.otherNote)})` : ''}</td><td class="border border-slate-400 p-1.5 text-right tabular-nums font-semibold">${fmtMoney(otherExp)}</td></tr>
+            <tr class="bg-slate-100 font-bold">
+              <td class="border border-slate-500 p-2 text-right">कुल जम्मा रकम (Gross Total):</td>
+              <td class="border border-slate-500 p-2 text-right tabular-nums">${fmtMoney(gross)}</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <div class="flex flex-col justify-between gap-3">
+          <table class="w-full border-collapse border border-slate-500">
+            <thead>
+              <tr class="bg-rose-50">
+                <th class="border border-slate-500 p-2 text-left">कट्टी विवरण (Deductions)</th>
+                <th class="border border-slate-500 p-2 text-right w-28">रकम (रू.)</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr><td class="border border-slate-400 p-1.5">१. कर कट्टी (TDS)</td><td class="border border-slate-400 p-1.5 text-right tabular-nums text-rose-700">${fmtMoney(tds)}</td></tr>
+              <tr><td class="border border-slate-400 p-1.5">२. अन्य कट्टी / पेश्की मिलान</td><td class="border border-slate-400 p-1.5 text-right tabular-nums text-rose-700">${fmtMoney(deduction)}</td></tr>
+              <tr class="bg-slate-100 font-bold">
+                <td class="border border-slate-500 p-2 text-right">जम्मा कट्टी (Total Deduction):</td>
+                <td class="border border-slate-500 p-2 text-right tabular-nums text-rose-800">${fmtMoney(totalDed)}</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <div class="p-3 bg-teal-50 border-2 border-teal-800 rounded space-y-1">
+            <div class="flex justify-between items-center text-sm font-extrabold text-teal-950">
+              <span>खुद भुक्तानी रकम (Net Payable):</span>
+              <span class="tabular-nums">${fmtMoney(net)}</span>
+            </div>
+            <div class="text-[11px] font-bold text-slate-800 border-t border-teal-200 pt-1">
+              अक्षरेपी: <u>${escapeHtmlSafe(words)}</u>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="text-xs leading-6 bg-amber-50/40 border border-amber-300 rounded-lg p-3.5 text-justify">
+        <div class="font-bold text-slate-900 underline mb-1">कर्मचारी तलब तथा सुविधा लिखित भरपाई:</div>
+        यस <strong>${escapeHtmlSafe(s.committeeName)}</strong> मा <strong>${escapeHtmlSafe(sf.role || 'कर्मचारी')}</strong> पदमा कार्यरत म <strong>श्री ${escapeHtmlSafe(sf.name)}</strong> ले
+        <strong>${escapeHtmlSafe(p.month || '')} महिना</strong> को <strong>${escapeHtmlSafe(itemsPhrase)}</strong> बापत माथि तालिकामा उल्लेखित विवरण अनुसार
+        कुल रकम ${escapeHtmlSafe(formatNepaliMoney(gross))} मा कट्टी रकम ${escapeHtmlSafe(formatNepaliMoney(totalDed))} कट्टा गरी बाँकी खुद पाउनु पर्ने रकम
+        <strong>${escapeHtmlSafe(formatNepaliMoney(net))}</strong> (अक्षरेपी: <u>${escapeHtmlSafe(words)}</u>)
+        आजका मिति <strong>${escapeHtmlSafe(toNepaliDigits(p.date))}</strong> मा यस समितिको कोषबाट <strong>${escapeHtmlSafe(modeText)}</strong> मार्फत
+        पूरा बुझिलिएको साँचो हो भनी मेरो राजीखुसीले यो पे-रोल स्लिप तथा आधिकारिक लिखित भरपाईमा सहीछाप गरी समितिको कार्यालयमा बुझाइदिएँ ।
+        ${p.remarks ? `<div class="mt-1"><strong>कैफियत:</strong> ${escapeHtmlSafe(p.remarks)}</div>` : ""}
+      </div>
+
+      ${buildOfficialSignatureFooterHTML("रकम बुझिलिने कर्मचारीको सही", sf.name, sf.phone || "", "", true)}
+    </div>
+  `;
+  openPrintModal(`पे-रोल स्लिप तथा भरपाई - ${sf.name} (${p.month})`, html);
+};
+
+window.printMonthlyPayrollRegister = function() {
+  const st = window.ERP_STATE;
+  const rows = (st.staffPayroll || []).filter(p => p.month === staffWageMonth);
+  if (rows.length === 0) return showToast(`${staffWageMonth} महिनाको कुनै पे-रोल रेकर्ड छैन।`, "warning");
+  const s = st.settings || {};
+  let sumSal = 0, sumAllow = 0, sumRech = 0, sumPet = 0, sumOther = 0, sumDed = 0, sumNet = 0;
+
+  const bodyRows = rows.map((p, idx) => {
+    const sf = st.staffList.find(x => x.id === p.staffId) || { name: p.staffId, role: "-" };
+    const allowAll = Number(p.allowance || 0) + Number(p.dress || 0) + Number(p.festival || 0);
+    const dedAll = Number(p.tds || 0) + Number(p.deduction || 0);
+    const net = Number(p.amount ?? p.netTotal ?? 0);
+    sumSal += Number(p.salary || 0);
+    sumAllow += allowAll;
+    sumRech += Number(p.recharge || 0);
+    sumPet += Number(p.petrol || 0);
+    sumOther += Number(p.otherExp || 0);
+    sumDed += dedAll;
+    sumNet += net;
+    return `
+      <tr>
+        <td class="border border-slate-400 p-1.5 text-center">${toNepaliDigits(idx + 1)}</td>
+        <td class="border border-slate-400 p-1.5"><strong>${escapeHtmlSafe(sf.name)}</strong><div class="text-[10px] text-slate-600">${escapeHtmlSafe(sf.role || '')}</div></td>
+        <td class="border border-slate-400 p-1.5 text-right tabular-nums">${fmtMoney(p.salary || 0)}</td>
+        <td class="border border-slate-400 p-1.5 text-right tabular-nums">${fmtMoney(allowAll)}</td>
+        <td class="border border-slate-400 p-1.5 text-right tabular-nums">${fmtMoney(p.recharge || 0)}</td>
+        <td class="border border-slate-400 p-1.5 text-right tabular-nums">${fmtMoney(p.petrol || 0)}</td>
+        <td class="border border-slate-400 p-1.5 text-right tabular-nums">${fmtMoney(p.otherExp || 0)}</td>
+        <td class="border border-slate-400 p-1.5 text-right tabular-nums text-rose-700">${fmtMoney(dedAll)}</td>
+        <td class="border border-slate-400 p-1.5 text-right font-bold tabular-nums">${fmtMoney(net)}</td>
+        <td class="border border-slate-400 p-1.5 h-9"></td>
+      </tr>
+    `;
+  }).join("");
+
+  const html = `
+    <div class="border-2 border-slate-900 p-5 rounded-lg space-y-4 bg-white text-slate-900">
+      ${buildCommitteeBharpaiHeaderHTML(`${staffWageMonth} महिनाको एकमुष्ट पे-रोल भरपाई रजिस्टर`, `PAY-${staffWageMonth}`, st.activeBSDate, "bg-teal-800")}
+      <div class="text-xs leading-6 bg-slate-50 border border-slate-300 rounded p-3">
+        <strong>${escapeHtmlSafe(s.committeeName)}</strong> बाट <strong>${escapeHtmlSafe(staffWageMonth)} महिना</strong> मा कार्यरत देहाय बमोजिमका जम्मा <strong>${toNepaliDigits(rows.length)} जना</strong> कर्मचारीहरूले आ-आफ्नो नाम अगाडि उल्लेखित तलब, भत्ता, रिचार्ज, पेट्रोल तथा अन्य सुविधा बापतको खुद रकम <strong>${escapeHtmlSafe(formatNepaliMoney(sumNet))}</strong> (अक्षरेपी: <u>${escapeHtmlSafe(numberToNepaliWords(sumNet))}</u>) बुझिलिई सहीछाप गरेको साँचो हो ।
+      </div>
+      <table class="w-full text-[11px] border-collapse border border-slate-500">
+        <thead>
+          <tr class="bg-slate-100">
+            <th class="border border-slate-500 p-1.5 text-center">क्र.</th>
+            <th class="border border-slate-500 p-1.5 text-left">कर्मचारीको नाम / पद</th>
+            <th class="border border-slate-500 p-1.5 text-right">तलब</th>
+            <th class="border border-slate-500 p-1.5 text-right">भत्ता/पोसाक</th>
+            <th class="border border-slate-500 p-1.5 text-right">रिचार्ज</th>
+            <th class="border border-slate-500 p-1.5 text-right">पेट्रोल</th>
+            <th class="border border-slate-500 p-1.5 text-right">अन्य</th>
+            <th class="border border-slate-500 p-1.5 text-right">कट्टी/TDS</th>
+            <th class="border border-slate-500 p-1.5 text-right">खुद भुक्तानी</th>
+            <th class="border border-slate-500 p-1.5 text-center w-28">बुझिलिनेको सही</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${bodyRows}
+          <tr class="bg-teal-50 font-bold">
+            <td colspan="2" class="border border-slate-500 p-2 text-right">कुल जम्मा:</td>
+            <td class="border border-slate-500 p-2 text-right tabular-nums">${fmtMoney(sumSal)}</td>
+            <td class="border border-slate-500 p-2 text-right tabular-nums">${fmtMoney(sumAllow)}</td>
+            <td class="border border-slate-500 p-2 text-right tabular-nums">${fmtMoney(sumRech)}</td>
+            <td class="border border-slate-500 p-2 text-right tabular-nums">${fmtMoney(sumPet)}</td>
+            <td class="border border-slate-500 p-2 text-right tabular-nums">${fmtMoney(sumOther)}</td>
+            <td class="border border-slate-500 p-2 text-right tabular-nums text-rose-700">${fmtMoney(sumDed)}</td>
+            <td class="border border-slate-500 p-2 text-right tabular-nums text-teal-950">${fmtMoney(sumNet)}</td>
+            <td class="border border-slate-500 p-2"></td>
+          </tr>
+        </tbody>
+      </table>
+      ${buildOfficialSignatureFooterHTML("प्रमाणित गर्ने (व्यवस्थापक/लेखा)", s.authorizedPerson || "", "", "", false)}
+    </div>
+  `;
+  openPrintModal(`मासिक पे-रोल भरपाई रजिस्टर - ${staffWageMonth}`, html);
+};
 
 // ============================================================================
 // 14. TANKER / VEHICLE WATER SALES MODULE (CASH & CREDIT + RECOVERY)
@@ -7869,8 +8852,8 @@ function getAccountingJournal(){
     const drAcct=/bank|बैंक/i.test(String(i.mode||""))?"1002":"1001";
     if(a>0) out.push(makePosting("AUTO-INC-"+i.id,i.date,"अन्य आम्दानी - "+(i.category||""),"income",drAcct,a,ensureCategoryAccount(i.category,"income"),a,i.id));
   });
-  (st.expenses||[]).forEach(e=>{const a=Number(e.amount||0);if(a>0)out.push(makePosting("AUTO-EXP-"+e.id,e.date,"खर्च - "+(e.category||""),"expense",ensureCategoryAccount(e.category,"expense"),a,"1001",a,e.id));});
-  (st.staffPayroll||[]).forEach(x=>{const a=Number(x.amount||0);if(a>0)out.push(makePosting("AUTO-PAYR-"+x.id,x.date,"तलब/भत्ता - "+(x.remarks||""),"payroll","5010",a,"1001",a,x.id));});
+  (st.expenses||[]).forEach(e=>{const a=Number(e.amount||0);const crAcct=/bank|बैंक/i.test(String(e.mode||""))?"1002":"1001";if(a>0)out.push(makePosting("AUTO-EXP-"+e.id,e.date,"खर्च - "+(e.category||"")+(e.bharpaiNo?" ("+e.bharpaiNo+")":""),"expense",ensureCategoryAccount(e.category,"expense"),a,crAcct,a,e.bharpaiNo||e.id));});
+  (st.staffPayroll||[]).forEach(x=>{const a=Number(x.amount||0);const crAcct=/bank|बैंक/i.test(String(x.mode||""))?"1002":"1001";const sf=(st.staffList||[]).find(s=>s.id===x.staffId);const nm=sf?sf.name:(x.staffId||"");if(a>0)out.push(makePosting("AUTO-PAYR-"+x.id,x.date,"तलब/भत्ता/सुविधा - "+nm+(x.month?" ("+x.month+")":"")+(x.remarks?" - "+x.remarks:""),"payroll","5010",a,crAcct,a,x.receiptNo||x.id));});
   (st.tankerSales||[]).forEach(x=>{
     const sale=Number(x.saleAmount||0), wage=Number(x.wageAmount||0);
     const sType=String(x.saleType||"Cash");
@@ -9836,6 +10819,8 @@ function ensureExtensionState() {
   if (s.chalaniCounter === undefined) s.chalaniCounter = 1;
   if (s.dartaCounter === undefined) s.dartaCounter = 1;
   if (s.maintReceiptCounter === undefined) s.maintReceiptCounter = 1;
+  if (s.bharpaiCounter === undefined) s.bharpaiCounter = 101;
+  if (s.payrollReceiptCounter === undefined) s.payrollReceiptCounter = 101;
   if (!Array.isArray(s.committeeMembers) || s.committeeMembers.length === 0) {
     s.committeeMembers = JSON.parse(JSON.stringify(DEFAULT_COMMITTEE_MEMBERS));
   }
@@ -9921,6 +10906,105 @@ let maintSearchQuery = "";
 let maintMonthFilter = "ALL";
 let maintSettlementFilter = "ALL";
 
+let maintBharpaiPanelOpen = false;
+
+function renderMntItemRowHTML(item = "", qty = 1, rate = 0, total = 0) {
+  return `
+    <tr class="mnt-item-row">
+      <td class="p-1"><input type="text" class="mnt-ri-name w-full border border-slate-300 rounded px-2 py-1" value="${escapeHtmlSafe(item)}" placeholder="उदा: १ इन्च पाइप / गेटभल्भ / ज्याला"></td>
+      <td class="p-1"><input type="number" min="0" step="0.01" class="mnt-ri-qty w-full border border-slate-300 rounded px-1.5 py-1 text-center" value="${Number(qty || 1)}" oninput="recalcMntItemRow(this)"></td>
+      <td class="p-1"><input type="number" min="0" step="0.01" class="mnt-ri-rate w-full border border-slate-300 rounded px-1.5 py-1 text-right" value="${Number(rate || 0)}" oninput="recalcMntItemRow(this)"></td>
+      <td class="p-1"><input type="number" min="0" step="0.01" class="mnt-ri-total w-full border border-slate-300 rounded px-1.5 py-1 text-right font-bold" value="${Number(total || 0)}" oninput="recalcMntBreakdown()"></td>
+      <td class="p-1 text-center"><button type="button" onclick="removeMntDynamicRow(this, 'item')" class="text-rose-600 hover:text-rose-800 font-bold px-1 cursor-pointer">✕</button></td>
+    </tr>
+  `;
+}
+
+function renderMntWorkerRowHTML(name = "", role = "प्लम्बर/मर्मत", days = 1, wage = 0) {
+  return `
+    <tr class="mnt-worker-row">
+      <td class="p-1"><input type="text" list="mnt-staff-names-list" class="mnt-wk-name w-full border border-slate-300 rounded px-2 py-1" value="${escapeHtmlSafe(name)}" placeholder="कामदारको नाम" oninput="syncMntWorkerCountFromRows()"></td>
+      <td class="p-1"><input type="text" class="mnt-wk-role w-full border border-slate-300 rounded px-1.5 py-1" value="${escapeHtmlSafe(role)}" placeholder="पद/काम"></td>
+      <td class="p-1"><input type="number" min="0" step="0.5" class="mnt-wk-days w-full border border-slate-300 rounded px-1.5 py-1 text-center" value="${Number(days || 1)}"></td>
+      <td class="p-1"><input type="number" min="0" step="0.01" class="mnt-wk-wage w-full border border-slate-300 rounded px-1.5 py-1 text-right font-bold" value="${Number(wage || 0)}" oninput="recalcMntBreakdown()"></td>
+      <td class="p-1 text-center"><button type="button" onclick="removeMntDynamicRow(this, 'worker')" class="text-rose-600 hover:text-rose-800 font-bold px-1 cursor-pointer">✕</button></td>
+    </tr>
+  `;
+}
+
+window.toggleMntBharpaiPanel = function() {
+  maintBharpaiPanelOpen = !maintBharpaiPanelOpen;
+  document.getElementById("mnt-bharpai-panel")?.classList.toggle("hidden", !maintBharpaiPanelOpen);
+};
+
+window.addMntItemRow = function() {
+  const tbody = document.getElementById("mnt-items-body");
+  if (tbody) tbody.insertAdjacentHTML("beforeend", renderMntItemRowHTML());
+};
+
+window.addMntWorkerRow = function() {
+  const tbody = document.getElementById("mnt-workers-body");
+  if (tbody) {
+    tbody.insertAdjacentHTML("beforeend", renderMntWorkerRowHTML());
+    window.syncMntWorkerCountFromRows();
+  }
+};
+
+window.removeMntDynamicRow = function(btn, type) {
+  const tr = btn?.closest("tr");
+  const tbody = tr?.parentElement;
+  if (!tr || !tbody) return;
+  if (tbody.children.length <= 1) {
+    tr.querySelectorAll("input").forEach(inp => {
+      if (inp.type === "number") inp.value = inp.classList.contains("mnt-ri-qty") || inp.classList.contains("mnt-wk-days") ? "1" : "0";
+      else inp.value = "";
+    });
+  } else {
+    tr.remove();
+  }
+  if (type === "worker") window.syncMntWorkerCountFromRows();
+  window.recalcMntBreakdown();
+};
+
+window.recalcMntItemRow = function(input) {
+  const tr = input?.closest("tr");
+  if (!tr) return;
+  const q = Number(tr.querySelector(".mnt-ri-qty")?.value) || 0;
+  const r = Number(tr.querySelector(".mnt-ri-rate")?.value) || 0;
+  const totEl = tr.querySelector(".mnt-ri-total");
+  if (totEl) totEl.value = Math.round(q * r * 100) / 100;
+  window.recalcMntBreakdown();
+};
+
+window.syncMntWorkerCountFromRows = function() {
+  const cnt = Array.from(document.querySelectorAll("#mnt-workers-body .mnt-wk-name"))
+    .filter(inp => String(inp.value || "").trim().length > 0).length;
+  const el = document.getElementById("mnt-worker-count");
+  if (el && cnt > 0) el.value = cnt;
+};
+
+window.recalcMntBreakdown = function() {
+  let itemSum = 0;
+  document.querySelectorAll("#mnt-items-body .mnt-ri-total").forEach(el => { itemSum += Number(el.value) || 0; });
+  let wageSum = 0;
+  document.querySelectorAll("#mnt-workers-body .mnt-wk-wage").forEach(el => { wageSum += Number(el.value) || 0; });
+  const total = Math.round((itemSum + wageSum) * 100) / 100;
+  const subEl = document.getElementById("mnt-breakdown-total");
+  if (subEl) subEl.textContent = fmtMoney(total);
+  return total;
+};
+
+window.syncMntAmountFromBreakdown = function() {
+  const tot = window.recalcMntBreakdown();
+  if (tot <= 0) return showToast("पहिले काम/सामान वा कामदार ज्याला रकम राख्नुहोस्।", "warning");
+  const amtEl = document.getElementById("mnt-amount");
+  if (amtEl) amtEl.value = tot;
+  const names = Array.from(document.querySelectorAll("#mnt-items-body .mnt-ri-name"))
+    .map(i => String(i.value || "").trim()).filter(Boolean);
+  const descEl = document.getElementById("mnt-desc");
+  if (descEl && !descEl.value.trim() && names.length) descEl.value = names.join(", ");
+};
+
 window.renderMaintenanceModule = function() {
   ensureExtensionState();
   const st = window.ERP_STATE;
@@ -9941,6 +11025,10 @@ window.renderMaintenanceModule = function() {
 
   return `
     <div class="space-y-6">
+      <datalist id="mnt-staff-names-list">
+        ${(st.staffList || []).map(sf => `<option value="${escapeHtmlSafe(sf.name)}">${escapeHtmlSafe(sf.role || '')}</option>`).join("")}
+      </datalist>
+
       <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 text-xs">
         <div class="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
           <div class="text-slate-500">कुल मर्मत अभिलेख (${logs.length})</div>
@@ -9962,62 +11050,133 @@ window.renderMaintenanceModule = function() {
             <h3 class="text-base font-bold text-slate-800 flex items-center gap-2">
               <i data-lucide="wrench" class="w-5 h-5 text-amber-700"></i> ग्राहक मर्मत कार्य तथा शुल्क अभिलेख (Maintenance Entry)
             </h3>
-            <p class="text-xs text-slate-500">कुन ग्राहकको के मर्मत गरेको र कति खर्च भयो भनी मिति र विवरण सहित राख्नुहोस्। 'बिलमा जोड्ने' छान्दा मासिक बिल र बक्यौतामा स्वतः जोडिन्छ।</p>
+            <p class="text-xs text-slate-500">कुन ग्राहकको के मर्मत गरेको, को-को कति जना संलग्न भएको र आधिकारिक लिखित भरपाई / रसिद प्रिन्ट गर्न मिल्छ।</p>
           </div>
-          <button type="button" onclick="switchModule('unit-entry')" class="bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold px-3 py-1.5 rounded-xl cursor-pointer">
-            युनिट इन्ट्रीमा फर्कनुहोस् →
-          </button>
+          <div class="flex flex-wrap items-center gap-2">
+            <button type="button" onclick="toggleMntBharpaiPanel()" class="bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 text-xs font-semibold px-3 py-1.5 rounded-xl cursor-pointer">
+              भरपाई विवरण (कामदार/सामान) खोल्नुहोस्
+            </button>
+            <button type="button" onclick="switchModule('unit-entry')" class="bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold px-3 py-1.5 rounded-xl cursor-pointer">
+              युनिट इन्ट्रीमा फर्कनुहोस् →
+            </button>
+          </div>
         </div>
 
-        <form onsubmit="saveMaintenanceEntry(event)" class="grid grid-cols-1 sm:grid-cols-4 gap-3 text-xs">
-          <div>
-            <label class="font-semibold text-slate-600 block mb-1">ग्राहक छान्नुहोस् *</label>
-            <select id="mnt-cust" required class="w-full border border-slate-300 rounded-xl px-3 py-2 font-semibold">
-              <option value="">-- ग्राहक छान्नुहोस् --</option>
-              ${st.customers.map(c => `<option value="${escapeHtmlSafe(c.id)}">${escapeHtmlSafe(c.id)} - ${escapeHtmlSafe(c.name)}${window.isCustomerDroppedOut?.(c) ? ' (धारा बन्द)' : ''}</option>`).join("")}
-            </select>
+        <form onsubmit="saveMaintenanceEntry(event, false)" class="space-y-4 text-xs">
+          <div class="grid grid-cols-1 sm:grid-cols-4 gap-3">
+            <div>
+              <label class="font-semibold text-slate-600 block mb-1">ग्राहक छान्नुहोस् *</label>
+              <select id="mnt-cust" required class="w-full border border-slate-300 rounded-xl px-3 py-2 font-semibold">
+                <option value="">-- ग्राहक छान्नुहोस् --</option>
+                ${st.customers.map(c => `<option value="${escapeHtmlSafe(c.id)}">${escapeHtmlSafe(c.id)} - ${escapeHtmlSafe(c.name)}${window.isCustomerDroppedOut?.(c) ? ' (धारा बन्द)' : ''}</option>`).join("")}
+              </select>
+            </div>
+            <div>
+              <label class="font-semibold text-slate-600 block mb-1">महिना *</label>
+              <select id="mnt-month" required class="w-full border border-slate-300 rounded-xl px-3 py-2 font-semibold">
+                ${NEPALI_MONTHS.map(m => `<option value="${m}" ${m === defaultMonth ? 'selected' : ''}>${m}</option>`).join("")}
+              </select>
+            </div>
+            <div>
+              <label class="font-semibold text-slate-600 block mb-1">मर्मत मिति (BS) *</label>
+              <input type="text" id="mnt-date" value="${st.activeBSDate}" required class="w-full bg-teal-50 border border-teal-300 rounded-xl px-3 py-2 font-bold">
+            </div>
+            <div>
+              <label class="font-semibold text-slate-600 block mb-1">मर्मतको प्रकार *</label>
+              <select id="mnt-type" required class="w-full border border-slate-300 rounded-xl px-3 py-2 font-semibold">
+                ${MAINTENANCE_WORK_TYPES.map(t => `<option value="${t}">${t}</option>`).join("")}
+              </select>
+            </div>
+            <div class="sm:col-span-2">
+              <label class="font-semibold text-slate-600 block mb-1">के मर्मत गरेको ? (कामको स्पष्ट विवरण) *</label>
+              <input type="text" id="mnt-desc" required placeholder="उदा: घर अगाडिको १ इन्च पाइप लिक टालेको / गेटभल्भ फेरेको" class="w-full border border-slate-300 rounded-xl px-3 py-2">
+            </div>
+            <div>
+              <label class="font-semibold text-slate-600 block mb-1">मर्मत शुल्क रकम (रू.) *</label>
+              <input type="number" id="mnt-amount" required min="1" step="0.01" class="w-full border-2 border-amber-400 bg-amber-50/40 rounded-xl px-3 py-2 font-bold text-amber-950">
+            </div>
+            <div>
+              <label class="font-semibold text-slate-600 block mb-1">असुली / हिसाब तरिका *</label>
+              <select id="mnt-settlement" onchange="document.getElementById('mnt-bank-wrap')?.classList.toggle('hidden', this.value !== 'Bank')" class="w-full border border-slate-300 rounded-xl px-3 py-2 font-semibold">
+                <option value="Bill">ग्राहकको मासिक बिलमा जोड्ने (Bill)</option>
+                <option value="Cash">तुरुन्त नगद असुली (Cash)</option>
+                <option value="Bank">तुरुन्त बैंक असुली (Bank)</option>
+              </select>
+            </div>
+            <div id="mnt-bank-wrap" class="hidden sm:col-span-2">
+              <label class="font-semibold text-slate-600 block mb-1">बैंक खाता छान्नुहोस् *</label>
+              <select id="mnt-bank" class="w-full border border-slate-300 rounded-xl px-3 py-2 font-semibold">
+                ${(st.bankAccounts || []).length ? st.bankAccounts.map(b => `<option value="${b.id}">${escapeHtmlSafe(b.bankName)}</option>`).join("") : `<option value="">-- बैंक खाता छैन --</option>`}
+              </select>
+            </div>
           </div>
-          <div>
-            <label class="font-semibold text-slate-600 block mb-1">महिना *</label>
-            <select id="mnt-month" required class="w-full border border-slate-300 rounded-xl px-3 py-2 font-semibold">
-              ${NEPALI_MONTHS.map(m => `<option value="${m}" ${m === defaultMonth ? 'selected' : ''}>${m}</option>`).join("")}
-            </select>
+
+          <div id="mnt-bharpai-panel" class="${maintBharpaiPanelOpen ? '' : 'hidden'} bg-amber-50/50 border border-amber-200 rounded-2xl p-4 space-y-4">
+            <div class="flex flex-wrap items-center justify-between gap-2 border-b border-amber-200 pb-2">
+              <div class="font-bold text-amber-950">मर्मत भरपाई विवरण (के-के मर्मत गरेको, को-को, कति जना)</div>
+              <div class="flex items-center gap-2">
+                <span class="text-[11px] font-bold text-slate-700">जम्मा: <span id="mnt-breakdown-total">रु. 0.00</span></span>
+                <button type="button" onclick="syncMntAmountFromBreakdown()" class="bg-amber-600 hover:bg-amber-700 text-white text-[11px] font-semibold px-3 py-1 rounded-lg cursor-pointer">मर्मत रकममा राख्नुहोस्</button>
+              </div>
+            </div>
+
+            <div class="grid grid-cols-1 sm:grid-cols-4 gap-3">
+              <div>
+                <label class="font-semibold text-slate-700 block mb-1">मर्मत स्थान</label>
+                <input type="text" id="mnt-work-site" placeholder="उदा: घर नं. / टोल" class="w-full border border-slate-300 bg-white rounded-xl px-3 py-2">
+              </div>
+              <div>
+                <label class="font-semibold text-slate-700 block mb-1">कामदार संख्या (कति जना)</label>
+                <input type="number" id="mnt-worker-count" min="0" value="1" class="w-full border border-slate-300 bg-white rounded-xl px-3 py-2 font-bold">
+              </div>
+              <div>
+                <label class="font-semibold text-slate-700 block mb-1">काम गर्ने / बुझिलिनेको नाम</label>
+                <input type="text" id="mnt-receiver-name" list="mnt-staff-names-list" placeholder="प्राविधिक / कामदारको नाम" class="w-full border border-slate-300 bg-white rounded-xl px-3 py-2 font-semibold">
+              </div>
+              <div>
+                <label class="font-semibold text-slate-700 block mb-1">फोन / ना.नं.</label>
+                <input type="text" id="mnt-receiver-phone" placeholder="९८XXXXXXXX" class="w-full border border-slate-300 bg-white rounded-xl px-3 py-2">
+              </div>
+            </div>
+
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+              <div class="bg-white border border-amber-200 rounded-xl p-3 space-y-2">
+                <div class="flex items-center justify-between">
+                  <span class="font-bold text-slate-800">१. के-के मर्मत गरेको / सामान विवरण</span>
+                  <button type="button" onclick="addMntItemRow()" class="px-2 py-1 bg-teal-50 hover:bg-teal-100 text-teal-800 border border-teal-200 rounded-lg text-[11px] font-bold cursor-pointer">+ थप्नुहोस्</button>
+                </div>
+                <table class="w-full text-[11px] border-collapse">
+                  <thead>
+                    <tr class="bg-slate-50 text-slate-600">
+                      <th class="p-1 text-left">विवरण</th><th class="p-1 w-12 text-center">परिमाण</th><th class="p-1 w-16 text-right">दर</th><th class="p-1 w-20 text-right">जम्मा</th><th class="p-1 w-6"></th>
+                    </tr>
+                  </thead>
+                  <tbody id="mnt-items-body" class="divide-y divide-slate-100">${renderMntItemRowHTML()}</tbody>
+                </table>
+              </div>
+              <div class="bg-white border border-amber-200 rounded-xl p-3 space-y-2">
+                <div class="flex items-center justify-between">
+                  <span class="font-bold text-slate-800">२. को-को संलग्न भएको (कामदार सूची)</span>
+                  <button type="button" onclick="addMntWorkerRow()" class="px-2 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-800 border border-indigo-200 rounded-lg text-[11px] font-bold cursor-pointer">+ कामदार</button>
+                </div>
+                <table class="w-full text-[11px] border-collapse">
+                  <thead>
+                    <tr class="bg-slate-50 text-slate-600">
+                      <th class="p-1 text-left">नाम (को-को)</th><th class="p-1 w-20 text-left">पद</th><th class="p-1 w-12 text-center">दिन</th><th class="p-1 w-20 text-right">ज्याला</th><th class="p-1 w-6"></th>
+                    </tr>
+                  </thead>
+                  <tbody id="mnt-workers-body" class="divide-y divide-slate-100">${renderMntWorkerRowHTML()}</tbody>
+                </table>
+              </div>
+            </div>
           </div>
-          <div>
-            <label class="font-semibold text-slate-600 block mb-1">मर्मत मिति (BS) *</label>
-            <input type="text" id="mnt-date" value="${st.activeBSDate}" required class="w-full bg-teal-50 border border-teal-300 rounded-xl px-3 py-2 font-bold">
-          </div>
-          <div>
-            <label class="font-semibold text-slate-600 block mb-1">मर्मतको प्रकार *</label>
-            <select id="mnt-type" required class="w-full border border-slate-300 rounded-xl px-3 py-2 font-semibold">
-              ${MAINTENANCE_WORK_TYPES.map(t => `<option value="${t}">${t}</option>`).join("")}
-            </select>
-          </div>
-          <div class="sm:col-span-2">
-            <label class="font-semibold text-slate-600 block mb-1">के मर्मत गरेको ? (कामको स्पष्ट विवरण) *</label>
-            <input type="text" id="mnt-desc" required placeholder="उदा: घर अगाडिको १ इन्च पाइप लिक टालेको / गेटभल्भ फेरेको" class="w-full border border-slate-300 rounded-xl px-3 py-2">
-          </div>
-          <div>
-            <label class="font-semibold text-slate-600 block mb-1">मर्मत शुल्क रकम (रू.) *</label>
-            <input type="number" id="mnt-amount" required min="1" step="0.01" class="w-full border-2 border-amber-400 bg-amber-50/40 rounded-xl px-3 py-2 font-bold text-amber-950">
-          </div>
-          <div>
-            <label class="font-semibold text-slate-600 block mb-1">असुली / हिसाब तरिका *</label>
-            <select id="mnt-settlement" onchange="document.getElementById('mnt-bank-wrap')?.classList.toggle('hidden', this.value !== 'Bank')" class="w-full border border-slate-300 rounded-xl px-3 py-2 font-semibold">
-              <option value="Bill">ग्राहकको मासिक बिलमा जोड्ने (Bill)</option>
-              <option value="Cash">तुरुन्त नगद असुली (Cash)</option>
-              <option value="Bank">तुरुन्त बैंक असुली (Bank)</option>
-            </select>
-          </div>
-          <div id="mnt-bank-wrap" class="hidden sm:col-span-2">
-            <label class="font-semibold text-slate-600 block mb-1">बैंक खाता छान्नुहोस् *</label>
-            <select id="mnt-bank" class="w-full border border-slate-300 rounded-xl px-3 py-2 font-semibold">
-              ${(st.bankAccounts || []).length ? st.bankAccounts.map(b => `<option value="${b.id}">${escapeHtmlSafe(b.bankName)}</option>`).join("") : `<option value="">-- बैंक खाता छैन --</option>`}
-            </select>
-          </div>
-          <div class="sm:col-span-4 flex justify-end pt-1">
-            <button type="submit" class="bg-amber-600 hover:bg-amber-700 text-white font-semibold px-6 py-2.5 rounded-xl shadow-sm cursor-pointer flex items-center gap-2">
+
+          <div class="flex flex-wrap justify-end gap-2 pt-1">
+            <button type="submit" class="bg-amber-600 hover:bg-amber-700 text-white font-semibold px-5 py-2.5 rounded-xl shadow-sm cursor-pointer flex items-center gap-2">
               <i data-lucide="save" class="w-4 h-4"></i> मर्मत विवरण सेभ गर्नुहोस्
+            </button>
+            <button type="button" onclick="submitMaintenanceAndPrintBharpai(event)" class="bg-slate-900 hover:bg-slate-800 text-white font-semibold px-5 py-2.5 rounded-xl shadow-sm cursor-pointer flex items-center gap-2">
+              <i data-lucide="printer" class="w-4 h-4 text-amber-300"></i> सेभ गरी भरपाई प्रिन्ट गर्नुहोस्
             </button>
           </div>
         </form>
@@ -10050,7 +11209,7 @@ window.renderMaintenanceModule = function() {
                 <th class="p-3">के मर्मत गरेको (विवरण)</th>
                 <th class="p-3 text-right">रकम (रू.)</th>
                 <th class="p-3">माध्यम / अवस्था</th>
-                <th class="p-3 text-center">रसिद / कार्य</th>
+                <th class="p-3 text-center">रसिद / भरपाई / कार्य</th>
               </tr>
             </thead>
             <tbody class="divide-y divide-slate-100">
@@ -10063,6 +11222,7 @@ window.renderMaintenanceModule = function() {
                       : (m.paid
                           ? `<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800">रसिदबाट चुक्ता</span>`
                           : `<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-900">बाँकी (बिल पछि जोडिन्छ)</span>`));
+                const wkCount = Number(m.workerCount || (Array.isArray(m.workers) ? m.workers.length : 0) || 0);
                 return `
                   <tr class="hover:bg-slate-50">
                     <td class="p-3 tabular-nums">
@@ -10077,6 +11237,7 @@ window.renderMaintenanceModule = function() {
                     <td class="p-3">
                       <div class="font-semibold text-amber-900">${escapeHtmlSafe(m.workType || 'मर्मत')}</div>
                       <div class="text-[11px] text-slate-700">${escapeHtmlSafe(m.description || '-')}</div>
+                      ${wkCount > 0 ? `<div class="text-[10px] text-slate-500 mt-0.5">जनशक्ति: ${wkCount} जना</div>` : ""}
                     </td>
                     <td class="p-3 text-right font-bold tabular-nums">${fmtMoney(m.amount)}</td>
                     <td class="p-3">
@@ -10084,8 +11245,9 @@ window.renderMaintenanceModule = function() {
                       ${statusBadge}
                     </td>
                     <td class="p-3 text-center whitespace-nowrap space-x-1">
-                      <button type="button" onclick="printMaintenanceReceipt('${m.id}')" class="px-2.5 py-1 bg-teal-50 hover:bg-teal-100 text-teal-800 border border-teal-200 rounded-lg text-[10px] font-semibold cursor-pointer">रसिद</button>
-                      <button type="button" onclick="deleteMaintenanceEntry('${m.id}')" class="px-2.5 py-1 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-lg text-[10px] font-semibold cursor-pointer">हटाउने</button>
+                      <button type="button" onclick="printMaintenanceBharpai('${escapeHtmlSafe(m.id)}')" class="px-2.5 py-1 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 rounded-lg text-[10px] font-bold cursor-pointer">भरपाई</button>
+                      <button type="button" onclick="printMaintenanceReceipt('${escapeHtmlSafe(m.id)}')" class="px-2.5 py-1 bg-teal-50 hover:bg-teal-100 text-teal-800 border border-teal-200 rounded-lg text-[10px] font-semibold cursor-pointer">रसिद</button>
+                      <button type="button" onclick="deleteMaintenanceEntry('${escapeHtmlSafe(m.id)}')" class="px-2.5 py-1 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-lg text-[10px] font-semibold cursor-pointer">हटाउने</button>
                     </td>
                   </tr>
                 `;
@@ -10098,8 +11260,13 @@ window.renderMaintenanceModule = function() {
   `;
 };
 
-window.saveMaintenanceEntry = function(e) {
+window.submitMaintenanceAndPrintBharpai = function(e) {
   e.preventDefault();
+  window.saveMaintenanceEntry(null, true);
+};
+
+window.saveMaintenanceEntry = function(e, printBharpaiNow = false) {
+  if (e) e.preventDefault();
   ensureExtensionState();
   const st = window.ERP_STATE;
   const custId = document.getElementById("mnt-cust")?.value;
@@ -10110,6 +11277,28 @@ window.saveMaintenanceEntry = function(e) {
   const amount = Math.round((Number(document.getElementById("mnt-amount")?.value) || 0) * 100) / 100;
   const settlement = document.getElementById("mnt-settlement")?.value || "Bill";
   const bankId = settlement === "Bank" ? (document.getElementById("mnt-bank")?.value || "") : "";
+
+  const repairItems = [];
+  document.querySelectorAll("#mnt-items-body tr.mnt-item-row").forEach(tr => {
+    const item = String(tr.querySelector(".mnt-ri-name")?.value || "").trim();
+    const qty = Number(tr.querySelector(".mnt-ri-qty")?.value) || 0;
+    const rate = Number(tr.querySelector(".mnt-ri-rate")?.value) || 0;
+    const total = Number(tr.querySelector(".mnt-ri-total")?.value) || 0;
+    if (item || total > 0) repairItems.push({ item: item || workType, qty, rate, total });
+  });
+  const workers = [];
+  document.querySelectorAll("#mnt-workers-body tr.mnt-worker-row").forEach(tr => {
+    const name = String(tr.querySelector(".mnt-wk-name")?.value || "").trim();
+    const role = String(tr.querySelector(".mnt-wk-role")?.value || "").trim();
+    const days = Number(tr.querySelector(".mnt-wk-days")?.value) || 0;
+    const wage = Number(tr.querySelector(".mnt-wk-wage")?.value) || 0;
+    if (name || wage > 0) workers.push({ name: name || "कामदार", role: role || "मर्मत", days, wage });
+  });
+  const rawWCount = Number(document.getElementById("mnt-worker-count")?.value) || 0;
+  const workerCount = Math.max(rawWCount, workers.length);
+  const workSite = document.getElementById("mnt-work-site")?.value.trim() || "";
+  const receiverName = document.getElementById("mnt-receiver-name")?.value.trim() || workers[0]?.name || "";
+  const receiverPhone = document.getElementById("mnt-receiver-phone")?.value.trim() || "";
 
   if (!custId) return showToast("कृपया ग्राहक छान्नुहोस्।", "error");
   if (!description) return showToast("के मर्मत गरेको हो विवरण लेख्नुहोस्।", "error");
@@ -10141,6 +11330,12 @@ window.saveMaintenanceEntry = function(e) {
     paid: settlement !== "Bill",
     linkedReadingId: null,
     incomeId: null,
+    workSite: workSite || c.address || "",
+    repairItems,
+    workerCount,
+    workers,
+    receiverName,
+    receiverPhone,
     createdAt: Date.now()
   };
 
@@ -10186,7 +11381,9 @@ window.saveMaintenanceEntry = function(e) {
   window.recalculateAllDynamicValues(false);
   window.cloudSync?.save();
   renderCurrentModule();
-  if (settlement !== "Bill") {
+  if (printBharpaiNow) {
+    setTimeout(() => window.printMaintenanceBharpai(log.id), 60);
+  } else if (settlement !== "Bill") {
     window.printMaintenanceReceipt(log.id);
   }
   showToast(`${c.name} को मर्मत विवरण (${fmtMoney(amount)}) सुरक्षित भयो!`, "success");
@@ -10220,6 +11417,122 @@ window.deleteMaintenanceEntry = function(maintId) {
   window.cloudSync?.save();
   renderCurrentModule();
   showToast("मर्मत अभिलेख हटाइयो र लेजर मिलाइयो।", "info");
+};
+
+window.printMaintenanceBharpai = function(maintId) {
+  const st = window.ERP_STATE;
+  const m = (st.maintenanceLogs || []).find(x => x.id === maintId);
+  if (!m) return showToast("मर्मत भरपाई फेला परेन।", "error");
+  const c = st.customers.find(x => x.id === m.customerId) || { id: m.customerId, name: m.customerName || m.customerId, address: "-", phone: "-" };
+  const s = st.settings || {};
+  const bankObj = m.bankId ? (st.bankAccounts || []).find(b => b.id === m.bankId) : null;
+  const modeText = m.settlement === "Bill"
+    ? `${m.month} महिनाको खानेपानी बिलमा जोडिने`
+    : (m.settlement === "Bank" ? `बैंक (${bankObj?.bankName || 'Bank'})` : "नगद (Cash)");
+
+  const repairItems = Array.isArray(m.repairItems) && m.repairItems.length
+    ? m.repairItems
+    : [{ item: `${m.workType || 'मर्मत'}: ${m.description || '-'}`, qty: 1, rate: Number(m.amount || 0), total: Number(m.amount || 0) }];
+  const workers = Array.isArray(m.workers) ? m.workers.filter(w => w && (w.name || Number(w.wage || 0) > 0)) : [];
+  const workerCount = Number(m.workerCount || workers.length || 0);
+  const workerNamesStr = workers.length
+    ? workers.map(w => `${w.name}${w.role ? ` (${w.role})` : ''}`).join(", ")
+    : (m.receiverName || "सम्बद्ध कामदार/प्राविधिक");
+  const amt = Number(m.amount || 0);
+  const words = numberToNepaliWords(amt);
+  const docNo = m.receiptNo || m.id;
+
+  const html = `
+    <div class="border-2 border-slate-900 p-5 sm:p-6 rounded-lg space-y-4 bg-white text-slate-900">
+      ${buildCommitteeBharpaiHeaderHTML("ग्राहक मर्मत कार्य लिखित भरपाई", docNo, m.date, "bg-amber-800")}
+
+      <div class="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs bg-slate-50 p-3 rounded border border-slate-300">
+        <div><strong>ग्राहक आइडी / नाम:</strong> ${escapeHtmlSafe(c.id)} - ${escapeHtmlSafe(c.name)}</div>
+        <div><strong>ठेगाना / स्थान:</strong> ${escapeHtmlSafe(m.workSite || c.address || '-')}</div>
+        <div><strong>फोन नं.:</strong> ${escapeHtmlSafe(c.phone || '-')}</div>
+        <div><strong>मर्मत प्रकार:</strong> ${escapeHtmlSafe(m.workType || '-')}</div>
+        <div><strong>सम्बद्ध महिना:</strong> ${escapeHtmlSafe(m.month || '-')} (${escapeHtmlSafe(m.year || '')})</div>
+        <div><strong>हिसाब माध्यम:</strong> ${escapeHtmlSafe(modeText)}</div>
+      </div>
+
+      <div class="text-xs leading-6 bg-amber-50/40 border border-amber-300 rounded-lg p-3.5 text-justify">
+        <div class="font-bold text-slate-900 underline mb-1">लिखित भरपाई व्यहोरा:</div>
+        <strong>${escapeHtmlSafe(s.committeeName)}</strong> अन्तर्गत ग्राहक नं. <strong>${escapeHtmlSafe(c.id)} (${escapeHtmlSafe(c.name)})</strong> को
+        स्थान <strong>${escapeHtmlSafe(m.workSite || c.address || '-')}</strong> मा मिति <strong>${escapeHtmlSafe(toNepaliDigits(m.date))}</strong> मा
+        <strong>${escapeHtmlSafe(m.workType)}: ${escapeHtmlSafe(m.description)}</strong> मर्मत कार्यमा
+        ${workerCount > 0 ? `जम्मा <strong>${toNepaliDigits(workerCount)} जना</strong> (${escapeHtmlSafe(workerNamesStr)}) खटिई ` : ""}
+        काम सम्पन्न भएको हुँदा देहायको विवरण अनुसारको कुल मर्मत रकम <strong>${escapeHtmlSafe(formatNepaliMoney(amt))}</strong>
+        (अक्षरेपी: <u>${escapeHtmlSafe(words)}</u>) प्रमाणित गरी यो आधिकारिक लिखित भरपाई तयार गरिएको साँचो हो ।
+      </div>
+
+      <div class="space-y-1.5">
+        <div class="text-xs font-bold text-slate-800">१. के-के मर्मत गरेको / सामग्री विवरण:</div>
+        <table class="w-full text-xs border-collapse border border-slate-500">
+          <thead>
+            <tr class="bg-slate-100">
+              <th class="border border-slate-500 p-1.5 w-12 text-center">क्र.सं.</th>
+              <th class="border border-slate-500 p-1.5 text-left">के मर्मत गरेको / काम र सामानको विवरण</th>
+              <th class="border border-slate-500 p-1.5 w-20 text-center">परिमाण</th>
+              <th class="border border-slate-500 p-1.5 w-24 text-right">दर (रू.)</th>
+              <th class="border border-slate-500 p-1.5 w-28 text-right">रकम (रू.)</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${repairItems.map((it, idx) => `
+              <tr>
+                <td class="border border-slate-400 p-1.5 text-center">${toNepaliDigits(idx + 1)}</td>
+                <td class="border border-slate-400 p-1.5 font-medium">${escapeHtmlSafe(it.item)}</td>
+                <td class="border border-slate-400 p-1.5 text-center tabular-nums">${toNepaliDigits(it.qty || 1)}</td>
+                <td class="border border-slate-400 p-1.5 text-right tabular-nums">${fmtMoney(it.rate || 0)}</td>
+                <td class="border border-slate-400 p-1.5 text-right font-bold tabular-nums">${fmtMoney(it.total || 0)}</td>
+              </tr>
+            `).join("")}
+          </tbody>
+        </table>
+      </div>
+
+      <div class="space-y-1.5">
+        <div class="flex items-center justify-between text-xs font-bold text-slate-800">
+          <span>२. को-को संलग्न कामदार / प्राविधिक विवरण:</span>
+          <span class="px-2 py-0.5 bg-amber-100 text-amber-900 rounded border border-amber-300">जम्मा संख्या: ${workerCount > 0 ? toNepaliDigits(workerCount) : '०'} जना</span>
+        </div>
+        <table class="w-full text-xs border-collapse border border-slate-500">
+          <thead>
+            <tr class="bg-slate-100">
+              <th class="border border-slate-500 p-1.5 w-12 text-center">क्र.सं.</th>
+              <th class="border border-slate-500 p-1.5 text-left">कामदार / प्राविधिकको नाम (को-को)</th>
+              <th class="border border-slate-500 p-1.5 text-left">पद / काम</th>
+              <th class="border border-slate-500 p-1.5 w-16 text-center">दिन</th>
+              <th class="border border-slate-500 p-1.5 w-24 text-right">ज्याला (रू.)</th>
+              <th class="border border-slate-500 p-1.5 w-32 text-center">कामदारको सही</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${workers.length > 0
+              ? workers.map((w, idx) => `
+                <tr>
+                  <td class="border border-slate-400 p-1.5 text-center">${toNepaliDigits(idx + 1)}</td>
+                  <td class="border border-slate-400 p-1.5 font-semibold">${escapeHtmlSafe(w.name)}</td>
+                  <td class="border border-slate-400 p-1.5">${escapeHtmlSafe(w.role || 'मर्मत')}</td>
+                  <td class="border border-slate-400 p-1.5 text-center tabular-nums">${toNepaliDigits(w.days || 1)}</td>
+                  <td class="border border-slate-400 p-1.5 text-right font-bold tabular-nums">${fmtMoney(w.wage || 0)}</td>
+                  <td class="border border-slate-400 p-1.5 h-8"></td>
+                </tr>
+              `).join("")
+              : `<tr><td colspan="6" class="border border-slate-400 p-2 text-center text-slate-600">${workerCount > 0 ? `जम्मा ${toNepaliDigits(workerCount)} जना संलग्न (${escapeHtmlSafe(workerNamesStr)})` : 'कामदार विवरण खाली छ।'}</td></tr>`}
+          </tbody>
+        </table>
+      </div>
+
+      <div class="flex flex-wrap items-center justify-between gap-2 p-3 bg-slate-100 border-2 border-slate-800 rounded text-xs">
+        <div><strong>अक्षरेपी मर्मत रकम:</strong> <u class="font-bold">${escapeHtmlSafe(words)}</u></div>
+        <div class="text-sm font-extrabold text-slate-950 tabular-nums">कुल जम्मा: ${fmtMoney(amt)}</div>
+      </div>
+
+      ${buildOfficialSignatureFooterHTML("मर्मत गर्ने / बुझिलिनेको सही", m.receiverName || workers[0]?.name || c.name, m.receiverPhone || c.phone || "", m.workSite || c.address || "", true)}
+    </div>
+  `;
+  openPrintModal(`मर्मत लिखित भरपाई - ${docNo}`, html);
 };
 
 window.printMaintenanceReceipt = function(maintId) {
