@@ -1501,6 +1501,7 @@ function resetToAutoTodayBS() {
 // ============================================================================
 const MODULES = [
   { id: "dashboard", label: "ड्यासबोर्ड (Dashboard)", icon: "layout-dashboard", sub: "समग्र वित्तीय तथा सेवा विवरण" },
+  { id: "daybook", label: "डे-बुक (दैनिक कारोबार)", icon: "calendar-days", sub: "मिति अनुसार कसको के-के कारोबार भयो स्पष्ट विवरण र प्रिन्ट" },
   { id: "kyc", label: "केवाईसी / ग्राहक इन्ट्री (KYC)", icon: "users", sub: "नयाँ ग्राहक दर्ता, सेवा शुल्क भरपाई, Dropout र बल्क अपलोड" },
   { id: "unit-entry", label: "युनिट इन्ट्री & WhatsApp", icon: "gauge", sub: "मासिक बल्क मिटर रिडिङ, बिल PDF र Anti-Block WhatsApp" },
   { id: "maintenance", label: "मर्मत व्यवस्थापन (Maintenance)", icon: "wrench", sub: "कुन ग्राहकको के मर्मत गरियो, शुल्क इन्ट्री र रसिद/बिल मिलान" },
@@ -1623,6 +1624,7 @@ window.renderCurrentModule = function() {
   if (!container) return;
   switch (currentModuleId) {
     case "dashboard": container.innerHTML = renderDashboard(); break;
+    case "daybook": container.innerHTML = renderDayBookModule(); break;
     case "kyc": container.innerHTML = renderKYCModule(); break;
     case "unit-entry": container.innerHTML = renderUnitEntryModule(); break;
     case "maintenance": container.innerHTML = renderMaintenanceModule(); break;
@@ -10092,6 +10094,995 @@ function renderDatabaseModule() {
           </thead>
           <tbody id="master-db-tbody" class="divide-y divide-slate-100">${renderDatabaseRowsHTML()}</tbody>
         </table>
+      </div>
+    </div>
+  `;
+}
+
+// ============================================================================
+// 16A. DAY BOOK MODULE (दैनिक कारोबार / डे-बुक र आधिकारिक A4 प्रिन्ट)
+// ============================================================================
+let daybookFromBS = "";
+let daybookToBS = "";
+let daybookRangeMode = "single"; // "single" | "range"
+let daybookCatFilter = "ALL";
+let daybookModeFilter = "ALL"; // "ALL" | "Cash" | "Bank" | "NonCash"
+let daybookSearchQuery = "";
+
+function normalizeDayBookDateInput(rawDate, fallbackBS) {
+  const clean = normalizeDigitsASCII(String(rawDate || "").trim()).replace(/\//g, "-");
+  if (/^\d{4}-\d{1,2}-\d{1,2}$/.test(clean)) {
+    const p = parseBS(clean);
+    return formatBS(p.y, p.m, p.d);
+  }
+  const fb = parseBS(fallbackBS || "2083-07-22");
+  return formatBS(fb.y, fb.m, fb.d);
+}
+
+function getDayBookEffectiveDates() {
+  const st = window.ERP_STATE || {};
+  const todayBS = normalizeDayBookDateInput(st.activeBSDate || "2083-07-22", "2083-07-22");
+  const fromBS = daybookFromBS ? normalizeDayBookDateInput(daybookFromBS, todayBS) : todayBS;
+  let toBS = daybookRangeMode === "range"
+    ? normalizeDayBookDateInput(daybookToBS || fromBS, fromBS)
+    : fromBS;
+  if (bsToSerialDays(toBS) < bsToSerialDays(fromBS)) {
+    toBS = fromBS;
+  }
+  return { fromBS, toBS, todayBS };
+}
+
+window.toggleDayBookRangeMode = function(mode) {
+  const { fromBS } = getDayBookEffectiveDates();
+  daybookRangeMode = mode === "range" ? "range" : "single";
+  daybookFromBS = fromBS;
+  if (daybookRangeMode === "range" && (!daybookToBS || bsToSerialDays(daybookToBS) < bsToSerialDays(fromBS))) {
+    daybookToBS = fromBS;
+  }
+  renderCurrentModule();
+};
+
+window.setDayBookDateSingle = function(val) {
+  const st = window.ERP_STATE || {};
+  const fallback = st.activeBSDate || "2083-07-22";
+  daybookFromBS = normalizeDayBookDateInput(val, fallback);
+  daybookToBS = daybookFromBS;
+  renderCurrentModule();
+};
+
+window.setDayBookRangeDates = function(fromVal, toVal) {
+  const st = window.ERP_STATE || {};
+  const fallback = st.activeBSDate || "2083-07-22";
+  daybookFromBS = normalizeDayBookDateInput(fromVal, fallback);
+  daybookToBS = normalizeDayBookDateInput(toVal || daybookFromBS, daybookFromBS);
+  if (bsToSerialDays(daybookToBS) < bsToSerialDays(daybookFromBS)) {
+    const tmp = daybookFromBS;
+    daybookFromBS = daybookToBS;
+    daybookToBS = tmp;
+  }
+  renderCurrentModule();
+};
+
+window.stepDayBookDate = function(deltaDays) {
+  const { fromBS } = getDayBookEffectiveDates();
+  const nextBS = addDaysToBS(fromBS, deltaDays);
+  daybookRangeMode = "single";
+  daybookFromBS = nextBS;
+  daybookToBS = nextBS;
+  renderCurrentModule();
+};
+
+window.setDayBookToday = function() {
+  const st = window.ERP_STATE || {};
+  const todayBS = normalizeDayBookDateInput(st.activeBSDate || getAutoTodayBS(), "2083-07-22");
+  daybookRangeMode = "single";
+  daybookFromBS = todayBS;
+  daybookToBS = todayBS;
+  renderCurrentModule();
+};
+
+function getDayBookEntries(fromBS, toBS) {
+  const st = window.ERP_STATE || {};
+  const fromSerial = bsToSerialDays(fromBS);
+  const toSerial = bsToSerialDays(toBS);
+  const entries = [];
+
+  const inPeriod = (rawDate) => {
+    const clean = String(rawDate || "").trim();
+    if (!clean || clean.startsWith("0000")) return false;
+    const s = bsToSerialDays(clean);
+    return s >= fromSerial && s <= toSerial;
+  };
+
+  const getCustInfo = (custId, fallbackName = "") => {
+    const c = (st.customers || []).find(x => x.id === custId);
+    if (c) {
+      return {
+        who: `${c.name || custId} (${c.id})`,
+        sub: [c.address, c.phone].filter(Boolean).join(" • ")
+      };
+    }
+    return { who: fallbackName || custId || "अज्ञात पक्ष", sub: "" };
+  };
+
+  const getBankLabel = (bankId) => {
+    if (!bankId) return "";
+    const bk = (st.bankAccounts || []).find(b => b.id === bankId);
+    return bk ? bk.bankName : String(bankId);
+  };
+
+  // 1. महसुल असुली (Water, Maintenance, Penalty, Opening, Advance Payments)
+  (st.payments || []).forEach((p, idx) => {
+    if (!inPeriod(p.date)) return;
+    const amt = Number(p.totalPaid || 0);
+    if (amt <= 0) return;
+    const ci = getCustInfo(p.customerId);
+    const alloc = p.allocations || {};
+    const parts = [];
+    const waterPaid = Number(p.waterPaid ?? alloc.waterPaid ?? 0);
+    const maintPaid = Number(p.maintPaid ?? alloc.maintPaid ?? 0);
+    const penPaid = Number(p.penaltyPaid ?? alloc.penaltyPaid ?? 0);
+    const opPaid = Number(p.openingPaid ?? alloc.openingPaid ?? 0) + Number(p.openingMaintPaid ?? alloc.openingMaintPaid ?? 0);
+    const advPaid = Number(p.advancePaid ?? alloc.advance ?? 0);
+    if (waterPaid > 0) parts.push(`पानी: ${fmtMoney(waterPaid)}`);
+    if (maintPaid > 0) parts.push(`मर्मत: ${fmtMoney(maintPaid)}`);
+    if (penPaid > 0) parts.push(`जरिवाना: ${fmtMoney(penPaid)}`);
+    if (opPaid > 0) parts.push(`अघिल्लो बक्यौता: ${fmtMoney(opPaid)}`);
+    if (advPaid > 0) parts.push(`अग्रिम जम्मा: ${fmtMoney(advPaid)}`);
+    const monthNames = (alloc.readings || [])
+      .map(x => {
+        const rd = (st.readings || []).find(r => String(r.id) === String(x.readingId));
+        return rd ? `${rd.month}${rd.year ? ' ' + rd.year : ''}` : "";
+      })
+      .filter(Boolean);
+    const isBank = /bank|बैंक/i.test(String(p.mode || ""));
+    const bkName = isBank ? getBankLabel(p.bankId) : "";
+    const whatDesc = [
+      "खानेपानी महसुल असुली",
+      monthNames.length ? `(${[...new Set(monthNames)].join(", ")})` : "",
+      parts.length ? `[${parts.join(" | ")}]` : "",
+      p.remarks ? `कैफियत: ${p.remarks}` : ""
+    ].filter(Boolean).join(" ");
+
+    entries.push({
+      id: `DB-PAY-${p.id || idx}`,
+      date: normalizeDayBookDateInput(p.date, fromBS),
+      serial: bsToSerialDays(p.date),
+      sortOrder: 10,
+      category: "महसुल असुली",
+      badgeClass: "bg-emerald-100 text-emerald-800 border-emerald-200",
+      who: ci.who,
+      whoSub: ci.sub,
+      what: whatDesc,
+      ref: p.receiptNo || p.id || "-",
+      modeTag: isBank ? "Bank" : "Cash",
+      modeLabel: isBank ? (bkName ? `बैंक (${bkName})` : "बैंक") : "नगद",
+      inAmount: amt,
+      outAmount: 0,
+      nonCashAmount: 0
+    });
+  });
+
+  // 2. मिटर रिडिङ बिल जारी (Readings - NonCash Billing Volume)
+  (st.readings || []).forEach((r, idx) => {
+    const rDate = r.entryDate || r.date;
+    if (!inPeriod(rDate)) return;
+    const billAmt = Number(r.billAmount || 0);
+    const penAssessed = Math.max(0, Number(r.penaltyAssessedAmount ?? 0));
+    const totalAssessed = billAmt + penAssessed;
+    const units = Number(r.units || 0);
+    if (totalAssessed <= 0 && units <= 0) return;
+    const ci = getCustInfo(r.customerId);
+    const prevR = r.prevReading ?? r.previousReading ?? 0;
+    const currR = r.currReading ?? r.currentReading ?? 0;
+    const maintAmt = Number(r.maintenanceAmount || 0);
+    const extraParts = [];
+    if (maintAmt > 0) extraParts.push(`मर्मत: ${fmtMoney(maintAmt)}`);
+    if (penAssessed > 0) extraParts.push(`जरिवाना: ${fmtMoney(penAssessed)}`);
+    if (r.maintenanceDetails) extraParts.push(r.maintenanceDetails);
+
+    entries.push({
+      id: `DB-RD-${r.id || idx}`,
+      date: normalizeDayBookDateInput(rDate, fromBS),
+      serial: bsToSerialDays(rDate),
+      sortOrder: 20,
+      category: "मिटर रिडिङ बिल",
+      badgeClass: "bg-sky-100 text-sky-800 border-sky-200",
+      who: ci.who,
+      whoSub: ci.sub,
+      what: `${r.month || ''}${r.year ? ' (' + r.year + ')' : ''} मिटर रिडिङ: ${prevR} → ${currR} (${units} युनिट)${extraParts.length ? ' • ' + extraParts.join(' | ') : ''}`,
+      ref: r.id || "-",
+      modeTag: "NonCash",
+      modeLabel: "बिल जारी (प्राप्य)",
+      inAmount: 0,
+      outAmount: 0,
+      nonCashAmount: totalAssessed
+    });
+  });
+
+  // 3. मर्मत व्यवस्थापन (Bill-settlement logs only; Cash/Bank logs are enriched on st.incomes to avoid double counting)
+  const maintById = new Map();
+  (st.maintenanceLogs || []).forEach((m, idx) => {
+    if (m.id) maintById.set(m.id, m);
+    if (m.settlement !== "Bill") return;
+    if (!inPeriod(m.date)) return;
+    const amt = Number(m.amount || 0);
+    if (amt <= 0) return;
+    const ci = getCustInfo(m.customerId, m.customerName);
+    const itemsTxt = (m.repairItems || []).map(x => `${x.item}${x.qty ? ' (' + x.qty + ')' : ''}`).filter(Boolean).join(", ");
+    const wkCount = Number(m.workerCount || (m.workers || []).length || 0);
+    const wkNames = (m.workers || []).map(w => w.name).filter(Boolean).join(", ");
+    const parts = [
+      `${m.workType || 'मर्मत'}: ${m.description || 'ग्राहक मर्मत'}`,
+      itemsTxt ? `सामान/काम: ${itemsTxt}` : "",
+      wkCount > 0 ? `जनशक्ति: ${wkCount} जना${wkNames ? ' (' + wkNames + ')' : ''}` : "",
+      m.workSite ? `स्थान: ${m.workSite}` : "",
+      m.linkedReadingId ? "(मासिक बिलमा जोडिएको)" : "(बिलमा जोडिने बाँकी)"
+    ].filter(Boolean);
+
+    entries.push({
+      id: `DB-MNT-${m.id || idx}`,
+      date: normalizeDayBookDateInput(m.date, fromBS),
+      serial: bsToSerialDays(m.date),
+      sortOrder: 25,
+      category: "मर्मत सेवा (बिल)",
+      badgeClass: "bg-amber-100 text-amber-900 border-amber-200",
+      who: ci.who,
+      whoSub: ci.sub,
+      what: parts.join(" • "),
+      ref: m.receiptNo || m.id || "-",
+      modeTag: "NonCash",
+      modeLabel: "बिल / उधारो मर्मत",
+      inAmount: 0,
+      outAmount: 0,
+      nonCashAmount: amt
+    });
+  });
+
+  // 4. विविध / सेवा शुल्क / प्रत्यक्ष मर्मत आम्दानी
+  (st.incomes || [])
+    .filter(i => !String(i.id || "").startsWith("INC-LINT-") && !String(i.id || "").startsWith("INC-CAP-"))
+    .forEach((i, idx) => {
+      if (!inPeriod(i.date)) return;
+      const amt = Number(i.amount || 0);
+      if (amt <= 0) return;
+      const isBank = /bank|बैंक/i.test(String(i.mode || ""));
+      const bkName = isBank ? getBankLabel(i.bankId) : "";
+      const linkedMaint = i.maintLogId ? maintById.get(i.maintLogId) : null;
+      const ci = i.customerId
+        ? getCustInfo(i.customerId, linkedMaint?.customerName || "")
+        : { who: i.payerName || i.customerName || "संस्था / दाता / अन्य पक्ष", sub: "" };
+
+      let cat = "अन्य आम्दानी";
+      let desc = [i.category, i.remarks].filter(Boolean).join(" — ");
+      if (linkedMaint) {
+        cat = "मर्मत आम्दानी";
+        const itemsTxt = (linkedMaint.repairItems || []).map(x => `${x.item}${x.qty ? ' (' + x.qty + ')' : ''}`).filter(Boolean).join(", ");
+        const wkCount = Number(linkedMaint.workerCount || (linkedMaint.workers || []).length || 0);
+        desc = [
+          `${linkedMaint.workType || 'मर्मत'}: ${linkedMaint.description || i.remarks || ''}`,
+          itemsTxt ? `काम/सामान: ${itemsTxt}` : "",
+          wkCount > 0 ? `जनशक्ति: ${wkCount} जना` : "",
+          linkedMaint.workSite ? `स्थान: ${linkedMaint.workSite}` : ""
+        ].filter(Boolean).join(" • ");
+      } else if (i.category === "नयाँ धारा सेवा शुल्क") {
+        cat = "नयाँ धारा शुल्क";
+      }
+
+      entries.push({
+        id: `DB-INC-${i.id || idx}`,
+        date: normalizeDayBookDateInput(i.date, fromBS),
+        serial: bsToSerialDays(i.date),
+        sortOrder: 30,
+        category: cat,
+        badgeClass: "bg-teal-100 text-teal-900 border-teal-200",
+        who: ci.who,
+        whoSub: ci.sub,
+        what: desc || "अन्य आम्दानी",
+        ref: i.receiptNo || i.id || "-",
+        modeTag: isBank ? "Bank" : "Cash",
+        modeLabel: isBank ? (bkName ? `बैंक (${bkName})` : "बैंक") : "नगद",
+        inAmount: amt,
+        outAmount: 0,
+        nonCashAmount: 0
+      });
+    });
+
+  // 5. खर्च तथा मर्मत भरपाई
+  (st.expenses || []).forEach((e, idx) => {
+    if (!inPeriod(e.date)) return;
+    const amt = Number(e.amount || 0);
+    if (amt <= 0) return;
+    const isBank = /bank|बैंक/i.test(String(e.mode || ""));
+    const bkName = isBank ? getBankLabel(e.bankId) : "";
+    const wkList = Array.isArray(e.workers) ? e.workers : [];
+    const wkNames = wkList.map(w => w.name).filter(Boolean).join(", ");
+    const wkCount = Number(e.workerCount || wkList.length || 0);
+    const itemsTxt = (e.repairItems || []).map(x => `${x.item}${x.qty ? '×' + x.qty : ''}`).filter(Boolean).join(", ");
+    const whoText = e.receiverName || wkNames || "समिति / भुक्तानी पाउने";
+    const whoSub = [
+      wkCount > 0 ? `${wkCount} जना संलग्न` : "",
+      e.receiverPhone || ""
+    ].filter(Boolean).join(" • ");
+
+    const whatParts = [
+      e.category || "खर्च",
+      e.remarks || "",
+      itemsTxt ? `सामान/काम: ${itemsTxt}` : "",
+      wkNames && e.receiverName && wkNames !== e.receiverName ? `कामदार: ${wkNames}` : "",
+      e.workSite ? `स्थान: ${e.workSite}` : ""
+    ].filter(Boolean);
+
+    entries.push({
+      id: `DB-EXP-${e.id || idx}`,
+      date: normalizeDayBookDateInput(e.date, fromBS),
+      serial: bsToSerialDays(e.date),
+      sortOrder: 40,
+      category: e.category === "मर्मत खर्च" ? "मर्मत खर्च" : "समिति खर्च",
+      badgeClass: "bg-rose-100 text-rose-800 border-rose-200",
+      who: whoText,
+      whoSub,
+      what: whatParts.join(" • "),
+      ref: e.bharpaiNo || e.id || "-",
+      modeTag: isBank ? "Bank" : "Cash",
+      modeLabel: isBank ? (bkName ? `बैंक (${bkName})` : "बैंक") : "नगद",
+      inAmount: 0,
+      outAmount: amt,
+      nonCashAmount: 0
+    });
+  });
+
+  // 6. कर्मचारी तलब, भत्ता, रिचार्ज, पेट्रोल तथा अन्य खर्च (Payroll)
+  (st.staffPayroll || []).forEach((x, idx) => {
+    if (!inPeriod(x.date)) return;
+    const amt = Number(x.amount || 0);
+    if (amt <= 0) return;
+    const sf = (st.staffList || []).find(s => s.id === x.staffId);
+    const isBank = /bank|बैंक/i.test(String(x.mode || ""));
+    const bkName = isBank ? getBankLabel(x.bankId) : "";
+    const parts = [];
+    if (Number(x.salary || 0) > 0) parts.push(`तलब: ${fmtMoney(x.salary)}`);
+    if (Number(x.allowance || 0) > 0) parts.push(`भत्ता: ${fmtMoney(x.allowance)}`);
+    if (Number(x.dress || 0) > 0) parts.push(`पोसाक: ${fmtMoney(x.dress)}`);
+    if (Number(x.festival || 0) > 0) parts.push(`चाडपर्व: ${fmtMoney(x.festival)}`);
+    if (Number(x.recharge || 0) > 0) parts.push(`रिचार्ज: ${fmtMoney(x.recharge)}`);
+    if (Number(x.petrol || 0) > 0) parts.push(`पेट्रोल: ${fmtMoney(x.petrol)}`);
+    if (Number(x.otherExp || 0) > 0) parts.push(`${x.otherNote || 'अन्य खर्च'}: ${fmtMoney(x.otherExp)}`);
+    if (Number(x.tds || 0) > 0) parts.push(`TDS कट्टी: -${fmtMoney(x.tds)}`);
+    if (Number(x.deduction || 0) > 0) parts.push(`अन्य कट्टी: -${fmtMoney(x.deduction)}`);
+
+    entries.push({
+      id: `DB-PAYR-${x.id || idx}`,
+      date: normalizeDayBookDateInput(x.date, fromBS),
+      serial: bsToSerialDays(x.date),
+      sortOrder: 50,
+      category: "कर्मचारी तलब/सुविधा",
+      badgeClass: "bg-orange-100 text-orange-900 border-orange-200",
+      who: sf ? `${sf.name} (${sf.role || 'कर्मचारी'})` : (x.staffId || "कर्मचारी"),
+      whoSub: sf?.phone || "",
+      what: `${x.month ? x.month + ' महिना पे-रोल' : 'कर्मचारी भुक्तानी'}${parts.length ? ' [' + parts.join(' | ') + ']' : ''}${x.remarks ? ' • ' + x.remarks : ''}`,
+      ref: x.receiptNo || x.id || "-",
+      modeTag: isBank ? "Bank" : "Cash",
+      modeLabel: isBank ? (bkName ? `बैंक (${bkName})` : "बैंक") : "नगद",
+      inAmount: 0,
+      outAmount: amt,
+      nonCashAmount: 0
+    });
+  });
+
+  // 7. ऋण लगानी तथा ब्याज पुँजीकरण
+  (st.loans || []).forEach((l, idx) => {
+    const ci = getCustInfo(l.customerId);
+    const loanIssueDate = l.initialIssueDate || l.issueDate || "";
+    if (loanIssueDate && isDateOnOrAfterOpeningBS(loanIssueDate) && inPeriod(loanIssueDate)) {
+      const capTotal = (l.capitalizationLogs || []).reduce((sum, x) => sum + Number(x.amount || 0), 0);
+      const amt = Number(l.initialPrincipal != null ? l.initialPrincipal : Math.max(0, Number(l.principal || 0) - capTotal));
+      if (amt > 0) {
+        entries.push({
+          id: `DB-LN-${l.id || idx}`,
+          date: normalizeDayBookDateInput(loanIssueDate, fromBS),
+          serial: bsToSerialDays(loanIssueDate),
+          sortOrder: 60,
+          category: "ऋण लगानी",
+          badgeClass: "bg-purple-100 text-purple-900 border-purple-200",
+          who: ci.who,
+          whoSub: ci.sub,
+          what: `सदस्य ऋण लगानी (ब्याजदर: ${l.interestRate || 0}%${l.remarks ? ', ' + l.remarks : ''})`,
+          ref: l.id || "-",
+          modeTag: "Cash",
+          modeLabel: "नगद",
+          inAmount: 0,
+          outAmount: amt,
+          nonCashAmount: 0
+        });
+      }
+    }
+    (l.capitalizationLogs || []).forEach((cap, cIdx) => {
+      if (!cap.date || !isDateOnOrAfterOpeningBS(cap.date) || !inPeriod(cap.date)) return;
+      const amt = Number(cap.amount || 0);
+      if (amt <= 0) return;
+      entries.push({
+        id: `DB-CAP-${l.id || idx}-${cIdx}`,
+        date: normalizeDayBookDateInput(cap.date, fromBS),
+        serial: bsToSerialDays(cap.date),
+        sortOrder: 65,
+        category: "ब्याज पुँजीकरण",
+        badgeClass: "bg-slate-100 text-slate-800 border-slate-300",
+        who: ci.who,
+        whoSub: ci.sub,
+        what: `ऋण ब्याज साँवामा गाभिएको (${l.id})`,
+        ref: l.id || "-",
+        modeTag: "NonCash",
+        modeLabel: "आन्तरिक समायोजन",
+        inAmount: 0,
+        outAmount: 0,
+        nonCashAmount: amt
+      });
+    });
+  });
+
+  // 8. ऋण किस्ता असुली
+  (st.loanRepayments || []).forEach((r, idx) => {
+    if (!r.date || !isDateOnOrAfterOpeningBS(r.date) || !inPeriod(r.date)) return;
+    const total = Number(r.totalPaid || (Number(r.principalPaid || 0) + Number(r.interestPaid || 0)));
+    if (total <= 0) return;
+    const ci = getCustInfo(r.customerId);
+    const isBank = /bank|बैंक/i.test(String(r.mode || ""));
+    const bkName = isBank ? getBankLabel(r.bankId) : "";
+    entries.push({
+      id: `DB-LRP-${r.id || idx}`,
+      date: normalizeDayBookDateInput(r.date, fromBS),
+      serial: bsToSerialDays(r.date),
+      sortOrder: 35,
+      category: "ऋण असुली",
+      badgeClass: "bg-indigo-100 text-indigo-900 border-indigo-200",
+      who: ci.who,
+      whoSub: ci.sub,
+      what: `ऋण किस्ता असुली (साँवा: ${fmtMoney(r.principalPaid || 0)} + ब्याज: ${fmtMoney(r.interestPaid || 0)})`,
+      ref: r.receiptNo || r.id || "-",
+      modeTag: isBank ? "Bank" : "Cash",
+      modeLabel: isBank ? (bkName ? `बैंक (${bkName})` : "बैंक") : "नगद",
+      inAmount: total,
+      outAmount: 0,
+      nonCashAmount: 0
+    });
+  });
+
+  // 9. ट्याङ्कर पानी बिक्री र चालक ज्याला
+  (st.tankerSales || []).forEach((t, idx) => {
+    if (!inPeriod(t.date)) return;
+    const sale = Number(t.saleAmount || 0);
+    const wage = Number(t.wageAmount || 0);
+    const sType = String(t.saleType || "Cash");
+    if (sale > 0) {
+      const isCredit = sType === "Credit";
+      const isBank = sType === "Bank";
+      const bkName = isBank ? getBankLabel(t.bankId) : "";
+      entries.push({
+        id: `DB-TKS-${t.id || idx}`,
+        date: normalizeDayBookDateInput(t.date, fromBS),
+        serial: bsToSerialDays(t.date),
+        sortOrder: 38,
+        category: "ट्याङ्कर पानी बिक्री",
+        badgeClass: isCredit ? "bg-amber-100 text-amber-900 border-amber-200" : "bg-cyan-100 text-cyan-900 border-cyan-200",
+        who: t.buyerName || "ट्याङ्कर ग्राहक",
+        whoSub: t.buyerPhone || t.address || "",
+        what: `ट्याङ्कर पानी बिक्री: ${Number(t.liters || 0).toLocaleString()} लिटर${t.remarks ? ' • ' + t.remarks : ''}`,
+        ref: t.receiptNo || t.id || "-",
+        modeTag: isCredit ? "NonCash" : (isBank ? "Bank" : "Cash"),
+        modeLabel: isCredit ? "उधारो बिक्री" : (isBank ? (bkName ? `बैंक (${bkName})` : "बैंक") : "नगद"),
+        inAmount: isCredit ? 0 : sale,
+        outAmount: 0,
+        nonCashAmount: isCredit ? sale : 0
+      });
+    }
+    if (wage > 0) {
+      const drv = (st.staffList || []).find(s => s.id === t.driverId);
+      entries.push({
+        id: `DB-TKW-${t.id || idx}`,
+        date: normalizeDayBookDateInput(t.date, fromBS),
+        serial: bsToSerialDays(t.date),
+        sortOrder: 55,
+        category: "ट्याङ्कर ज्याला",
+        badgeClass: "bg-rose-100 text-rose-800 border-rose-200",
+        who: drv ? `${drv.name} (चालक)` : (t.driverId || "ट्याङ्कर चालक"),
+        whoSub: drv?.phone || "",
+        what: `ट्याङ्कर पानी बिक्री चालक ज्याला (${t.buyerName || '-'}, ${Number(t.liters || 0).toLocaleString()} लि.)`,
+        ref: t.id || "-",
+        modeTag: "Cash",
+        modeLabel: "नगद",
+        inAmount: 0,
+        outAmount: wage,
+        nonCashAmount: 0
+      });
+    }
+  });
+
+  // 10. ट्याङ्कर उधारो असुली
+  (st.tankerPayments || []).forEach((p, idx) => {
+    if (!inPeriod(p.date)) return;
+    const amt = Number(p.amount || 0);
+    if (amt <= 0) return;
+    const isBank = /bank|बैंक/i.test(String(p.mode || ""));
+    const bkName = isBank ? getBankLabel(p.bankId) : "";
+    entries.push({
+      id: `DB-TKP-${p.id || idx}`,
+      date: normalizeDayBookDateInput(p.date, fromBS),
+      serial: bsToSerialDays(p.date),
+      sortOrder: 39,
+      category: "ट्याङ्कर उधारो असुली",
+      badgeClass: "bg-cyan-100 text-cyan-900 border-cyan-200",
+      who: p.buyerName || "ट्याङ्कर ग्राहक",
+      whoSub: "",
+      what: `ट्याङ्कर उधारो रकम असुली${p.remarks ? ' • ' + p.remarks : ''}`,
+      ref: p.receiptNo || p.id || "-",
+      modeTag: isBank ? "Bank" : "Cash",
+      modeLabel: isBank ? (bkName ? `बैंक (${bkName})` : "बैंक") : "नगद",
+      inAmount: amt,
+      outAmount: 0,
+      nonCashAmount: 0
+    });
+  });
+
+  // 11. बैंक डिपोजिट / विड्र (Cash <-> Bank आन्तरिक ट्रान्सफर)
+  (st.bankTransactions || []).forEach((b, idx) => {
+    if (!inPeriod(b.date)) return;
+    const amt = Number(b.amount || 0);
+    if (amt <= 0) return;
+    const bkName = getBankLabel(b.bankId);
+    const isDep = b.type === "Deposit";
+    entries.push({
+      id: `DB-BTX-${b.id || idx}`,
+      date: normalizeDayBookDateInput(b.date, fromBS),
+      serial: bsToSerialDays(b.date),
+      sortOrder: 70,
+      category: "बैंक ट्रान्सफर",
+      badgeClass: "bg-blue-100 text-blue-900 border-blue-200",
+      who: bkName || "बैंक खाता",
+      whoSub: "",
+      what: `${isDep ? 'नगद बैंकमा जम्मा (नगद → बैंक)' : 'बैंकबाट नगद झिकिएको (बैंक → नगद)'}${b.remarks ? ' • ' + b.remarks : ''}`,
+      ref: b.slipNo || b.id || "-",
+      modeTag: "NonCash",
+      modeLabel: "नगद ↔ बैंक ट्रान्सफर",
+      inAmount: 0,
+      outAmount: 0,
+      nonCashAmount: amt
+    });
+  });
+
+  // 12. दोहोरो लेखा म्यानुअल जर्नल भौचर
+  (st.accountingVouchers || []).forEach((v, idx) => {
+    if (!inPeriod(v.date)) return;
+    const lines = v.lines || [];
+    const totalDr = lines.reduce((s, l) => s + Number(l.debit || 0), 0);
+    if (totalDr <= 0) return;
+    const drAccounts = lines.filter(l => Number(l.debit || 0) > 0).map(l => accountById(l.accountId).name).join(", ");
+    const crAccounts = lines.filter(l => Number(l.credit || 0) > 0).map(l => accountById(l.accountId).name).join(", ");
+    entries.push({
+      id: `DB-JV-${v.id || idx}`,
+      date: normalizeDayBookDateInput(v.date, fromBS),
+      serial: bsToSerialDays(v.date),
+      sortOrder: 80,
+      category: "जर्नल भौचर",
+      badgeClass: "bg-slate-100 text-slate-800 border-slate-300",
+      who: v.type || "लेखा समायोजन",
+      whoSub: "",
+      what: `${v.description || 'म्यानुअल भौचर'} [Dr: ${drAccounts || '-'} | Cr: ${crAccounts || '-'}]`,
+      ref: v.voucherNo || v.id || "-",
+      modeTag: "NonCash",
+      modeLabel: "लेखा भौचर",
+      inAmount: 0,
+      outAmount: 0,
+      nonCashAmount: totalDr
+    });
+  });
+
+  return entries.sort((a, b) => a.serial - b.serial || a.sortOrder - b.sortOrder || String(a.id).localeCompare(String(b.id)));
+}
+
+function getDayBookCashBankSummary(fromBS, toBS) {
+  const fromSerial = bsToSerialDays(fromBS);
+  const toSerial = bsToSerialDays(toBS);
+  const journal = typeof getAccountingJournal === "function" ? getAccountingJournal() : [];
+
+  let openCash = 0, openBank = 0;
+  let cashIn = 0, cashOut = 0, bankIn = 0, bankOut = 0;
+
+  journal.forEach(j => {
+    const rawD = String(j.date || "").trim();
+    const s = (!rawD || rawD.startsWith("0000")) ? -Infinity : bsToSerialDays(rawD);
+    (j.lines || []).forEach(l => {
+      const dr = Number(l.debit || 0);
+      const cr = Number(l.credit || 0);
+      if (l.accountId === "1001") {
+        if (s < fromSerial) openCash += (dr - cr);
+        else if (s <= toSerial) { cashIn += dr; cashOut += cr; }
+      } else if (l.accountId === "1002") {
+        if (s < fromSerial) openBank += (dr - cr);
+        else if (s <= toSerial) { bankIn += dr; bankOut += cr; }
+      }
+    });
+  });
+
+  const rnd = n => Math.round(n * 100) / 100;
+  openCash = rnd(openCash);
+  openBank = rnd(openBank);
+  cashIn = rnd(cashIn);
+  cashOut = rnd(cashOut);
+  bankIn = rnd(bankIn);
+  bankOut = rnd(bankOut);
+  const closeCash = rnd(openCash + cashIn - cashOut);
+  const closeBank = rnd(openBank + bankIn - bankOut);
+
+  return {
+    openCash,
+    openBank,
+    openTotal: rnd(openCash + openBank),
+    cashIn,
+    cashOut,
+    bankIn,
+    bankOut,
+    totalIn: rnd(cashIn + bankIn),
+    totalOut: rnd(cashOut + bankOut),
+    closeCash,
+    closeBank,
+    closeTotal: rnd(closeCash + closeBank)
+  };
+}
+
+function getFilteredDayBookEntries(fromBS, toBS) {
+  const q = String(daybookSearchQuery || "").trim().toLowerCase();
+  return getDayBookEntries(fromBS, toBS).filter(row => {
+    if (daybookCatFilter !== "ALL" && row.category !== daybookCatFilter) return false;
+    if (daybookModeFilter !== "ALL" && row.modeTag !== daybookModeFilter) return false;
+    if (q) {
+      const hay = `${row.who} ${row.whoSub} ${row.what} ${row.category} ${row.ref} ${row.modeLabel} ${row.date}`.toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
+    return true;
+  });
+}
+
+function renderDayBookRowsHTML(filteredRows) {
+  if (!filteredRows.length) {
+    return `
+      <tr>
+        <td colspan="9" class="p-8 text-center text-slate-400">
+          छानिएको मिति वा फिल्टर भित्र कुनै कारोबार भेटिएन। मिति परिवर्तन गरेर पुनः जाँच गर्नुहोस्।
+        </td>
+      </tr>
+    `;
+  }
+  return filteredRows.map((r, i) => `
+    <tr class="hover:bg-slate-50/90 align-top">
+      <td class="p-3 text-center font-semibold text-slate-500 tabular-nums">${toNepaliDigits(i + 1)}</td>
+      <td class="p-3 whitespace-nowrap tabular-nums font-semibold text-slate-800">${escapeHtmlSafe(r.date)}</td>
+      <td class="p-3 whitespace-nowrap">
+        <span class="inline-block px-2 py-0.5 rounded-md border text-[10px] font-bold ${r.badgeClass}">${escapeHtmlSafe(r.category)}</span>
+      </td>
+      <td class="p-3">
+        <div class="font-bold text-slate-900">${escapeHtmlSafe(r.who)}</div>
+        ${r.whoSub ? `<div class="text-[10px] text-slate-500 mt-0.5">${escapeHtmlSafe(r.whoSub)}</div>` : ""}
+      </td>
+      <td class="p-3 text-slate-700 leading-relaxed">${escapeHtmlSafe(r.what)}</td>
+      <td class="p-3 whitespace-nowrap">
+        <div class="text-[11px] font-semibold text-slate-800">${escapeHtmlSafe(r.modeLabel)}</div>
+        <div class="text-[10px] text-slate-500 font-mono">${escapeHtmlSafe(r.ref)}</div>
+      </td>
+      <td class="p-3 text-right font-bold tabular-nums whitespace-nowrap ${r.inAmount > 0 ? 'text-emerald-700' : 'text-slate-300'}">${r.inAmount > 0 ? fmtMoney(r.inAmount) : '-'}</td>
+      <td class="p-3 text-right font-bold tabular-nums whitespace-nowrap ${r.outAmount > 0 ? 'text-rose-700' : 'text-slate-300'}">${r.outAmount > 0 ? fmtMoney(r.outAmount) : '-'}</td>
+      <td class="p-3 text-right font-semibold tabular-nums whitespace-nowrap ${r.nonCashAmount > 0 ? 'text-sky-700' : 'text-slate-300'}">${r.nonCashAmount > 0 ? fmtMoney(r.nonCashAmount) : '-'}</td>
+    </tr>
+  `).join("");
+}
+
+function renderDayBookTotalsRowHTML(filteredRows) {
+  const sumIn = filteredRows.reduce((s, r) => s + Number(r.inAmount || 0), 0);
+  const sumOut = filteredRows.reduce((s, r) => s + Number(r.outAmount || 0), 0);
+  const sumNonCash = filteredRows.reduce((s, r) => s + Number(r.nonCashAmount || 0), 0);
+  return `
+    <tr class="bg-slate-100 border-t-2 border-slate-300 font-extrabold text-slate-900">
+      <td colspan="6" class="p-3 text-right">फिल्टर गरिएको जम्मा (${toNepaliDigits(filteredRows.length)} कारोबार):</td>
+      <td class="p-3 text-right tabular-nums text-emerald-800">${fmtMoney(sumIn)}</td>
+      <td class="p-3 text-right tabular-nums text-rose-800">${fmtMoney(sumOut)}</td>
+      <td class="p-3 text-right tabular-nums text-sky-800">${fmtMoney(sumNonCash)}</td>
+    </tr>
+  `;
+}
+
+window.filterDayBookRowsLive = function(val) {
+  daybookSearchQuery = val;
+  const { fromBS, toBS } = getDayBookEffectiveDates();
+  const filtered = getFilteredDayBookEntries(fromBS, toBS);
+  const tbody = document.getElementById("daybook-tbody");
+  const tfoot = document.getElementById("daybook-tfoot");
+  const countEl = document.getElementById("daybook-filtered-count");
+  if (tbody) tbody.innerHTML = renderDayBookRowsHTML(filtered);
+  if (tfoot) tfoot.innerHTML = renderDayBookTotalsRowHTML(filtered);
+  if (countEl) countEl.textContent = toNepaliDigits(filtered.length);
+};
+
+window.printDayBook = function() {
+  const { fromBS, toBS } = getDayBookEffectiveDates();
+  const cb = getDayBookCashBankSummary(fromBS, toBS);
+  const filtered = getFilteredDayBookEntries(fromBS, toBS);
+  const sumIn = Math.round(filtered.reduce((s, r) => s + Number(r.inAmount || 0), 0) * 100) / 100;
+  const sumOut = Math.round(filtered.reduce((s, r) => s + Number(r.outAmount || 0), 0) * 100) / 100;
+  const sumNonCash = Math.round(filtered.reduce((s, r) => s + Number(r.nonCashAmount || 0), 0) * 100) / 100;
+
+  const isRange = daybookRangeMode === "range" && fromBS !== toBS;
+  const dateDisplay = isRange ? `${fromBS} देखि ${toBS}` : fromBS;
+  const docNo = `DB-${fromBS.replace(/-/g, "")}${isRange ? "-" + toBS.replace(/-/g, "") : ""}`;
+
+  const s = window.ERP_STATE?.settings || {};
+  const officers = s.tamasukOfficers || {};
+  const prepName = officers.preparerName || s.authorizedPerson || "व्यवस्थापक";
+  const treasName = officers.treasurerName || "कोषाध्यक्ष";
+  const presName = officers.presidentName || "अध्यक्ष";
+
+  const activeFilters = [
+    daybookCatFilter !== "ALL" ? `प्रकार: ${daybookCatFilter}` : "",
+    daybookModeFilter !== "ALL" ? `माध्यम: ${daybookModeFilter === 'Cash' ? 'नगद' : (daybookModeFilter === 'Bank' ? 'बैंक' : 'बिल/आन्तरिक')}` : "",
+    daybookSearchQuery.trim() ? `खोजी: "${daybookSearchQuery.trim()}"` : ""
+  ].filter(Boolean);
+
+  const html = `
+    <div class="bg-white p-4 sm:p-6 space-y-4 text-slate-900">
+      ${buildCommitteeBharpaiHeaderHTML("दैनिक कारोबार खाता (DAY BOOK)", docNo, dateDisplay, "bg-teal-800")}
+
+      <div class="flex flex-wrap items-center justify-between gap-2 bg-teal-50/70 border border-teal-200 rounded-xl px-3.5 py-2 text-xs">
+        <div>
+          <strong>अवधि / मिति:</strong> <span class="font-extrabold text-teal-900">${escapeHtmlSafe(toNepaliDigits(dateDisplay))} (${escapeHtmlSafe(dateDisplay)})</span>
+        </div>
+        <div class="text-[11px] text-slate-700">
+          ${activeFilters.length ? `<strong>लागू फिल्टर:</strong> ${escapeHtmlSafe(activeFilters.join(" | "))}` : "<strong>फिल्टर:</strong> सम्पूर्ण कारोबार (All Transactions)"}
+          • कुल अभिलेख: <strong>${toNepaliDigits(filtered.length)}</strong>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-2 sm:grid-cols-4 gap-2.5 text-[11px]">
+        <div class="border border-slate-300 rounded-lg p-2.5 bg-slate-50">
+          <div class="font-bold text-slate-600">प्रारम्भिक मौज्दात (Opening)</div>
+          <div class="text-sm font-extrabold text-slate-900 mt-0.5 tabular-nums">${fmtMoney(cb.openTotal)}</div>
+          <div class="text-[10px] text-slate-600 mt-0.5">नगद: ${fmtMoney(cb.openCash)} | बैंक: ${fmtMoney(cb.openBank)}</div>
+        </div>
+        <div class="border border-emerald-300 rounded-lg p-2.5 bg-emerald-50/60">
+          <div class="font-bold text-emerald-800">आजको जम्मा प्राप्ति (Inflow)</div>
+          <div class="text-sm font-extrabold text-emerald-900 mt-0.5 tabular-nums">+ ${fmtMoney(cb.totalIn)}</div>
+          <div class="text-[10px] text-emerald-800 mt-0.5">नगद: ${fmtMoney(cb.cashIn)} | बैंक: ${fmtMoney(cb.bankIn)}</div>
+        </div>
+        <div class="border border-rose-300 rounded-lg p-2.5 bg-rose-50/60">
+          <div class="font-bold text-rose-800">आजको जम्मा भुक्तानी (Outflow)</div>
+          <div class="text-sm font-extrabold text-rose-900 mt-0.5 tabular-nums">- ${fmtMoney(cb.totalOut)}</div>
+          <div class="text-[10px] text-rose-800 mt-0.5">नगद: ${fmtMoney(cb.cashOut)} | बैंक: ${fmtMoney(cb.bankOut)}</div>
+        </div>
+        <div class="border-2 border-teal-700 rounded-lg p-2.5 bg-teal-50/70">
+          <div class="font-bold text-teal-900">अन्तिम मौज्दात (Closing)</div>
+          <div class="text-sm font-extrabold text-teal-950 mt-0.5 tabular-nums">${fmtMoney(cb.closeTotal)}</div>
+          <div class="text-[10px] text-teal-900 mt-0.5">नगद: ${fmtMoney(cb.closeCash)} | बैंक: ${fmtMoney(cb.closeBank)}</div>
+        </div>
+      </div>
+
+      <div class="border border-slate-400 rounded-lg overflow-hidden">
+        <table class="w-full text-[11px] border-collapse">
+          <thead>
+            <tr class="bg-slate-200 text-slate-900 border-b border-slate-400">
+              <th class="p-2 border-r border-slate-300 text-center w-9">क्र.सं.</th>
+              <th class="p-2 border-r border-slate-300 text-left w-20">मिति</th>
+              <th class="p-2 border-r border-slate-300 text-left w-28">कारोबार प्रकार</th>
+              <th class="p-2 border-r border-slate-300 text-left">कसको (सदस्य / व्यक्ति / पक्ष)</th>
+              <th class="p-2 border-r border-slate-300 text-left">के-के कारोबार भएको (विस्तृत विवरण)</th>
+              <th class="p-2 border-r border-slate-300 text-left w-28">माध्यम / रसिद</th>
+              <th class="p-2 border-r border-slate-300 text-right w-24">प्राप्ति (रू.)</th>
+              <th class="p-2 border-r border-slate-300 text-right w-24">भुक्तानी (रू.)</th>
+              <th class="p-2 text-right w-24">बिल/अन्य (रू.)</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-slate-300">
+            ${filtered.map((r, i) => `
+              <tr class="align-top">
+                <td class="p-1.5 border-r border-slate-300 text-center tabular-nums">${toNepaliDigits(i + 1)}</td>
+                <td class="p-1.5 border-r border-slate-300 whitespace-nowrap tabular-nums">${escapeHtmlSafe(r.date)}</td>
+                <td class="p-1.5 border-r border-slate-300 font-semibold">${escapeHtmlSafe(r.category)}</td>
+                <td class="p-1.5 border-r border-slate-300">
+                  <div class="font-bold">${escapeHtmlSafe(r.who)}</div>
+                  ${r.whoSub ? `<div class="text-[9px] text-slate-600">${escapeHtmlSafe(r.whoSub)}</div>` : ""}
+                </td>
+                <td class="p-1.5 border-r border-slate-300 leading-snug">${escapeHtmlSafe(r.what)}</td>
+                <td class="p-1.5 border-r border-slate-300">
+                  <div class="font-semibold">${escapeHtmlSafe(r.modeLabel)}</div>
+                  <div class="text-[9px] text-slate-600">${escapeHtmlSafe(r.ref)}</div>
+                </td>
+                <td class="p-1.5 border-r border-slate-300 text-right font-bold tabular-nums">${r.inAmount > 0 ? fmtMoney(r.inAmount) : '-'}</td>
+                <td class="p-1.5 border-r border-slate-300 text-right font-bold tabular-nums">${r.outAmount > 0 ? fmtMoney(r.outAmount) : '-'}</td>
+                <td class="p-1.5 text-right font-semibold tabular-nums">${r.nonCashAmount > 0 ? fmtMoney(r.nonCashAmount) : '-'}</td>
+              </tr>
+            `).join("") || `<tr><td colspan="9" class="p-6 text-center text-slate-500">यस मितिमा कुनै कारोबार भएको छैन।</td></tr>`}
+          </tbody>
+          <tfoot>
+            <tr class="bg-slate-100 border-t-2 border-slate-500 font-extrabold">
+              <td colspan="6" class="p-2 border-r border-slate-300 text-right">जम्मा कारोबार (${toNepaliDigits(filtered.length)} थान):</td>
+              <td class="p-2 border-r border-slate-300 text-right tabular-nums">${fmtMoney(sumIn)}</td>
+              <td class="p-2 border-r border-slate-300 text-right tabular-nums">${fmtMoney(sumOut)}</td>
+              <td class="p-2 text-right tabular-nums">${fmtMoney(sumNonCash)}</td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px] bg-slate-50 border border-slate-300 rounded-lg p-2.5">
+        <div><strong>जम्मा प्राप्ति अक्षरमा:</strong> ${escapeHtmlSafe(numberToNepaliWords(sumIn))}</div>
+        <div><strong>जम्मा भुक्तानी अक्षरमा:</strong> ${escapeHtmlSafe(numberToNepaliWords(sumOut))}</div>
+      </div>
+
+      <div class="grid grid-cols-3 gap-6 pt-10 text-center text-[11px]">
+        <div class="space-y-1">
+          <div class="border-b border-slate-600 w-40 mx-auto"></div>
+          <div class="font-bold">${escapeHtmlSafe(prepName)}</div>
+          <div class="text-[10px] text-slate-600">तयार गर्ने (व्यवस्थापक/लेखा)</div>
+        </div>
+        <div class="space-y-1">
+          <div class="border-b border-slate-600 w-40 mx-auto"></div>
+          <div class="font-bold">${escapeHtmlSafe(treasName)}</div>
+          <div class="text-[10px] text-slate-600">जाँच / कोषाध्यक्ष</div>
+        </div>
+        <div class="space-y-1">
+          <div class="border-b border-slate-600 w-40 mx-auto"></div>
+          <div class="font-bold">${escapeHtmlSafe(presName)}</div>
+          <div class="text-[10px] text-slate-600">प्रमाणित / अध्यक्ष (छाप)</div>
+        </div>
+      </div>
+    </div>
+  `;
+  openPrintModal(`दैनिक कारोबार खाता (Day Book) - ${dateDisplay}`, html);
+};
+
+function renderDayBookModule() {
+  const { fromBS, toBS } = getDayBookEffectiveDates();
+  const allOnDate = getDayBookEntries(fromBS, toBS);
+  const filtered = getFilteredDayBookEntries(fromBS, toBS);
+  const cb = getDayBookCashBankSummary(fromBS, toBS);
+  const categories = [...new Set(allOnDate.map(r => r.category))];
+  const isRange = daybookRangeMode === "range";
+
+  return `
+    <div class="space-y-5">
+      <div class="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200 shadow-sm space-y-4">
+        <div class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-3">
+          <div>
+            <h3 class="text-base font-bold text-slate-800 flex items-center gap-2">
+              <i data-lucide="calendar-days" class="w-5 h-5 text-teal-700"></i>
+              <span>दैनिक कारोबार खाता (Day Book)</span>
+            </h3>
+            <p class="text-xs text-slate-500">छानिएको मितिमा कसको के-के कारोबार भयो (महसुल, रिडिङ, मर्मत, तलब, खर्च, ऋण, ट्याङ्कर, बैंक) स्पष्ट हेर्नुहोस् र प्रिन्ट गर्नुहोस्।</p>
+          </div>
+
+          <div class="flex flex-wrap items-center gap-2 text-xs">
+            <div class="inline-flex rounded-xl border border-slate-300 overflow-hidden bg-slate-50 p-0.5">
+              <button type="button" onclick="toggleDayBookRangeMode('single')" class="px-3 py-1 rounded-lg font-semibold cursor-pointer ${!isRange ? 'bg-teal-700 text-white shadow-sm' : 'text-slate-600 hover:text-slate-900'}">एक दिन (Single)</button>
+              <button type="button" onclick="toggleDayBookRangeMode('range')" class="px-3 py-1 rounded-lg font-semibold cursor-pointer ${isRange ? 'bg-teal-700 text-white shadow-sm' : 'text-slate-600 hover:text-slate-900'}">मिति अवधि (Range)</button>
+            </div>
+            <button type="button" onclick="printDayBook()" class="bg-slate-900 hover:bg-slate-800 text-white font-bold px-4 py-2 rounded-xl flex items-center gap-1.5 shadow-sm cursor-pointer">
+              <i data-lucide="printer" class="w-4 h-4"></i> डे-बुक प्रिन्ट / PDF (A4)
+            </button>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-12 gap-3 text-xs items-end">
+          ${!isRange ? `
+            <div class="lg:col-span-5 flex flex-wrap items-end gap-2">
+              <button type="button" onclick="stepDayBookDate(-1)" class="px-3 py-2 bg-slate-100 hover:bg-slate-200 border border-slate-300 rounded-xl font-semibold cursor-pointer">◀ अघिल्लो दिन</button>
+              <div class="flex-1 min-w-[140px]">
+                <label class="font-semibold text-slate-600 block mb-1">कारोबार मिति (BS)</label>
+                <input type="text" id="daybook-single-date" value="${escapeHtmlSafe(fromBS)}" onchange="setDayBookDateSingle(this.value)" placeholder="YYYY-MM-DD" class="w-full bg-teal-50 border-2 border-teal-400 rounded-xl px-3 py-1.5 font-extrabold text-teal-950 tabular-nums">
+              </div>
+              <button type="button" onclick="setDayBookToday()" class="px-3 py-2 bg-teal-50 hover:bg-teal-100 text-teal-900 border border-teal-300 rounded-xl font-bold cursor-pointer">आज</button>
+              <button type="button" onclick="stepDayBookDate(1)" class="px-3 py-2 bg-slate-100 hover:bg-slate-200 border border-slate-300 rounded-xl font-semibold cursor-pointer">भोलिपल्ट ▶</button>
+            </div>
+          ` : `
+            <div class="lg:col-span-5 grid grid-cols-2 gap-2">
+              <div>
+                <label class="font-semibold text-slate-600 block mb-1">देखि मिति (From BS)</label>
+                <input type="text" id="daybook-from-date" value="${escapeHtmlSafe(fromBS)}" onchange="setDayBookRangeDates(this.value, document.getElementById('daybook-to-date').value)" class="w-full bg-teal-50 border border-teal-400 rounded-xl px-3 py-1.5 font-bold text-teal-950 tabular-nums">
+              </div>
+              <div>
+                <label class="font-semibold text-slate-600 block mb-1">सम्म मिति (To BS)</label>
+                <input type="text" id="daybook-to-date" value="${escapeHtmlSafe(toBS)}" onchange="setDayBookRangeDates(document.getElementById('daybook-from-date').value, this.value)" class="w-full bg-teal-50 border border-teal-400 rounded-xl px-3 py-1.5 font-bold text-teal-950 tabular-nums">
+              </div>
+            </div>
+          `}
+
+          <div class="lg:col-span-3">
+            <label class="font-semibold text-slate-600 block mb-1">कारोबार प्रकार फिल्टर</label>
+            <select onchange="daybookCatFilter=this.value; renderCurrentModule();" class="w-full border border-slate-300 rounded-xl px-3 py-2 font-semibold bg-white cursor-pointer">
+              <option value="ALL">सबै कारोबार प्रकार (${toNepaliDigits(allOnDate.length)})</option>
+              ${categories.map(c => `<option value="${escapeHtmlSafe(c)}" ${daybookCatFilter === c ? 'selected' : ''}>${escapeHtmlSafe(c)}</option>`).join("")}
+            </select>
+          </div>
+
+          <div class="lg:col-span-2">
+            <label class="font-semibold text-slate-600 block mb-1">माध्यम फिल्टर</label>
+            <select onchange="daybookModeFilter=this.value; renderCurrentModule();" class="w-full border border-slate-300 rounded-xl px-3 py-2 font-semibold bg-white cursor-pointer">
+              <option value="ALL" ${daybookModeFilter === 'ALL' ? 'selected' : ''}>सबै माध्यम</option>
+              <option value="Cash" ${daybookModeFilter === 'Cash' ? 'selected' : ''}>नगद (Cash)</option>
+              <option value="Bank" ${daybookModeFilter === 'Bank' ? 'selected' : ''}>बैंक (Bank)</option>
+              <option value="NonCash" ${daybookModeFilter === 'NonCash' ? 'selected' : ''}>बिल / आन्तरिक</option>
+            </select>
+          </div>
+
+          <div class="lg:col-span-2">
+            <label class="font-semibold text-slate-600 block mb-1">कसको / रसिद खोज्नुहोस्</label>
+            <input type="text" value="${escapeHtmlSafe(daybookSearchQuery)}" oninput="filterDayBookRowsLive(this.value)" placeholder="नाम, रसिद वा विवरण..." class="w-full border border-slate-300 rounded-xl px-3 py-2">
+          </div>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3 text-xs">
+        <div class="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
+          <div class="text-slate-500 font-semibold">प्रारम्भिक मौज्दात (Opening Balance)</div>
+          <div class="text-xl font-extrabold text-slate-900 mt-1 tabular-nums">${fmtMoney(cb.openTotal)}</div>
+          <div class="text-[11px] text-slate-600 mt-1 flex justify-between">
+            <span>नगद: <strong>${fmtMoney(cb.openCash)}</strong></span>
+            <span>बैंक: <strong>${fmtMoney(cb.openBank)}</strong></span>
+          </div>
+        </div>
+        <div class="bg-white p-4 rounded-2xl border border-emerald-200 shadow-sm">
+          <div class="text-emerald-700 font-semibold">अवधि भित्र जम्मा प्राप्ति (Cash + Bank In)</div>
+          <div class="text-xl font-extrabold text-emerald-800 mt-1 tabular-nums">+ ${fmtMoney(cb.totalIn)}</div>
+          <div class="text-[11px] text-emerald-800 mt-1 flex justify-between">
+            <span>नगद प्राप्ति: <strong>${fmtMoney(cb.cashIn)}</strong></span>
+            <span>बैंक जम्मा: <strong>${fmtMoney(cb.bankIn)}</strong></span>
+          </div>
+        </div>
+        <div class="bg-white p-4 rounded-2xl border border-rose-200 shadow-sm">
+          <div class="text-rose-700 font-semibold">अवधि भित्र जम्मा भुक्तानी (Cash + Bank Out)</div>
+          <div class="text-xl font-extrabold text-rose-800 mt-1 tabular-nums">- ${fmtMoney(cb.totalOut)}</div>
+          <div class="text-[11px] text-rose-800 mt-1 flex justify-between">
+            <span>नगद खर्च: <strong>${fmtMoney(cb.cashOut)}</strong></span>
+            <span>बैंक भुक्तानी: <strong>${fmtMoney(cb.bankOut)}</strong></span>
+          </div>
+        </div>
+        <div class="bg-teal-900 text-white p-4 rounded-2xl border border-teal-800 shadow-sm">
+          <div class="text-teal-200 font-semibold">अन्तिम मौज्दात (Closing Cash + Bank)</div>
+          <div class="text-xl font-extrabold mt-1 tabular-nums">${fmtMoney(cb.closeTotal)}</div>
+          <div class="text-[11px] text-teal-100 mt-1 flex justify-between">
+            <span>नगद बाँकी: <strong>${fmtMoney(cb.closeCash)}</strong></span>
+            <span>बैंक बाँकी: <strong>${fmtMoney(cb.closeBank)}</strong></span>
+          </div>
+        </div>
+      </div>
+
+      <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+        <div class="p-4 border-b border-slate-200 flex flex-wrap items-center justify-between gap-2 bg-slate-50/70">
+          <div class="text-xs font-bold text-slate-800">
+            मिति <span class="text-teal-800">${escapeHtmlSafe(isRange && fromBS !== toBS ? `${fromBS} देखि ${toBS}` : fromBS)}</span> मा भएका कारोबार विवरण
+            (<span id="daybook-filtered-count">${toNepaliDigits(filtered.length)}</span> थान)
+          </div>
+          <div class="text-[11px] text-slate-500">नोट: बैंक जम्मा/झिकिएको ट्रान्सफर र बिल जारी रकम "बिल/आन्तरिक" महलमा छुट्टै देखिन्छ।</div>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-xs text-left">
+            <thead class="bg-slate-50 border-b border-slate-200 text-slate-700">
+              <tr>
+                <th class="p-3 text-center w-12">क्र.सं.</th>
+                <th class="p-3">मिति (BS)</th>
+                <th class="p-3">कारोबार प्रकार</th>
+                <th class="p-3">कसको (व्यक्ति / ग्राहक / पक्ष)</th>
+                <th class="p-3">के-के कारोबार भएको (विस्तृत विवरण)</th>
+                <th class="p-3">माध्यम / रसिद नं.</th>
+                <th class="p-3 text-right">प्राप्ति / आम्दानी</th>
+                <th class="p-3 text-right">भुक्तानी / खर्च</th>
+                <th class="p-3 text-right">बिल / आन्तरिक</th>
+              </tr>
+            </thead>
+            <tbody id="daybook-tbody" class="divide-y divide-slate-100">
+              ${renderDayBookRowsHTML(filtered)}
+            </tbody>
+            <tfoot id="daybook-tfoot">
+              ${renderDayBookTotalsRowHTML(filtered)}
+            </tfoot>
+          </table>
+        </div>
       </div>
     </div>
   `;
