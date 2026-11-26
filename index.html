@@ -4052,8 +4052,11 @@ function renderAmountEntryModule() {
             📊 मिति अनुसार युनिट र महसुल रिपोर्ट
           </button>
         </div>
-        <div class="text-xs text-slate-600">
-          अर्को रसिद नं.: <strong class="text-teal-800">${nextRec}</strong> | मिति: <strong class="text-teal-800">${st.activeBSDate}</strong>
+        <div class="flex flex-wrap items-center gap-2 text-xs text-slate-600">
+          <span>अर्को रसिद नं.: <strong class="text-teal-800">${nextRec}</strong> | मिति: <strong class="text-teal-800">${st.activeBSDate}</strong></span>
+          <button type="button" onclick="window.openSmsQuickSettingsModal && window.openSmsQuickSettingsModal()" class="px-2.5 py-1.5 rounded-xl bg-sky-50 hover:bg-sky-100 text-sky-900 border border-sky-200 font-semibold flex items-center gap-1 cursor-pointer">
+            <span>📱</span><span>${typeof window.getSmsStatusShortLabel === "function" ? window.getSmsStatusShortLabel() : "SMS सेटिङ"}</span>
+          </button>
         </div>
       </div>
 
@@ -4116,11 +4119,17 @@ function renderAmountEntryModule() {
             </div>
 
             <div class="sm:col-span-3 flex flex-wrap justify-between items-center gap-2 pt-2">
-              ${selectedSingleCustId ? `
-                <button type="button" onclick="repairSelectedCustomerLedger('${selectedSingleCustId}')" class="bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 font-semibold px-4 py-2 rounded-xl flex items-center gap-1.5 cursor-pointer">
-                  <i data-lucide="wrench" class="w-4 h-4"></i> यो ग्राहकको हिसाब / जरिवाना मिलान
-                </button>
-              ` : `<span></span>`}
+              <div class="flex flex-wrap items-center gap-2">
+                ${selectedSingleCustId ? `
+                  <button type="button" onclick="repairSelectedCustomerLedger('${selectedSingleCustId}')" class="bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 font-semibold px-4 py-2 rounded-xl flex items-center gap-1.5 cursor-pointer">
+                    <i data-lucide="wrench" class="w-4 h-4"></i> यो ग्राहकको हिसाब / जरिवाना मिलान
+                  </button>
+                ` : ``}
+                <label class="inline-flex items-center gap-1.5 bg-sky-50 border border-sky-200 text-sky-900 px-3 py-2 rounded-xl font-semibold cursor-pointer">
+                  <input type="checkbox" id="amt-send-sms-now" ${(typeof window.getSmsConfig === "function" && window.getSmsConfig().enabled && window.getSmsConfig().amountAutoSms) ? "checked" : ""} class="rounded accent-sky-700">
+                  <span>सेभ हुनासाथ SMS पठाउने</span>
+                </label>
+              </div>
               <button type="submit" class="bg-teal-700 hover:bg-teal-800 text-white font-semibold px-5 py-2.5 rounded-xl shadow-sm flex items-center gap-2 cursor-pointer">
                 <i data-lucide="printer" class="w-4 h-4"></i> रकम सेभ गरी रसिद प्रिन्ट गर्नुहोस्
               </button>
@@ -4279,6 +4288,9 @@ function renderAmountEntryModule() {
                     <td class="p-3 text-center flex items-center justify-center gap-1.5">
                       <button onclick="printWaterReceipt('${p.id}')" class="px-2.5 py-1 bg-teal-50 hover:bg-teal-100 text-teal-800 border border-teal-200 rounded-lg font-semibold flex items-center gap-1 cursor-pointer">
                         <i data-lucide="printer" class="w-3.5 h-3.5"></i> प्रिन्ट
+                      </button>
+                      <button type="button" onclick="window.sendPaymentReceiptSmsNow && window.sendPaymentReceiptSmsNow('${p.id}')" title="ग्राहकको मोबाइलमा रसिद SMS पठाउनुहोस्" class="px-2.5 py-1 bg-sky-50 hover:bg-sky-100 text-sky-800 border border-sky-200 rounded-lg font-semibold cursor-pointer">
+                        SMS
                       </button>
                       ${p.allocations && Array.isArray(p.allocations.readings) ? '' : `
                         <button onclick="reconcileLegacyPaymentAllocation('${p.id}')" class="px-2.5 py-1 bg-blue-50 hover:bg-blue-100 text-blue-800 border border-blue-200 rounded-lg font-semibold cursor-pointer">
@@ -5270,12 +5282,18 @@ function submitSingleAmountEntry(e) {
   if (!st.customers.some(c => c.id === customerId)) return showToast('कृपया वैध ग्राहक छान्नुहोस्।', 'error');
   const date = document.getElementById('amt-date').value.trim() || st.activeBSDate;
   const paid = Number(document.getElementById('amt-paid-input').value) || 0;
+  const smsChecked = document.getElementById('amt-send-sms-now')?.checked;
   try {
     const payment = createCustomerPayment(customerId, date, paid, 'नगद');
     window.recalculateAllDynamicValues(false);
     renderCurrentModule();
     printWaterReceipt(payment.id);
     showToast(`रसिद नं. ${payment.receiptNo} सुरक्षित भयो!`, 'success');
+    const smsCfg = typeof window.getSmsConfig === "function" ? window.getSmsConfig() : null;
+    const shouldSms = typeof smsChecked === "boolean" ? smsChecked : !!(smsCfg?.enabled && smsCfg?.amountAutoSms);
+    if (shouldSms && typeof window.dispatchAutoSmsBatch === "function") {
+      window.dispatchAutoSmsBatch([{ type: "payment", customerId, paymentId: payment.id }], "payment");
+    }
   } catch (error) {
     showToast(error.message || 'भुक्तानी सुरक्षित गर्न सकिएन।', 'error');
   }
@@ -5310,6 +5328,10 @@ function submitBulkAmountEntry() {
   window.recalculateAllDynamicValues(false);
   renderCurrentModule();
   showToast(`${created.length} जना ग्राहकको बल्क अमाउन्ट सुरक्षित भयो।`, 'success');
+  const smsCfg = typeof window.getSmsConfig === "function" ? window.getSmsConfig() : null;
+  if (created.length > 0 && smsCfg?.enabled && smsCfg?.amountAutoSms && typeof window.dispatchAutoSmsBatch === "function") {
+    window.dispatchAutoSmsBatch(created.map(p => ({ type: "payment", customerId: p.customerId, paymentId: p.id })), "payment");
+  }
 }
 
 function modifyPaymentRecord(payId) {
@@ -12898,10 +12920,12 @@ function reconcileCustomerReadingsChain(customerId, fromReadingId = null, cascad
 window.saveBulkReadings = function() {
   const st = window.ERP_STATE;
   const entryDate = document.getElementById("unit-entry-date").value.trim() || st.activeBSDate;
+  const autoSmsChecked = document.getElementById("unit-auto-sms-chk")?.checked;
   const rows = document.querySelectorAll("#module-container tbody tr[data-cust-row]");
   let savedCount = 0;
   let skippedInvalid = 0;
   const touchedCustomers = new Set();
+  const changedForSms = [];
 
   rows.forEach(row => {
     const currInput = row.querySelector(".bulk-reading-input");
@@ -12916,6 +12940,9 @@ window.saveBulkReadings = function() {
     if (!Number.isFinite(curr) || curr < prev) { skippedInvalid++; return; }
 
     const existingIdx = st.readings.findIndex(r => r.customerId === cid && r.month === selectedUnitMonth);
+    const existedBefore = existingIdx >= 0;
+    const prevSavedCurr = existedBefore ? Number(st.readings[existingIdx].currReading) : null;
+    const prevSavedMaint = existedBefore ? Number(st.readings[existingIdx].maintenanceAmount || 0) : null;
     const oldMeterUnits = existingIdx >= 0 && st.readings[existingIdx].meterChanged
       ? Math.max(0, Number(st.readings[existingIdx].oldMeterUnits || 0))
       : 0;
@@ -12962,6 +12989,10 @@ window.saveBulkReadings = function() {
       window.absorbUnlinkedMaintenanceLogsIntoReading(targetReading, includedIds);
     }
 
+    if (!existedBefore || prevSavedCurr !== curr || prevSavedMaint !== maintVal) {
+      changedForSms.push(cid);
+    }
+
     touchedCustomers.add(cid);
     savedCount++;
   });
@@ -12976,6 +13007,15 @@ window.saveBulkReadings = function() {
     showToast(`${savedCount} जना सुरक्षित भयो (${skippedInvalid} जनाको हालको अङ्क साविकभन्दा कम भएकाले छोडियो)।`, "warning");
   } else {
     showToast(`${selectedUnitMonth} महिनाको ${savedCount} जना ग्राहकको युनिट र मर्मत शुल्क सुरक्षित/अपडेट भयो!`);
+  }
+
+  const smsCfg = typeof window.getSmsConfig === "function" ? window.getSmsConfig() : null;
+  const shouldSms = typeof autoSmsChecked === "boolean" ? autoSmsChecked : !!(smsCfg?.enabled && smsCfg?.readingAutoSms);
+  if (changedForSms.length > 0 && shouldSms && typeof window.dispatchAutoSmsBatch === "function") {
+    window.dispatchAutoSmsBatch(
+      changedForSms.map(cid => ({ type: "reading", customerId: cid, month: selectedUnitMonth })),
+      "reading"
+    );
   }
 };
 
@@ -13074,6 +13114,10 @@ window.openModifyReadingModal = function(custId, monthName) {
             <input type="checkbox" id="mod-rd-cascade" checked class="rounded text-teal-700">
             <span class="font-semibold text-teal-900">यसपछिका महिनाको साविक अङ्क, बिल, बक्यौता, रसिद तथा लेजर पनि स्वतः मिलाउने</span>
           </label>
+          <label class="flex items-center gap-2 bg-sky-50 border border-sky-200 rounded-xl p-2.5 cursor-pointer">
+            <input type="checkbox" id="mod-rd-send-sms" ${(typeof window.getSmsConfig === "function" && window.getSmsConfig().enabled && window.getSmsConfig().readingAutoSms) ? "checked" : ""} class="rounded text-sky-700">
+            <span class="font-semibold text-sky-900">सच्याएर सेभ हुनासाथ ग्राहकलाई अद्यावधिक SMS पठाउने</span>
+          </label>
 
           <div id="mod-rd-preview" class="bg-slate-100 border border-slate-200 rounded-xl p-3"></div>
 
@@ -13106,6 +13150,7 @@ window.saveModifiedReading = function(e, readingId) {
   const newDate = document.getElementById("mod-rd-date").value.trim() || st.activeBSDate;
   const newRemark = document.getElementById("mod-rd-remark").value.trim();
   const cascadeNext = !!document.getElementById("mod-rd-cascade")?.checked;
+  const sendSmsAfter = !!document.getElementById("mod-rd-send-sms")?.checked;
 
   if (!Number.isFinite(newPrev) || !Number.isFinite(newCurr) || newCurr < newPrev) {
     return showToast("हालको अङ्क साविक अङ्कभन्दा कम हुन सक्दैन।", "error");
@@ -13129,6 +13174,9 @@ window.saveModifiedReading = function(e, readingId) {
   closeUnitActionModal();
   renderCurrentModule();
   showToast(`${r.month} महिनाको रिडिङ (${newPrev} → ${newCurr}, ${units} युनिट) सच्याइयो र सबै हिसाब मिलाइयो!`, "success");
+  if (sendSmsAfter && typeof window.dispatchAutoSmsBatch === "function") {
+    window.dispatchAutoSmsBatch([{ type: "reading", customerId: r.customerId, month: r.month }], "reading");
+  }
 };
 
 window.deleteSingleReadingRecord = function(readingId) {
@@ -13579,7 +13627,14 @@ window.renderUnitEntryModule = function() {
               <label class="block text-[10px] font-semibold text-slate-500">इन्ट्री मिति (Auto BS)</label>
               <input type="text" id="unit-entry-date" value="${st.activeBSDate}" class="w-28 text-xs font-bold border border-teal-300 bg-teal-50 text-teal-950 rounded-xl px-3 py-2">
             </div>
-            <div class="flex flex-wrap gap-1.5">
+            <div class="flex flex-wrap items-center gap-1.5">
+              <label class="inline-flex items-center gap-1.5 bg-sky-50 border border-sky-200 text-sky-900 text-xs font-semibold px-2.5 py-2 rounded-xl cursor-pointer">
+                <input type="checkbox" id="unit-auto-sms-chk" ${(typeof window.getSmsConfig === "function" && window.getSmsConfig().enabled && window.getSmsConfig().readingAutoSms) ? "checked" : ""} class="rounded accent-sky-700">
+                <span>सेभ हुनासाथ SMS</span>
+              </label>
+              <button type="button" onclick="window.openSmsQuickSettingsModal && window.openSmsQuickSettingsModal()" class="bg-sky-600 hover:bg-sky-700 text-white text-xs font-semibold px-3 py-2 rounded-xl shadow-sm flex items-center gap-1 cursor-pointer">
+                📱 ${typeof window.getSmsStatusShortLabel === "function" ? window.getSmsStatusShortLabel() : "SMS सेटिङ"}
+              </button>
               <button type="button" onclick="switchModule('maintenance')" class="bg-amber-600 hover:bg-amber-700 text-white text-xs font-semibold px-3 py-2 rounded-xl shadow-sm flex items-center gap-1 cursor-pointer">
                 🔧 मर्मत थप्नुहोस्
               </button>
@@ -13686,6 +13741,7 @@ window.renderUnitEntryModule = function() {
                           ? `<span class="px-2 py-0.5 rounded-full text-[10px] font-semibold ${netPayable <= 0 ? 'bg-emerald-100 text-emerald-800' : 'bg-teal-100 text-teal-800'}">${netPayable <= 0 ? 'चुक्ता' : 'सुरक्षित'}</span>
                              <button type="button" onclick="openUnitCustomerBillPdf('${c.id}','${selectedUnitMonth}')" title="बिल PDF प्रिन्ट" class="px-2 py-0.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-white text-[10px] font-semibold cursor-pointer">बिल PDF</button>
                              <button type="button" onclick="openModifyReadingModal('${c.id}','${selectedUnitMonth}')" title="गलत अङ्क सच्याउनुहोस्" class="px-2 py-0.5 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-800 border border-indigo-200 text-[10px] font-semibold cursor-pointer">Modify</button>
+                             ${hasValidPhone ? `<button type="button" onclick="window.sendSingleReadingSmsNow && window.sendSingleReadingSmsNow('${c.id}','${selectedUnitMonth}')" title="SIM/SMS पठाउनुहोस्" class="px-2 py-0.5 rounded-lg bg-sky-600 hover:bg-sky-700 text-white text-[10px] font-semibold cursor-pointer">SMS</button>` : ''}
                              ${hasValidPhone ? `<button type="button" onclick="sendSingleReadingWhatsapp('${c.id}','${selectedUnitMonth}')" title="WhatsApp पठाउनुहोस्" class="px-2 py-0.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-[10px] font-semibold cursor-pointer">WA</button>` : ''}`
                           : `<span class="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-slate-100 text-slate-500">बाँकी</span>`
                         }
@@ -14031,7 +14087,8 @@ window.renderSettingsModule = function() {
     </div>
   `;
 
-  return baseHtml.replace(`<div class="space-y-6">`, `<div class="space-y-6">${extraCard}`);
+  const smsSettingsCard = typeof window.renderSmsSettingsCardHtml === "function" ? window.renderSmsSettingsCardHtml() : "";
+  return baseHtml.replace(`<div class="space-y-6">`, `<div class="space-y-6">${smsSettingsCard}${extraCard}`);
 };
 
 function saveLetterheadSettings(e) {
@@ -15672,6 +15729,12 @@ updateConnectivityBanner();
                   class="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-300 font-semibold text-[11px] cursor-pointer">
                   बिल / PDF
                 </button>
+                ${getValidWhatsappPhone(c.phone) ? `
+                  <button type="button" onclick="window.sendSingleOfflineReadingSmsNow && window.sendSingleOfflineReadingSmsNow('${c.id}')"
+                    class="px-3 py-1.5 rounded-xl bg-sky-600 hover:bg-sky-700 text-white font-semibold text-[11px] cursor-pointer">
+                    📱 SMS पठाउनुहोस्
+                  </button>
+                ` : ""}
               ` : ""}
             </div>
           </div>
@@ -15716,6 +15779,10 @@ updateConnectivityBanner();
               <button type="button" id="offline-ocr-prewarm-btn" onclick="window.prewarmOfflineMeterOcr && window.prewarmOfflineMeterOcr()"
                 class="bg-indigo-50 hover:bg-indigo-100 text-indigo-900 border border-indigo-200 text-xs font-bold px-3 py-2 rounded-xl shadow-sm transition cursor-pointer flex items-center gap-1.5">
                 <span>📥</span><span>अफलाइन क्यामेरा OCR तयार पार्नुहोस्</span>
+              </button>
+              <button type="button" onclick="window.openSmsQueueModal && window.openSmsQueueModal()"
+                class="bg-sky-600 hover:bg-sky-700 text-white text-xs font-bold px-3 py-2 rounded-xl shadow-sm transition cursor-pointer flex items-center gap-1.5">
+                <span>📱</span><span>SMS क्यु (${typeof window.getSmsOutbox === "function" ? window.getSmsOutbox().length : 0})</span>
               </button>
               <button type="button" onclick="window.openAllOfflineBillsPdf()" ${doneCount === 0 ? 'disabled' : ''}
                 class="bg-slate-900 hover:bg-slate-800 disabled:bg-slate-200 disabled:text-slate-500 text-white text-xs font-bold px-3.5 py-2.5 rounded-xl shadow-sm transition cursor-pointer flex items-center gap-1.5">
@@ -15943,6 +16010,11 @@ updateConnectivityBanner();
 
             <div id="off-rd-preview" class="bg-slate-50 border border-slate-200 rounded-xl p-3 text-slate-700 space-y-1"></div>
 
+            <label class="flex items-center gap-2 bg-sky-50 border border-sky-200 rounded-xl px-3 py-2 cursor-pointer text-xs font-semibold text-sky-900">
+              <input type="checkbox" id="off-rd-send-sms" ${(typeof window.getSmsConfig === "function" && window.getSmsConfig().enabled && window.getSmsConfig().offlineAutoSms) ? "checked" : ""} class="rounded accent-sky-700">
+              <span>सेभ हुनासाथ ग्राहकलाई मोबाइल SIM बाट SMS पठाउने</span>
+            </label>
+
             <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
               <button type="submit" class="w-full bg-teal-700 hover:bg-teal-800 text-white font-bold py-3 rounded-xl shadow-sm cursor-pointer">
                 अफलाइनमा सुरक्षित गर्नुहोस्
@@ -16046,9 +16118,15 @@ updateConnectivityBanner();
     else outbox.unshift(item);
     saveOutbox(outbox);
 
+    const sendSmsEl = document.getElementById("off-rd-send-sms");
+    const shouldSms = sendSmsEl ? !!sendSmsEl.checked : !!(typeof window.getSmsConfig === "function" && window.getSmsConfig().enabled && window.getSmsConfig().offlineAutoSms);
+
     document.getElementById("offline-reading-modal-wrap").innerHTML = "";
     renderCurrentModule();
     showToast(c.name + " (" + units + " युनिट) अफलाइनमा सुरक्षित भयो!", "success");
+    if (shouldSms && typeof window.dispatchOfflineReadingSms === "function") {
+      window.dispatchOfflineReadingSms(c, item);
+    }
     if (openBillAfter) {
       window.openOfflineBillPdf(custId);
     }
@@ -16311,6 +16389,9 @@ updateConnectivityBanner();
       window.PJ_OFFLINE_ONLY_MODE = false;
       renderCurrentModule();
       showToast(res.mergedCount + " वटा अफलाइन रिडिङ सफ्टवेयरमा सफलतापूर्वक सिङ्क भयो!", "success");
+      if (typeof window.flushSmsOutbox === "function") {
+        window.flushSmsOutbox(true);
+      }
     } catch (err) {
       if (String(err?.message || "").includes("AUTH_REQUIRED")) {
         document.getElementById("offline-inline-auth-box")?.classList.remove("hidden");
@@ -17067,6 +17148,1232 @@ updateConnectivityBanner();
     }
 
     startLiveCameraFeed();
+  };
+})();
+</script>
+
+<script>
+// ============================================================================
+// REAL SIM-TO-SIM, SELF-HOSTED GATEWAY & CLOUD SMS ENGINE
+// ============================================================================
+(function() {
+  const SMS_SECRETS_KEY = "PJ_SMS_SECRETS_V1";
+  const SMS_OUTBOX_KEY = "PJ_SMS_OUTBOX_V1";
+  const SMS_LOGS_KEY = "PJ_SMS_LOGS_V1";
+
+  const DEFAULT_SMS_CONFIG = {
+    enabled: true,
+    provider: "device-sim", // device-sim | self-hosted-gateway | android-sim-gateway | sparrow | aakash | custom-webhook
+    readingAutoSms: true,
+    amountAutoSms: true,
+    offlineAutoSms: true,
+    gatewayUrl: "",
+    gatewayFormat: "traccar", // traccar | smsgate | custom
+    gatewayUser: "",
+    senderIdentity: "TheAlert"
+  };
+
+  let phoneWatcherTimer = null;
+  let phoneWatcherJobs = [];
+  let activeGatewayTab = "phone";
+
+  function getEsc(val) {
+    if (typeof escapeHtmlSafe === "function") return escapeHtmlSafe(val);
+    return String(val ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+  }
+
+  function cleanAmt(n) {
+    if (typeof formatCleanAmount === "function") return formatCleanAmount(n);
+    const v = Math.round((Number(n) || 0) * 100) / 100;
+    return Number.isInteger(v) ? String(v) : v.toFixed(2);
+  }
+
+  function nepToAsciiDigits(raw) {
+    const nep = "०१२३४५६७८९";
+    return String(raw ?? "").replace(/[०-९]/g, ch => String(nep.indexOf(ch)));
+  }
+
+  function generateStrongGatewayKey() {
+    const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789";
+    let out = "PJGW-";
+    for (let i = 0; i < 16; i++) {
+      out += chars[Math.floor(Math.random() * chars.length)];
+    }
+    return out;
+  }
+
+  window.normalizeNepalSmsPhone = function(raw) {
+    let digits = nepToAsciiDigits(raw).replace(/\D/g, "");
+    if (digits.startsWith("00977")) digits = digits.slice(5);
+    else if (digits.startsWith("977") && digits.length >= 13) digits = digits.slice(3);
+    if (digits.startsWith("0") && digits.length === 11) digits = digits.slice(1);
+    if (!/^9[6-9]\d{8}$/.test(digits)) return { valid: false, local10: "", e164: "" };
+    return { valid: true, local10: digits, e164: "+977" + digits };
+  };
+
+  window.getSmsConfig = function() {
+    const st = window.ERP_STATE || {};
+    st.settings = st.settings || {};
+    const saved = st.settings.smsConfig || {};
+    return {
+      ...DEFAULT_SMS_CONFIG,
+      ...saved
+    };
+  };
+
+  window.saveSmsConfig = function(patch) {
+    const st = window.ERP_STATE || {};
+    st.settings = st.settings || {};
+    st.settings.smsConfig = {
+      ...window.getSmsConfig(),
+      ...(patch || {})
+    };
+    window.cloudSync?.save?.();
+    return st.settings.smsConfig;
+  };
+
+  window.getSmsSecrets = function() {
+    try {
+      const parsed = JSON.parse(localStorage.getItem(SMS_SECRETS_KEY) || "{}");
+      return {
+        apiToken: String(parsed.apiToken || ""),
+        gatewayKey: String(parsed.gatewayKey || "")
+      };
+    } catch {
+      return { apiToken: "", gatewayKey: "" };
+    }
+  };
+
+  window.getOrCreateSelfHostedGatewayKey = function() {
+    const sec = window.getSmsSecrets();
+    if (sec.gatewayKey && sec.gatewayKey.length >= 12) return sec.gatewayKey;
+    const key = generateStrongGatewayKey();
+    window.saveSmsSecrets({ gatewayKey: key });
+    return key;
+  };
+
+  window.saveSmsSecrets = function(patch) {
+    const next = { ...window.getSmsSecrets(), ...(patch || {}) };
+    try { localStorage.setItem(SMS_SECRETS_KEY, JSON.stringify(next)); } catch {}
+    return next;
+  };
+
+  window.regenerateSelfHostedGatewayKey = function(prefix = "set") {
+    const nextKey = generateStrongGatewayKey();
+    window.saveSmsSecrets({ gatewayKey: nextKey });
+    const el = document.getElementById(`${prefix}-sms-self-key`);
+    if (el) el.value = nextKey;
+    const modalEl = document.getElementById("self-gw-key-input");
+    if (modalEl) modalEl.value = nextKey;
+    showToast?.("नयाँ Gateway Pairing Key तयार भयो! फोनमा पनि यही Key राख्नुहोस्।", "success");
+    return nextKey;
+  };
+
+  window.getSmsOutbox = function() {
+    try {
+      const parsed = JSON.parse(localStorage.getItem(SMS_OUTBOX_KEY) || "[]");
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  };
+
+  window.saveSmsOutbox = function(list) {
+    try { localStorage.setItem(SMS_OUTBOX_KEY, JSON.stringify(Array.isArray(list) ? list : [])); } catch {}
+  };
+
+  window.getSmsLogs = function() {
+    try {
+      const parsed = JSON.parse(localStorage.getItem(SMS_LOGS_KEY) || "[]");
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  };
+
+  window.appendSmsLog = function(entry) {
+    const logs = window.getSmsLogs();
+    logs.unshift({
+      id: "SMSLOG-" + Date.now() + "-" + Math.random().toString(36).slice(2, 6),
+      time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+      bsDate: window.ERP_STATE?.activeBSDate || "",
+      ...entry
+    });
+    if (logs.length > 60) logs.length = 60;
+    try { localStorage.setItem(SMS_LOGS_KEY, JSON.stringify(logs)); } catch {}
+  };
+
+  window.getSmsStatusShortLabel = function() {
+    const cfg = window.getSmsConfig();
+    if (!cfg.enabled) return "SMS बन्द";
+    const map = {
+      "device-sim": "SIM SMS (फोन)",
+      "self-hosted-gateway": "आफ्नै SIM गेटवे",
+      "android-sim-gateway": "अटो SIM गेटवे",
+      "sparrow": "Sparrow SMS",
+      "aakash": "Aakash SMS",
+      "custom-webhook": "SMS Webhook"
+    };
+    const pending = window.getSmsOutbox().length;
+    return (map[cfg.provider] || "SMS सेटिङ") + (pending > 0 ? ` (${pending})` : "");
+  };
+
+  window.buildReadingSmsMessage = function(c, r, offlineItem = null) {
+    const st = window.ERP_STATE || {};
+    const committee = st.settings?.committeeName || "प्रगति जल उपभोक्ता समिति";
+    const month = offlineItem ? offlineItem.month : (r?.month || "");
+    const dt = (offlineItem && offlineItem.entryDate) || r?.entryDate || st.activeBSDate || "";
+    const yr = r?.year || (typeof parseBS === "function" ? parseBS(dt).y : "");
+    const prev = offlineItem ? Number(offlineItem.prevReading || 0) : Number(r?.prevReading || 0);
+    const curr = offlineItem ? Number(offlineItem.currReading || 0) : Number(r?.currReading || 0);
+    const units = offlineItem ? Number(offlineItem.units || 0) : Number(r?.units || 0);
+
+    const fin = typeof window.getOfflineCustomerFinancials === "function"
+      ? window.getOfflineCustomerFinancials(c.id, month, dt)
+      : null;
+
+    if (fin) {
+      const currWater = offlineItem
+        ? Number(offlineItem.waterBillOnly ?? Math.max(0, Number(offlineItem.billAmount || 0) - Number(offlineItem.maintenanceAmount || 0)))
+        : Math.max(0, Math.round((Number(r?.billAmount || 0) - Number(r?.maintenanceAmount || 0)) * 100) / 100);
+      const currMaint = offlineItem
+        ? Math.round((Number(offlineItem.maintenanceAmount || 0) + Number(fin.currUnlinkedMaint || 0)) * 100) / 100
+        : Math.round((Number(r?.maintenanceAmount || 0) + Number(fin.currUnlinkedMaint || 0)) * 100) / 100;
+      const totals = typeof window.computeOfflineBillTotals === "function"
+        ? window.computeOfflineBillTotals(fin, currWater, currMaint)
+        : null;
+      const netPayable = totals ? totals.netPayable : Math.max(0, currWater + currMaint + fin.totalPrevDue - fin.existingPaid - fin.advanceAvailable);
+      const remAdv = totals ? totals.remainingAdvance : 0;
+
+      const lines = [
+        committee,
+        `बिल (${month} ${yr}): ${c.id} ${c.name}`,
+        `मिटर: ${prev} -> ${curr} (${units} युनिट)`,
+        `हालको बिल: रु. ${cleanAmt(currWater)}${currMaint > 0 ? ` | मर्मत: रु. ${cleanAmt(currMaint)}` : ""}`
+      ];
+      if (fin.totalPrevDue > 0) lines.push(`पहिलाको बाँकी: रु. ${cleanAmt(fin.totalPrevDue)}`);
+      if (totals?.advanceUsed > 0) lines.push(`अग्रिम मिलान: -रु. ${cleanAmt(totals.advanceUsed)}`);
+      lines.push(netPayable > 0 ? `जम्मा तिर्नुपर्ने: रु. ${cleanAmt(netPayable)}` : (remAdv > 0 ? `हिसाब चुक्ता (बाँकी अग्रिम: रु. ${cleanAmt(remAdv)})` : `हिसाब चुक्ता (रु. 0)`));
+      lines.push(`कृपया समयमै पानी महसुल बुझाउनुहोला। धन्यवाद!`);
+      return lines.join("\n");
+    }
+
+    const billAmt = offlineItem ? Number(offlineItem.billAmount || 0) : Number(r?.billAmount || 0);
+    return [
+      committee,
+      `बिल (${month}): ${c.id} ${c.name}`,
+      `मिटर: ${prev} -> ${curr} (${units} युनिट)`,
+      `हालको बिल: रु. ${cleanAmt(billAmt)}`,
+      `कृपया समयमै पानी महसुल बुझाउनुहोला।`
+    ].join("\n");
+  };
+
+  window.buildPaymentSmsMessage = function(c, payment) {
+    const st = window.ERP_STATE || {};
+    const committee = st.settings?.committeeName || "प्रगति जल उपभोक्ता समिति";
+    const dueObj = typeof getCustomerDueAsOf === "function"
+      ? getCustomerDueAsOf(c.id, st.activeBSDate || payment.date)
+      : null;
+    const remDue = dueObj ? Math.max(0, Number(dueObj.total || 0)) : 0;
+    const remAdv = dueObj ? Math.max(0, Number(dueObj.advanceBalance || 0)) : Math.max(0, Number(c.advanceBalance || 0));
+
+    const lines = [
+      committee,
+      `भुक्तानी रसिद नं.: ${payment.receiptNo} (${payment.date})`,
+      `ग्राहक: ${c.id} - ${c.name}`,
+      `बुझाएको रकम: रु. ${cleanAmt(payment.totalPaid)}`
+    ];
+    if (remDue > 0) {
+      lines.push(`बाँकी तिर्नुपर्ने रकम: रु. ${cleanAmt(remDue)}`);
+    } else if (remAdv > 0) {
+      lines.push(`बाँकी: रु. 0 (अग्रिम जम्मा: रु. ${cleanAmt(remAdv)})`);
+    } else {
+      lines.push(`बाँकी रकम: रु. 0 (सम्पूर्ण चुक्ता)`);
+    }
+    lines.push(`धन्यवाद!`);
+    return lines.join("\n");
+  };
+
+  window.launchDeviceSimSmsUri = function(phoneObj, message) {
+    const isApple = /iphone|ipad|ipod/i.test(navigator.userAgent || "");
+    const sep = isApple ? "&body=" : "?body=";
+    const uri = `sms:${phoneObj.e164}${sep}${encodeURIComponent(message)}`;
+    const a = document.createElement("a");
+    a.href = uri;
+    a.style.display = "none";
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => { try { a.remove(); } catch {} }, 400);
+    return true;
+  };
+
+  function isPrivateLanGateway(urlStr) {
+    try {
+      const u = new URL(urlStr);
+      const h = u.hostname.toLowerCase();
+      return /^192\.168\./.test(h) || /^10\./.test(h) || /^172\.(1[6-9]|2\d|3[01])\./.test(h) || h.endsWith(".local");
+    } catch {
+      return false;
+    }
+  }
+
+  async function tryDirectGatewayFetch(cfg, secrets, phoneObj, message) {
+    const target = String(cfg.gatewayUrl || "").trim();
+    if (!target) throw new Error("Android SIM Gateway URL राखिएको छैन।");
+    const fmt = cfg.gatewayFormat || "traccar";
+    const token = String(secrets?.apiToken || "").trim();
+    const user = String(cfg.gatewayUser || "").trim();
+    const headers = { "Content-Type": "application/json" };
+    let payload;
+    if (fmt === "smsgate") {
+      payload = { message, textMessage: { text: message }, phoneNumbers: [phoneObj.e164] };
+      if (user && token) headers["Authorization"] = "Basic " + btoa(`${user}:${token}`);
+      else if (token) headers["Authorization"] = token.startsWith("Bearer ") || token.startsWith("Basic ") ? token : `Bearer ${token}`;
+    } else if (fmt === "traccar") {
+      payload = { to: phoneObj.e164, message };
+      if (token) headers["Authorization"] = token;
+    } else {
+      payload = { to: phoneObj.e164, phone: phoneObj.local10, message };
+      if (token) headers["Authorization"] = token.startsWith("Bearer ") ? token : `Bearer ${token}`;
+    }
+    const resp = await fetch(target, { method: "POST", headers, body: JSON.stringify(payload) });
+    if (!resp.ok) {
+      const txt = await resp.text().catch(() => "");
+      throw new Error(`Gateway त्रुटि (${resp.status}): ${txt.slice(0, 120)}`);
+    }
+    return { ok: true, direct: true };
+  }
+
+  function getSelfHostedBaseUrl(cfg) {
+    const custom = String(cfg?.gatewayUrl || "").trim().replace(/\/+$/, "");
+    if (custom && /^https?:\/\//i.test(custom)) return custom;
+    if (typeof window !== "undefined" && window.location && /^https?:/i.test(window.location.origin)) {
+      return window.location.origin;
+    }
+    return "";
+  }
+
+  async function enqueueToSelfHostedGateway(phoneObj, message, meta = {}, cfgOverride = null, secretOverride = null) {
+    const cfg = cfgOverride || window.getSmsConfig();
+    const secrets = secretOverride || window.getSmsSecrets();
+    const key = (secrets.gatewayKey && secrets.gatewayKey.length >= 12)
+      ? secrets.gatewayKey
+      : window.getOrCreateSelfHostedGatewayKey();
+    const base = getSelfHostedBaseUrl(cfg);
+    const endpoint = (base ? base : "") + "/api/sms-gateway/enqueue";
+
+    let resp;
+    try {
+      resp = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-gateway-key": key
+        },
+        body: JSON.stringify({
+          to: phoneObj.local10,
+          message,
+          customerId: meta.customerId || "",
+          customerName: meta.customerName || "",
+          type: meta.type || "sms"
+        })
+      });
+    } catch {
+      resp = null;
+    }
+
+    if (resp && resp.ok) {
+      const data = await resp.json().catch(() => ({}));
+      return { ok: true, relay: "server", id: data.id, phoneOnline: !!data.phoneOnline };
+    }
+
+    if (!resp || resp.status === 404 || resp.status === 405) {
+      // Static GitHub Pages fallback via Firestore real-time ERP_STATE.smsGatewayQueue
+      const st = window.ERP_STATE;
+      if (st) {
+        st.smsGatewayQueue = Array.isArray(st.smsGatewayQueue) ? st.smsGatewayQueue : [];
+        const job = {
+          id: "FSGW-" + Date.now() + "-" + Math.random().toString(36).slice(2, 6),
+          to: phoneObj.local10,
+          e164: phoneObj.e164,
+          message,
+          customerId: meta.customerId || "",
+          customerName: meta.customerName || "",
+          type: meta.type || "sms",
+          status: "queued",
+          createdAt: Date.now()
+        };
+        st.smsGatewayQueue.unshift(job);
+        if (st.smsGatewayQueue.length > 80) st.smsGatewayQueue.length = 80;
+        window.cloudSync?.save?.();
+        return { ok: true, relay: "cloud-sync", id: job.id, phoneOnline: false };
+      }
+    }
+
+    const errData = resp ? await resp.json().catch(() => ({})) : {};
+    throw new Error(errData?.error || "आफ्नै SMS Gateway मा पठाउन असफल भयो।");
+  }
+
+  async function sendSmsViaServerOrDirect(phoneObj, message, cfgOverride = null, secretOverride = null, meta = {}) {
+    const cfg = cfgOverride || window.getSmsConfig();
+    const secrets = secretOverride || window.getSmsSecrets();
+
+    if (cfg.provider === "self-hosted-gateway") {
+      return await enqueueToSelfHostedGateway(phoneObj, message, meta, cfg, secrets);
+    }
+
+    // Private LAN IP on local Wi-Fi: try direct browser request first (cloud servers cannot reach 192.168.x.x)
+    if ((cfg.provider === "android-sim-gateway" || cfg.provider === "custom-webhook") && isPrivateLanGateway(cfg.gatewayUrl)) {
+      return await tryDirectGatewayFetch(cfg, secrets, phoneObj, message);
+    }
+
+    const res = await fetch("/api/send-sms", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        provider: cfg.provider,
+        to: phoneObj.local10,
+        message,
+        gatewayUrl: cfg.gatewayUrl,
+        gatewayFormat: cfg.gatewayFormat,
+        gatewayUser: cfg.gatewayUser,
+        apiToken: secrets.apiToken,
+        senderIdentity: cfg.senderIdentity
+      })
+    });
+
+    if (res.status === 404 || res.status === 405) {
+      if (cfg.provider === "android-sim-gateway" || cfg.provider === "custom-webhook") {
+        return await tryDirectGatewayFetch(cfg, secrets, phoneObj, message);
+      }
+      throw new Error("GitHub Pages जस्तो Static साइटबाट Sparrow/Aakash API चलाउन ब्राउजर CORS अनुमति हुँदैन। यसको सट्टा 'फोनको आफ्नै SIM' वा 'आफ्नै SMS Gateway' प्रयोग गर्नुहोस्।");
+    }
+
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data?.ok) {
+      throw new Error(data?.error || `SMS पठाउन असफल (${res.status})`);
+    }
+    return data;
+  }
+
+  function resolveBatchPayloadItems(rawItems) {
+    const st = window.ERP_STATE || {};
+    const prepared = [];
+    const skippedNoPhone = [];
+
+    (rawItems || []).forEach(req => {
+      const c = st.customers.find(x => x.id === req.customerId);
+      if (!c) return;
+      const phone = window.normalizeNepalSmsPhone(c.phone);
+      if (!phone.valid) {
+        skippedNoPhone.push({ customerId: c.id, name: c.name });
+        return;
+      }
+      let message = "";
+      if (req.type === "payment") {
+        const pay = (st.payments || []).find(p => String(p.id) === String(req.paymentId));
+        if (!pay) return;
+        message = window.buildPaymentSmsMessage(c, pay);
+      } else if (req.type === "offline-reading") {
+        message = window.buildReadingSmsMessage(c, null, req.offlineItem);
+      } else {
+        const r = (st.readings || []).find(rd => rd.customerId === c.id && rd.month === req.month);
+        if (!r) return;
+        message = window.buildReadingSmsMessage(c, r, null);
+      }
+      prepared.push({
+        id: "SMSQ-" + Date.now() + "-" + Math.random().toString(36).slice(2, 6),
+        type: req.type,
+        customerId: c.id,
+        customerName: c.name,
+        phone: phone.local10,
+        e164: phone.e164,
+        message,
+        createdAt: Date.now()
+      });
+    });
+
+    return { prepared, skippedNoPhone };
+  }
+
+  window.dispatchAutoSmsBatch = async function(rawItems, sourceLabel = "") {
+    const cfg = window.getSmsConfig();
+    if (!cfg.enabled) return;
+    const { prepared, skippedNoPhone } = resolveBatchPayloadItems(rawItems);
+
+    if (!prepared.length) {
+      if (skippedNoPhone.length > 0) {
+        showToast?.(`${skippedNoPhone.length} जना ग्राहकको १० अङ्कको मोबाइल नं. नभएकाले SMS पठाइएन।`, "warning");
+      }
+      return;
+    }
+
+    if (cfg.provider === "device-sim") {
+      if (prepared.length === 1) {
+        const item = prepared[0];
+        window.launchDeviceSimSmsUri({ e164: item.e164, local10: item.phone }, item.message);
+        window.appendSmsLog({ customerId: item.customerId, name: item.customerName, phone: item.phone, provider: "device-sim", status: "SIM एप खोलियो", type: item.type });
+        showToast?.(`📱 ${item.customerName} (${item.phone}) को लागि मोबाइलको SIM मेसेज खोलियो — Send थिच्नुहोस्!`, "success");
+      } else {
+        const outbox = window.getSmsOutbox();
+        const combined = [...prepared, ...outbox.filter(o => !prepared.some(p => p.customerId === o.customerId && p.message === o.message))];
+        window.saveSmsOutbox(combined);
+        window.openSmsQueueModal(
+          `${prepared.length} जना ग्राहकको SMS क्यु तयार छ! प्रत्येकमा 'SIM बाट पठाउनुहोस्' थिच्दै जानुहोस्${skippedNoPhone.length ? ` (${skippedNoPhone.length} जनाको फोन नं. छैन)` : ""}।`
+        );
+      }
+      return;
+    }
+
+    // Automatic API / Self-Hosted Gateway / Android SIM Gateway mode
+    if (!navigator.onLine) {
+      const outbox = window.getSmsOutbox();
+      window.saveSmsOutbox([...prepared, ...outbox]);
+      showToast?.(`अफलाइन भएकाले ${prepared.length} वटा SMS क्युमा राखियो — इन्टरनेट आउनासाथ पठाउनुहोस्।`, "info");
+      return;
+    }
+
+    let okCount = 0;
+    let anyPhoneOnline = false;
+    const failed = [];
+    for (const item of prepared) {
+      try {
+        const resp = await sendSmsViaServerOrDirect({ local10: item.phone, e164: item.e164 }, item.message, cfg, null, item);
+        okCount++;
+        if (resp?.phoneOnline) anyPhoneOnline = true;
+        window.appendSmsLog({
+          customerId: item.customerId,
+          name: item.customerName,
+          phone: item.phone,
+          provider: cfg.provider,
+          status: cfg.provider === "self-hosted-gateway" ? (resp?.phoneOnline ? "गेटवे फोनमा गयो ✅" : "गेटवे क्युमा ⏳") : "पठाइयो ✅",
+          type: item.type
+        });
+      } catch (err) {
+        failed.push({ ...item, error: err?.message || "त्रुटि" });
+        window.appendSmsLog({ customerId: item.customerId, name: item.customerName, phone: item.phone, provider: cfg.provider, status: "असफल ❌", error: err?.message || "", type: item.type });
+      }
+    }
+
+    if (failed.length > 0) {
+      const outbox = window.getSmsOutbox();
+      window.saveSmsOutbox([...failed, ...outbox]);
+      showToast?.(`${okCount} वटा SMS पठाइयो, ${failed.length} वटा असफल (क्युमा राखियो): ${failed[0].error}`, "warning");
+    } else if (cfg.provider === "self-hosted-gateway") {
+      showToast?.(
+        anyPhoneOnline
+          ? `✅ ${okCount} वटा SMS आफ्नै SIM गेटवे फोनबाट स्वतः पठाउन पठाइयो!`
+          : `📡 ${okCount} वटा SMS आफ्नै गेटवे क्युमा राखियो (SIM फोन अनलाइन हुँदा स्वतः जान्छ)!`,
+        "success"
+      );
+    } else {
+      showToast?.(`✅ ${okCount} जना ग्राहकको मोबाइलमा SMS स्वतः पठाइयो!${skippedNoPhone.length ? ` (${skippedNoPhone.length} जनाको फोन नं. छैन)` : ""}`, "success");
+    }
+  };
+
+  window.dispatchOfflineReadingSms = function(c, offlineItem) {
+    if (!c || !offlineItem) return;
+    window.dispatchAutoSmsBatch([{ type: "offline-reading", customerId: c.id, offlineItem }], "offline");
+  };
+
+  window.sendSingleReadingSmsNow = function(custId, month) {
+    window.dispatchAutoSmsBatch([{ type: "reading", customerId: custId, month }], "manual-reading");
+  };
+
+  window.sendPaymentReceiptSmsNow = function(payId) {
+    const pay = (window.ERP_STATE?.payments || []).find(p => String(p.id) === String(payId));
+    if (!pay) return showToast?.("रसिद फेला परेन।", "error");
+    window.dispatchAutoSmsBatch([{ type: "payment", customerId: pay.customerId, paymentId: pay.id }], "manual-payment");
+  };
+
+  window.sendSingleOfflineReadingSmsNow = function(custId) {
+    const st = window.ERP_STATE || {};
+    const c = (st.customers || []).find(x => x.id === custId);
+    if (!c) return;
+    let outbox = [];
+    try { outbox = JSON.parse(localStorage.getItem("PJ_OFFLINE_READINGS_OUTBOX_V1") || "[]"); } catch {}
+    const monthEl = document.querySelector("#module-container select");
+    const targetMonth = (typeof offlineMonth !== "undefined" ? offlineMonth : null) || monthEl?.value || st.activeBSDate;
+    const pItem = outbox.find(x => x.customerId === custId) || null;
+    if (pItem) {
+      window.dispatchAutoSmsBatch([{ type: "offline-reading", customerId: custId, offlineItem: pItem }], "manual-offline");
+      return;
+    }
+    const r = (st.readings || []).find(x => x.customerId === custId && x.month === targetMonth)
+      || (st.readings || []).slice().reverse().find(x => x.customerId === custId);
+    if (!r) return showToast?.("पहिले यस ग्राहकको मिटर रिडिङ अङ्क सेभ गर्नुहोस्।", "warning");
+    window.dispatchAutoSmsBatch([{ type: "reading", customerId: custId, month: r.month }], "manual-offline-erp");
+  };
+
+  window.flushSmsOutbox = async function(silentIfDeviceSim = false) {
+    const cfg = window.getSmsConfig();
+    const outbox = window.getSmsOutbox();
+    if (!outbox.length) {
+      if (!silentIfDeviceSim) showToast?.("क्युमा पठाउन बाँकी SMS छैन।", "info");
+      return;
+    }
+    if (cfg.provider === "device-sim") {
+      window.openSmsQueueModal(`SIM बाट पठाउन बाँकी ${outbox.length} वटा SMS क्युमा छन्। तलको बटन थिचेर पठाउनुहोस्।`);
+      return;
+    }
+    if (!navigator.onLine) {
+      showToast?.("इन्टरनेट छैन। अनलाइन भएपछि पुनः प्रयास गर्नुहोस्।", "warning");
+      return;
+    }
+    let okCount = 0;
+    const remain = [];
+    for (const item of outbox) {
+      try {
+        await sendSmsViaServerOrDirect({ local10: item.phone, e164: item.e164 }, item.message, cfg, null, item);
+        okCount++;
+        window.appendSmsLog({ customerId: item.customerId, name: item.customerName, phone: item.phone, provider: cfg.provider, status: "पठाइयो ✅", type: item.type });
+      } catch (err) {
+        remain.push({ ...item, error: err?.message || "त्रुटि" });
+      }
+    }
+    window.saveSmsOutbox(remain);
+    if (document.getElementById("sms-queue-modal-root")) window.openSmsQueueModal();
+    renderCurrentModule?.();
+    if (okCount > 0) showToast?.(`✅ क्युमा रहेका ${okCount} वटा SMS पठाइयो!${remain.length ? ` (${remain.length} बाँकी)` : ""}`, remain.length ? "warning" : "success");
+    else if (remain.length) showToast?.(`SMS पठाउन सकिएन: ${remain[0].error || "सेटिङ जाँच गर्नुहोस्"}`, "error");
+  };
+
+  function getOrCreateSmsModalWrap() {
+    let el = document.getElementById("sms-dynamic-modal-wrap");
+    if (!el) {
+      el = document.createElement("div");
+      el.id = "sms-dynamic-modal-wrap";
+      document.body.appendChild(el);
+    }
+    return el;
+  }
+
+  window.closeSmsModal = function() {
+    window.stopGatewayPhoneWatcher?.();
+    const el = document.getElementById("sms-dynamic-modal-wrap");
+    if (el) el.innerHTML = "";
+  };
+
+  window.sendQueuedSmsViaDeviceSim = function(qid) {
+    const outbox = window.getSmsOutbox();
+    const item = outbox.find(x => x.id === qid);
+    if (!item) return;
+    window.launchDeviceSimSmsUri({ e164: item.e164, local10: item.phone }, item.message);
+    window.appendSmsLog({ customerId: item.customerId, name: item.customerName, phone: item.phone, provider: "device-sim", status: "SIM एप खोलियो", type: item.type });
+    window.saveSmsOutbox(outbox.filter(x => x.id !== qid));
+    window.openSmsQueueModal();
+    renderCurrentModule?.();
+  };
+
+  window.removeQueuedSmsItem = function(qid) {
+    window.saveSmsOutbox(window.getSmsOutbox().filter(x => x.id !== qid));
+    window.openSmsQueueModal();
+    renderCurrentModule?.();
+  };
+
+  window.clearAllSmsOutbox = function() {
+    window.saveSmsOutbox([]);
+    window.openSmsQueueModal();
+    renderCurrentModule?.();
+  };
+
+  // ---------------- SELF-HOSTED GATEWAY LIVE PHONE MODE & SCRIPTS ----------------
+  function getTermuxScriptText(baseUrl, key) {
+    const url = (baseUrl || "https://YOUR-SERVER-URL").replace(/\/+$/, "");
+    return `pkg update -y && pkg install -y termux-api curl jq
+cat << 'EOF' > ~/pj_sms_gw.sh
+#!/data/data/com.termux/files/usr/bin/bash
+SERVER="${url}"
+KEY="${key}"
+echo "Pragati Jal SIM Gateway running against $SERVER ..."
+while true; do
+  RESP=$(curl -sS -H "x-gateway-key: $KEY" "$SERVER/api/sms-gateway/pull?limit=5&device=Termux-Android")
+  COUNT=$(echo "$RESP" | jq -r '.jobs | length // 0' 2>/dev/null || echo 0)
+  for i in $(seq 0 $((COUNT - 1))); do
+    ID=$(echo "$RESP" | jq -r ".jobs[$i].id")
+    TO=$(echo "$RESP" | jq -r ".jobs[$i].e164")
+    MSG=$(echo "$RESP" | jq -r ".jobs[$i].message")
+    if termux-sms-send -n "$TO" "$MSG"; then
+      curl -sS -X POST "$SERVER/api/sms-gateway/ack" -H "Content-Type: application/json" -H "x-gateway-key: $KEY" -d "$(jq -n --arg id "$ID" '{id:$id,ok:true}')" >/dev/null
+      echo "[OK] Sent SMS to $TO"
+    else
+      curl -sS -X POST "$SERVER/api/sms-gateway/ack" -H "Content-Type: application/json" -H "x-gateway-key: $KEY" -d "$(jq -n --arg id "$ID" '{id:$id,ok:false,error:"termux-sms-send failed"}')" >/dev/null
+      echo "[ERR] Failed SMS to $TO"
+    fi
+  done
+  sleep 4
+done
+EOF
+chmod +x ~/pj_sms_gw.sh && ~/pj_sms_gw.sh`;
+  }
+
+  function getKotlinSnippetText(baseUrl, key) {
+    const url = (baseUrl || "https://YOUR-SERVER-URL").replace(/\/+$/, "");
+    return `// SmsGatewayService.kt मा Default Config राख्नुहोस्:
+// (पूर्ण प्रोजेक्ट सफ्टवेयर फोल्डर: /android-sms-gateway/ मा छ)
+val serverUrl = "${url}"
+val pairingKey = "${key}"
+// Foreground Service ले प्रत्येक ४ सेकेन्डमा /api/sms-gateway/pull बाट
+// नयाॅ रिडिङ/रकम SMS तानेर Android SmsManager.sendMultipartTextMessage() बाट पठाउँछ।`;
+  }
+
+  window.copyTextFromElementId = async function(id, label = "टेक्स्ट") {
+    const el = document.getElementById(id);
+    const val = el ? (el.value ?? el.textContent ?? "") : "";
+    if (!val) return;
+    try {
+      await navigator.clipboard.writeText(val);
+      showToast?.(`${label} क्लिपबोर्डमा कपी भयो!`, "success");
+    } catch {
+      el.select?.();
+      showToast?.("कृपया म्यानुअल रूपमा Select गरी Copy गर्नुहोस्।", "info");
+    }
+  };
+
+  window.downloadSelfHostedTermuxScript = function() {
+    const cfg = window.getSmsConfig();
+    const base = getSelfHostedBaseUrl(cfg);
+    const key = window.getOrCreateSelfHostedGatewayKey();
+    const text = getTermuxScriptText(base, key);
+    const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "pragati_jal_termux_sms_gateway.sh";
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  };
+
+  async function pollGatewayJobsOnce() {
+    const cfg = window.getSmsConfig();
+    const key = window.getSmsSecrets().gatewayKey || "";
+    const base = getSelfHostedBaseUrl(cfg);
+
+    // 1. Check Node Relay (/api/sms-gateway/pull)
+    if (key.length >= 12) {
+      try {
+        const res = await fetch((base || "") + "/api/sms-gateway/pull?limit=5&device=" + encodeURIComponent("Browser-SIM-Phone"), {
+          headers: { "x-gateway-key": key }
+        });
+        if (res.ok) {
+          const data = await res.json().catch(() => ({}));
+          if (Array.isArray(data.jobs) && data.jobs.length > 0) {
+            data.jobs.forEach(j => {
+              if (!phoneWatcherJobs.some(x => x.id === j.id)) {
+                phoneWatcherJobs.unshift({ ...j, source: "server" });
+              }
+            });
+          }
+        }
+      } catch {}
+    }
+
+    // 2. Also include Firebase ERP_STATE.smsGatewayQueue queued items
+    const fsQueue = Array.isArray(window.ERP_STATE?.smsGatewayQueue) ? window.ERP_STATE.smsGatewayQueue : [];
+    fsQueue.filter(j => j.status === "queued").forEach(j => {
+      if (!phoneWatcherJobs.some(x => x.id === j.id)) {
+        phoneWatcherJobs.unshift({ ...j, source: "cloud" });
+      }
+    });
+
+    if (document.getElementById("self-gw-phone-jobs")) {
+      renderPhoneWatcherJobsList();
+    }
+  }
+
+  function renderPhoneWatcherJobsList() {
+    const box = document.getElementById("self-gw-phone-jobs");
+    if (!box) return;
+    if (!phoneWatcherJobs.length) {
+      box.innerHTML = `<div class="bg-slate-50 border border-slate-200 rounded-xl p-4 text-center text-slate-500">कम्प्युटर वा अर्को डिभाइसबाट रिडिङ/रकम सेभ हुनासाथ यहाँ स्वतः SMS देखा पर्छ...</div>`;
+      return;
+    }
+    box.innerHTML = phoneWatcherJobs.map(j => `
+      <div class="bg-sky-50/70 border border-sky-200 rounded-xl p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+        <div class="min-w-0">
+          <div class="font-bold text-slate-900">${getEsc(j.customerName || j.customerId || "ग्राहक")} · <span class="text-sky-800">${getEsc(j.e164 || j.to)}</span></div>
+          <pre class="mt-1 text-[11px] text-slate-700 whitespace-pre-wrap font-sans bg-white border border-slate-200 rounded-lg p-2">${getEsc(j.message)}</pre>
+        </div>
+        <div class="flex sm:flex-col gap-1.5 shrink-0">
+          <button type="button" onclick="window.sendRelayJobViaPhoneSim('${getEsc(j.id)}')" class="px-3 py-2 bg-sky-600 hover:bg-sky-700 text-white rounded-xl font-bold cursor-pointer whitespace-nowrap">📱 SIM बाट पठाउनुहोस्</button>
+          <button type="button" onclick="window.ackRelayJobFromBrowser('${getEsc(j.id)}', false, 'Skipped')" class="px-3 py-1 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-xl font-semibold cursor-pointer">हटाउनुहोस्</button>
+        </div>
+      </div>
+    `).join("");
+  }
+
+  window.sendRelayJobViaPhoneSim = async function(jobId) {
+    const job = phoneWatcherJobs.find(x => x.id === jobId);
+    if (!job) return;
+    window.launchDeviceSimSmsUri({ e164: job.e164 || ("+977" + job.to), local10: job.to }, job.message);
+    await window.ackRelayJobFromBrowser(jobId, true, "");
+  };
+
+  window.ackRelayJobFromBrowser = async function(jobId, ok = true, errMsg = "") {
+    const job = phoneWatcherJobs.find(x => x.id === jobId);
+    phoneWatcherJobs = phoneWatcherJobs.filter(x => x.id !== jobId);
+    if (job?.source === "server") {
+      const key = window.getSmsSecrets().gatewayKey || "";
+      const base = getSelfHostedBaseUrl(window.getSmsConfig());
+      try {
+        await fetch((base || "") + "/api/sms-gateway/ack", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "x-gateway-key": key },
+          body: JSON.stringify({ id: jobId, ok, error: errMsg })
+        });
+      } catch {}
+    } else if (Array.isArray(window.ERP_STATE?.smsGatewayQueue)) {
+      const target = window.ERP_STATE.smsGatewayQueue.find(x => x.id === jobId);
+      if (target) {
+        target.status = ok ? "sent" : "failed";
+        window.cloudSync?.save?.();
+      }
+    }
+    if (ok && job) {
+      window.appendSmsLog({ customerId: job.customerId || "", name: job.customerName || job.to, phone: job.to, provider: "self-hosted-gateway", status: "फोन SIM बाट पठाइयो ✅", type: job.type || "relay" });
+    }
+    renderPhoneWatcherJobsList();
+  };
+
+  window.startGatewayPhoneWatcher = function() {
+    if (phoneWatcherTimer) clearInterval(phoneWatcherTimer);
+    pollGatewayJobsOnce();
+    phoneWatcherTimer = setInterval(pollGatewayJobsOnce, 4000);
+    window.openSelfHostedGatewayModal("phone");
+  };
+
+  window.stopGatewayPhoneWatcher = function() {
+    if (phoneWatcherTimer) {
+      clearInterval(phoneWatcherTimer);
+      phoneWatcherTimer = null;
+    }
+  };
+
+  window.checkSelfHostedGatewayStatus = async function(targetBadgeId = "self-gw-status-badge") {
+    const badge = document.getElementById(targetBadgeId);
+    const key = window.getSmsSecrets().gatewayKey || "";
+    const base = getSelfHostedBaseUrl(window.getSmsConfig());
+    if (!key || key.length < 12) {
+      if (badge) badge.textContent = "Key सेट गरिएको छैन";
+      return;
+    }
+    try {
+      const res = await fetch((base || "") + "/api/sms-gateway/status", {
+        headers: { "x-gateway-key": key }
+      });
+      if (!res.ok) throw new Error();
+      const data = await res.json();
+      if (badge) {
+        badge.innerHTML = data.connected
+          ? `🟢 गेटवे फोन अनलाइन (${getEsc(data.deviceName)}) · क्यु: ${data.counts?.queued || 0} · पठाइएको: ${data.counts?.sent || 0}`
+          : `🟡 फोन अफलाइन/स्ट्यान्डबाइ · क्यु: ${data.counts?.queued || 0} · पठाइएको: ${data.counts?.sent || 0}`;
+      }
+    } catch {
+      if (badge) badge.textContent = "☁️ Firebase Live Relay मोड (Static)";
+    }
+  };
+
+  window.openSelfHostedGatewayModal = function(tab = activeGatewayTab || "phone") {
+    activeGatewayTab = tab;
+    const wrap = getOrCreateSmsModalWrap();
+    const cfg = window.getSmsConfig();
+    const key = window.getOrCreateSelfHostedGatewayKey();
+    const baseUrl = getSelfHostedBaseUrl(cfg);
+    const watcherRunning = !!phoneWatcherTimer;
+
+    wrap.innerHTML = `
+      <div class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+        <div class="bg-white rounded-2xl max-w-3xl w-full max-h-[92vh] flex flex-col shadow-2xl border border-slate-200 overflow-hidden">
+          <div class="bg-indigo-700 text-white px-5 py-3.5 flex items-center justify-between shrink-0">
+            <div>
+              <h3 class="font-bold text-sm">🏠 आफ्नै SMS Gateway निर्माण तथा जडान (कुनै बाहिरी एप नचाहिने)</h3>
+              <p class="text-[11px] text-indigo-100">तपाईंको आफ्नै Server/Firebase + आफ्नै Android फोन SIM बीच सुरक्षित जडान</p>
+            </div>
+            <button type="button" onclick="window.closeSmsModal()" class="text-indigo-100 hover:text-white font-bold cursor-pointer px-1">✕</button>
+          </div>
+
+          <div class="p-4 overflow-y-auto space-y-4 text-xs">
+            <div class="bg-slate-50 border border-slate-200 rounded-xl p-3 grid grid-cols-1 sm:grid-cols-12 gap-2 items-end">
+              <div class="sm:col-span-5">
+                <label class="font-bold text-slate-700 block mb-1">Server / Gateway URL</label>
+                <div class="flex gap-1">
+                  <input type="text" id="self-gw-url-input" readonly value="${getEsc(baseUrl)}" class="w-full border border-slate-300 bg-white rounded-lg px-2.5 py-1.5 font-mono text-[11px]">
+                  <button type="button" onclick="window.copyTextFromElementId('self-gw-url-input','Server URL')" class="px-2.5 py-1.5 bg-slate-800 text-white rounded-lg font-semibold cursor-pointer">Copy</button>
+                </div>
+              </div>
+              <div class="sm:col-span-7">
+                <label class="font-bold text-slate-700 block mb-1">तपाईंको Pairing Key (PC र फोन दुवैमा एउटै राख्नुहोस्)</label>
+                <div class="flex gap-1">
+                  <input type="text" id="self-gw-key-input" value="${getEsc(key)}" onchange="window.saveSmsSecrets({gatewayKey: this.value.trim()})" class="w-full border border-indigo-300 bg-white rounded-lg px-2.5 py-1.5 font-mono font-bold text-indigo-900">
+                  <button type="button" onclick="window.copyTextFromElementId('self-gw-key-input','Pairing Key')" class="px-2.5 py-1.5 bg-indigo-700 text-white rounded-lg font-semibold cursor-pointer">Copy</button>
+                  <button type="button" onclick="window.regenerateSelfHostedGatewayKey('qset')" class="px-2.5 py-1.5 bg-amber-600 text-white rounded-lg font-semibold cursor-pointer">नयाँ</button>
+                </div>
+              </div>
+              <div class="sm:col-span-12 flex flex-wrap items-center justify-between gap-2 pt-1">
+                <span id="self-gw-status-badge" class="font-semibold text-indigo-900 bg-indigo-50 border border-indigo-200 px-2.5 py-1 rounded-lg">अवस्था जाँच हुँदैछ...</span>
+                <button type="button" onclick="window.checkSelfHostedGatewayStatus('self-gw-status-badge')" class="px-2.5 py-1 bg-slate-200 hover:bg-slate-300 rounded-lg font-semibold cursor-pointer">🔄 रिफ्रेस</button>
+              </div>
+            </div>
+
+            <div class="flex flex-wrap gap-1.5 border-b border-slate-200 pb-2">
+              <button type="button" onclick="window.openSelfHostedGatewayModal('phone')" class="px-3 py-1.5 rounded-xl font-bold cursor-pointer ${tab === 'phone' ? 'bg-indigo-700 text-white' : 'bg-slate-100 text-slate-700'}">१. मोबाइल ब्राउजर Live मोड</button>
+              <button type="button" onclick="window.openSelfHostedGatewayModal('termux')" class="px-3 py-1.5 rounded-xl font-bold cursor-pointer ${tab === 'termux' ? 'bg-indigo-700 text-white' : 'bg-slate-100 text-slate-700'}">२. Termux १००% अटो SIM (APK नचाहिने)</button>
+              <button type="button" onclick="window.openSelfHostedGatewayModal('android')" class="px-3 py-1.5 rounded-xl font-bold cursor-pointer ${tab === 'android' ? 'bg-indigo-700 text-white' : 'bg-slate-100 text-slate-700'}">३. आफ्नै Android APK कोड</button>
+            </div>
+
+            ${tab === "phone" ? `
+              <div class="space-y-3">
+                <div class="bg-emerald-50 border border-emerald-200 rounded-xl p-3 text-emerald-950">
+                  <strong>कुनै पनि छुट्टै एप नराखी अहिले नै चलाउनुहोस्:</strong> अफिसको Android फोनको Chrome मा यही पेज खोलेर तलको <strong>Start</strong> थिच्नुहोस्। अब अफिसको कम्प्युटरबाट Save थिच्ने बित्तिकै यहाँ ग्राहकको SMS तुरुन्तै आइपुग्छ!
+                </div>
+                <div class="flex flex-wrap items-center gap-2">
+                  ${watcherRunning
+                    ? `<button type="button" onclick="window.stopGatewayPhoneWatcher(); window.openSelfHostedGatewayModal('phone');" class="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl font-bold cursor-pointer">⏹ Live Gateway रोक्नुहोस् (चालु छ 🟢)</button>`
+                    : `<button type="button" onclick="window.startGatewayPhoneWatcher()" class="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold cursor-pointer">▶ यो मोबाइललाई Live Gateway बनाउनुहोस्</button>`
+                  }
+                  <button type="button" onclick="window.saveSmsConfig({provider:'self-hosted-gateway', enabled:true}); window.openSelfHostedGatewayModal('phone');" class="px-3 py-2 bg-indigo-50 text-indigo-800 border border-indigo-200 rounded-xl font-semibold cursor-pointer">✓ यो डिभाइसलाई 'आफ्नै गेटवे' सेट गर्नुहोस्</button>
+                </div>
+                <div id="self-gw-phone-jobs" class="space-y-2"></div>
+              </div>
+            ` : tab === "termux" ? `
+              <div class="space-y-3">
+                <div class="bg-amber-50 border border-amber-200 rounded-xl p-3 text-amber-950 space-y-1">
+                  <div class="font-bold">APK नबनाई १००% अटोमेटिक SIM-to-SIM गेटवे चलाउने तरीका (१ मिनेटमा):</div>
+                  <div>१) अफिसको Android मोबाइलमा F-Droid बाट <strong>Termux</strong> र <strong>Termux:API</strong> इन्स्टल गर्नुहोस् (र Termux:API लाई SMS Permission दिनुहोस्)।</div>
+                  <div>२) Termux खोलेर तलको कोड <strong>Copy</strong> गरी पेस्ट र Enter थिच्नुहोस् — अब सधैंभरि Save थिच्नासाथै अटो SIM बाट SMS जान्छ!</div>
+                </div>
+                <textarea id="self-gw-termux-box" rows="10" readonly class="w-full font-mono text-[11px] bg-slate-950 text-emerald-300 rounded-xl p-3 border border-slate-700">${getEsc(getTermuxScriptText(baseUrl, key))}</textarea>
+                <div class="flex flex-wrap gap-2">
+                  <button type="button" onclick="window.copyTextFromElementId('self-gw-termux-box','Termux स्क्रिप्ट')" class="px-4 py-2 bg-indigo-700 hover:bg-indigo-800 text-white rounded-xl font-bold cursor-pointer">📋 Termux कमान्ड Copy गर्नुहोस्</button>
+                  <button type="button" onclick="window.downloadSelfHostedTermuxScript()" class="px-4 py-2 bg-slate-800 hover:bg-slate-900 text-white rounded-xl font-bold cursor-pointer">⬇️ .sh फाइल डाउनलोड</button>
+                </div>
+              </div>
+            ` : `
+              <div class="space-y-3">
+                <div class="bg-indigo-50 border border-indigo-200 rounded-xl p-3 text-indigo-950 space-y-1">
+                  <div class="font-bold">आफ्नै Android Studio APK (Pragati Jal SIM Gateway App) तयार छ:</div>
+                  <div>यो प्रोजेक्ट भित्रै <code class="bg-white px-1 rounded border">/android-sms-gateway/</code> फोल्डरमा पूरा Kotlin Foreground Service प्रोजेक्ट राखिदिएको छ। यसले नेपाली Unicode लामो SMS पनि <code class="bg-white px-1 rounded border">sendMultipartTextMessage()</code> बाट नकाटीकन पठाउँछ।</div>
+                </div>
+                <textarea id="self-gw-kotlin-box" rows="7" readonly class="w-full font-mono text-[11px] bg-slate-950 text-sky-300 rounded-xl p-3 border border-slate-700">${getEsc(getKotlinSnippetText(baseUrl, key))}</textarea>
+                <div class="text-[11px] text-slate-600">नोट: Android Studio मा <code>/android-sms-gateway/</code> खोलेर Build APK थिची मोबाइलमा इन्स्टल गर्नुहोस्, र माथिको <strong>Server URL</strong> र <strong>Pairing Key</strong> राख्नुहोस्।</div>
+              </div>
+            `}
+          </div>
+        </div>
+      </div>
+    `;
+
+    window.checkSelfHostedGatewayStatus("self-gw-status-badge");
+    if (tab === "phone") renderPhoneWatcherJobsList();
+  };
+
+  window.openSmsQueueModal = function(bannerMsg = "") {
+    const wrap = getOrCreateSmsModalWrap();
+    const outbox = window.getSmsOutbox();
+    const logs = window.getSmsLogs().slice(0, 12);
+    const cfg = window.getSmsConfig();
+
+    wrap.innerHTML = `
+      <div id="sms-queue-modal-root" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+        <div class="bg-white rounded-2xl max-w-2xl w-full max-h-[90vh] flex flex-col shadow-2xl border border-slate-200 overflow-hidden">
+          <div class="bg-sky-700 text-white px-5 py-3.5 flex items-center justify-between shrink-0">
+            <div>
+              <h3 class="font-bold text-sm">📱 SMS क्यु र इतिहास (${outbox.length} बाँकी)</h3>
+              <p class="text-[11px] text-sky-100">प्रणाली: ${getEsc(window.getSmsStatusShortLabel())}</p>
+            </div>
+            <div class="flex items-center gap-2">
+              <button type="button" onclick="window.openSelfHostedGatewayModal('phone')" class="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 rounded-lg text-xs font-semibold cursor-pointer">🏠 आफ्नै गेटवे</button>
+              <button type="button" onclick="window.openSmsQuickSettingsModal()" class="px-2.5 py-1 bg-sky-800 hover:bg-sky-900 rounded-lg text-xs font-semibold cursor-pointer">⚙️ सेटिङ</button>
+              <button type="button" onclick="window.closeSmsModal()" class="text-sky-100 hover:text-white font-bold cursor-pointer px-1">✕</button>
+            </div>
+          </div>
+
+          <div class="p-4 overflow-y-auto space-y-4 text-xs">
+            ${bannerMsg ? `<div class="bg-sky-50 border border-sky-200 text-sky-900 rounded-xl px-3 py-2 font-semibold">${getEsc(bannerMsg)}</div>` : ""}
+
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <strong class="text-slate-800">पठाउन बाँकी SMS क्यु (${outbox.length})</strong>
+              <div class="flex gap-2">
+                ${cfg.provider !== "device-sim" && outbox.length > 0 ? `<button type="button" onclick="window.flushSmsOutbox(false)" class="px-3 py-1.5 bg-teal-700 hover:bg-teal-800 text-white rounded-lg font-semibold cursor-pointer">सबै अटो पठाउनुहोस्</button>` : ""}
+                ${outbox.length > 0 ? `<button type="button" onclick="window.clearAllSmsOutbox()" class="px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-lg font-semibold cursor-pointer">क्यु खाली गर्नुहोस्</button>` : ""}
+              </div>
+            </div>
+
+            ${outbox.length === 0
+              ? `<div class="bg-slate-50 border border-slate-200 rounded-xl p-4 text-center text-slate-500">पठाउन बाँकी SMS छैन।</div>`
+              : `<div class="space-y-2">
+                  ${outbox.map(item => `
+                    <div class="bg-slate-50 border border-slate-200 rounded-xl p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                      <div class="min-w-0">
+                        <div class="font-bold text-slate-900">${getEsc(item.customerName)} (${getEsc(item.customerId)}) · <span class="text-sky-800">${getEsc(item.phone)}</span></div>
+                        <pre class="mt-1 text-[11px] text-slate-600 whitespace-pre-wrap font-sans bg-white border border-slate-200 rounded-lg p-2">${getEsc(item.message)}</pre>
+                        ${item.error ? `<div class="text-[11px] text-rose-700 font-semibold mt-1">त्रुटि: ${getEsc(item.error)}</div>` : ""}
+                      </div>
+                      <div class="flex sm:flex-col gap-1.5 shrink-0">
+                        <button type="button" onclick="window.sendQueuedSmsViaDeviceSim('${item.id}')" class="px-3 py-2 bg-sky-600 hover:bg-sky-700 text-white rounded-xl font-semibold cursor-pointer whitespace-nowrap">📱 SIM बाट पठाउनुहोस्</button>
+                        <button type="button" onclick="window.removeQueuedSmsItem('${item.id}')" class="px-3 py-1.5 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-xl font-semibold cursor-pointer">हटाउनुहोस्</button>
+                      </div>
+                    </div>
+                  `).join("")}
+                </div>`
+            }
+
+            ${logs.length > 0 ? `
+              <div class="border-t border-slate-200 pt-3">
+                <div class="font-bold text-slate-800 mb-2">हालै पठाइएका SMS अभिलेख (${logs.length})</div>
+                <div class="divide-y divide-slate-100 border border-slate-200 rounded-xl overflow-hidden">
+                  ${logs.map(l => `
+                    <div class="px-3 py-2 flex items-center justify-between gap-2 bg-white text-[11px]">
+                      <div><strong>${getEsc(l.name || l.customerId)}</strong> (${getEsc(l.phone)}) · <span class="text-slate-500">${getEsc(l.time)}</span></div>
+                      <span class="font-semibold ${String(l.status).includes("❌") ? "text-rose-700" : "text-emerald-700"}">${getEsc(l.status)}</span>
+                    </div>
+                  `).join("")}
+                </div>
+              </div>
+            ` : ""}
+          </div>
+        </div>
+      </div>
+    `;
+  };
+
+  window.renderSmsSettingsFormBody = function(prefix = "set") {
+    const cfg = window.getSmsConfig();
+    const secrets = window.getSmsSecrets();
+    const selfKey = window.getOrCreateSelfHostedGatewayKey();
+    const pendingCount = window.getSmsOutbox().length;
+    const isSelfHosted = cfg.provider === "self-hosted-gateway";
+    const isGateway = cfg.provider === "android-sim-gateway" || cfg.provider === "custom-webhook";
+    const isCloudApi = cfg.provider === "sparrow" || cfg.provider === "aakash";
+
+    return `
+      <div class="space-y-3 text-xs">
+        <div class="bg-sky-50 border border-sky-200 rounded-xl p-3 text-sky-950 space-y-1">
+          <div class="font-bold">SIM बाट SIM मा SMS पठाउने माध्यम छान्नुहोस्:</div>
+          <div>१) <strong>आफ्नै SMS Gateway (हामीले नै बनाएको):</strong> बाहिरी Traccar वा थर्ड-पार्टी एप नचाहिने! Termux १-कमान्ड, मोबाइल ब्राउजर Live मोड वा हाम्रै Custom Android एपबाट सीधै SIM SMS जान्छ।</div>
+          <div>२) <strong>फोनको आफ्नै SIM (Default):</strong> Save थिच्ने बित्तिकै यही मोबाइलको Messages एपबाट १ ट्यापमा (इन्टरनेट बिना पनि) SMS पठाउन।</div>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <label class="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 cursor-pointer font-bold text-slate-800">
+            <input type="checkbox" id="${prefix}-sms-enabled" ${cfg.enabled ? "checked" : ""} class="rounded accent-sky-700">
+            <span>अटो SMS प्रणाली चालु राख्ने</span>
+          </label>
+          <div>
+            <label class="font-semibold text-slate-600 block mb-1">SMS पठाउने माध्यम (SIM / Gateway)</label>
+            <select id="${prefix}-sms-provider" onchange="window.toggleSmsProviderFields('${prefix}')" class="w-full border border-slate-300 bg-white rounded-xl px-3 py-2 font-bold">
+              <option value="device-sim" ${cfg.provider === "device-sim" ? "selected" : ""}>📱 यही मोबाइलको आफ्नै SIM (निःशुल्क र अफलाइन चल्ने)</option>
+              <option value="self-hosted-gateway" ${cfg.provider === "self-hosted-gateway" ? "selected" : ""}>🏠 आफ्नै SMS Gateway (हामीले नै बनाएको — Zero 3rd Party)</option>
+              <option value="android-sim-gateway" ${cfg.provider === "android-sim-gateway" ? "selected" : ""}>📡 बाहिरी Android SIM Gateway (Traccar / SMS-Gate)</option>
+              <option value="sparrow" ${cfg.provider === "sparrow" ? "selected" : ""}>☁️ Sparrow SMS Nepal (API)</option>
+              <option value="aakash" ${cfg.provider === "aakash" ? "selected" : ""}>☁️ Aakash SMS Nepal (API)</option>
+              <option value="custom-webhook" ${cfg.provider === "custom-webhook" ? "selected" : ""}>🔗 Custom SMS HTTP Webhook</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
+          <label class="flex items-center gap-2 bg-teal-50/60 border border-teal-200 rounded-xl px-3 py-2 cursor-pointer font-semibold text-teal-950">
+            <input type="checkbox" id="${prefix}-sms-reading-auto" ${cfg.readingAutoSms ? "checked" : ""} class="rounded accent-teal-700">
+            <span>रिडिङ सेभ गर्दा अटो SMS</span>
+          </label>
+          <label class="flex items-center gap-2 bg-teal-50/60 border border-teal-200 rounded-xl px-3 py-2 cursor-pointer font-semibold text-teal-950">
+            <input type="checkbox" id="${prefix}-sms-amount-auto" ${cfg.amountAutoSms ? "checked" : ""} class="rounded accent-teal-700">
+            <span>रकम सेभ गर्दा अटो SMS</span>
+          </label>
+          <label class="flex items-center gap-2 bg-teal-50/60 border border-teal-200 rounded-xl px-3 py-2 cursor-pointer font-semibold text-teal-950">
+            <input type="checkbox" id="${prefix}-sms-offline-auto" ${cfg.offlineAutoSms ? "checked" : ""} class="rounded accent-teal-700">
+            <span>अफलाइन रिडिङ सेभमा SMS</span>
+          </label>
+        </div>
+
+        <div id="${prefix}-sms-self-fields" class="${isSelfHosted ? "" : "hidden"} bg-indigo-50/70 border border-indigo-200 rounded-xl p-3 space-y-2.5">
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <span class="font-bold text-indigo-950">🏠 आफ्नै SMS Gateway जडान विवरण</span>
+            <button type="button" onclick="window.openSelfHostedGatewayModal('phone')" class="px-3 py-1.5 bg-indigo-700 hover:bg-indigo-800 text-white rounded-lg font-bold cursor-pointer">
+              🛠️ फोन जोड्नुहोस् (Live / Termux / APK)
+            </button>
+          </div>
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <div>
+              <label class="font-semibold text-slate-600 block mb-1">Pairing Key (फोन र PC मा एउटै)</label>
+              <div class="flex gap-1">
+                <input type="text" id="${prefix}-sms-self-key" value="${getEsc(selfKey)}" class="w-full border border-indigo-300 bg-white rounded-lg px-2.5 py-1.5 font-mono font-bold">
+                <button type="button" onclick="window.regenerateSelfHostedGatewayKey('${prefix}')" class="px-2.5 py-1.5 bg-amber-600 text-white rounded-lg font-semibold cursor-pointer">नयाँ</button>
+              </div>
+            </div>
+            <div>
+              <label class="font-semibold text-slate-600 block mb-1">Server URL (खाली राखे हालकै URL चल्छ)</label>
+              <input type="url" id="${prefix}-sms-self-url" value="${getEsc(cfg.gatewayUrl)}" placeholder="${getEsc(getSelfHostedBaseUrl(cfg))}" class="w-full border border-slate-300 bg-white rounded-lg px-2.5 py-1.5 font-mono">
+            </div>
+          </div>
+        </div>
+
+        <div id="${prefix}-sms-gateway-fields" class="${isGateway ? "" : "hidden"} grid grid-cols-1 sm:grid-cols-3 gap-2.5 bg-slate-50 border border-slate-200 rounded-xl p-3">
+          <div class="sm:col-span-2">
+            <label class="font-semibold text-slate-600 block mb-1">Android SIM Gateway URL *</label>
+            <input type="url" id="${prefix}-sms-gateway-url" value="${getEsc(cfg.gatewayUrl)}" placeholder="जस्तै: http://192.168.1.50:8082/ वा https://..." class="w-full border border-slate-300 bg-white rounded-xl px-3 py-2 font-mono">
+          </div>
+          <div>
+            <label class="font-semibold text-slate-600 block mb-1">Gateway एप प्रकार</label>
+            <select id="${prefix}-sms-gateway-format" class="w-full border border-slate-300 bg-white rounded-xl px-3 py-2 font-semibold">
+              <option value="traccar" ${cfg.gatewayFormat === "traccar" ? "selected" : ""}>Traccar SMS Gateway</option>
+              <option value="smsgate" ${cfg.gatewayFormat === "smsgate" ? "selected" : ""}>Android SMS-Gate (capcom6)</option>
+              <option value="custom" ${cfg.gatewayFormat === "custom" ? "selected" : ""}>Custom JSON ({to, message})</option>
+            </select>
+          </div>
+          <div>
+            <label class="font-semibold text-slate-600 block mb-1">Gateway Username (SMS-Gate भए)</label>
+            <input type="text" id="${prefix}-sms-gateway-user" value="${getEsc(cfg.gatewayUser)}" placeholder="ऐच्छिक" class="w-full border border-slate-300 bg-white rounded-xl px-3 py-2">
+          </div>
+          <div class="sm:col-span-2">
+            <label class="font-semibold text-slate-600 block mb-1">Gateway Password / Auth Token (फोनमा मात्र सुरक्षित रहन्छ)</label>
+            <input type="password" id="${prefix}-sms-token-gw" value="${getEsc(secrets.apiToken)}" placeholder="Token वा Password" class="w-full border border-slate-300 bg-white rounded-xl px-3 py-2">
+          </div>
+        </div>
+
+        <div id="${prefix}-sms-cloud-fields" class="${isCloudApi ? "" : "hidden"} grid grid-cols-1 sm:grid-cols-2 gap-2.5 bg-slate-50 border border-slate-200 rounded-xl p-3">
+          <div>
+            <label class="font-semibold text-slate-600 block mb-1">SMS API Token (ब्राउजरमा मात्र सुरक्षित रहन्छ)</label>
+            <input type="password" id="${prefix}-sms-token-api" value="${getEsc(secrets.apiToken)}" placeholder="Sparrow / Aakash API Token" class="w-full border border-slate-300 bg-white rounded-xl px-3 py-2">
+          </div>
+          <div>
+            <label class="font-semibold text-slate-600 block mb-1">Sender Identity (Sparrow From)</label>
+            <input type="text" id="${prefix}-sms-sender" value="${getEsc(cfg.senderIdentity || "TheAlert")}" placeholder="TheAlert" class="w-full border border-slate-300 bg-white rounded-xl px-3 py-2">
+          </div>
+        </div>
+
+        <div class="bg-amber-50/70 border border-amber-200 rounded-xl p-3 flex flex-wrap items-end gap-2">
+          <div class="flex-1 min-w-[180px]">
+            <label class="font-semibold text-amber-950 block mb-1">परीक्षण मोबाइल नं. (Test SMS)</label>
+            <input type="text" id="${prefix}-sms-test-phone" placeholder="98XXXXXXXX" class="w-full border border-amber-300 bg-white rounded-xl px-3 py-1.5 font-mono font-bold">
+          </div>
+          <button type="button" onclick="window.testSendSmsFromSettings('${prefix}')" class="px-3.5 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl font-semibold cursor-pointer">
+            📤 Test SMS पठाउनुहोस्
+          </button>
+          <button type="button" onclick="window.openSelfHostedGatewayModal('phone')" class="px-3.5 py-2 bg-indigo-700 hover:bg-indigo-800 text-white rounded-xl font-semibold cursor-pointer">
+            🏠 आफ्नै गेटवे सेटअप
+          </button>
+          <button type="button" onclick="window.openSmsQueueModal()" class="px-3.5 py-2 bg-slate-800 hover:bg-slate-900 text-white rounded-xl font-semibold cursor-pointer">
+            📋 SMS क्यु (${pendingCount})
+          </button>
+        </div>
+
+        <div class="flex justify-end gap-2 pt-1">
+          <button type="button" onclick="window.saveSmsSettingsFromForm('${prefix}')" class="px-5 py-2 bg-sky-700 hover:bg-sky-800 text-white rounded-xl font-semibold shadow-sm cursor-pointer">
+            SMS सेटिङ सेभ गर्नुहोस्
+          </button>
+        </div>
+      </div>
+    `;
+  };
+
+  window.toggleSmsProviderFields = function(prefix) {
+    const val = document.getElementById(`${prefix}-sms-provider`)?.value || "device-sim";
+    const selfBox = document.getElementById(`${prefix}-sms-self-fields`);
+    const gwBox = document.getElementById(`${prefix}-sms-gateway-fields`);
+    const apiBox = document.getElementById(`${prefix}-sms-cloud-fields`);
+    if (selfBox) selfBox.classList.toggle("hidden", val !== "self-hosted-gateway");
+    if (gwBox) gwBox.classList.toggle("hidden", val !== "android-sim-gateway" && val !== "custom-webhook");
+    if (apiBox) apiBox.classList.toggle("hidden", val !== "sparrow" && val !== "aakash");
+  };
+
+  window.saveSmsSettingsFromForm = function(prefix = "set", silent = false) {
+    const provider = document.getElementById(`${prefix}-sms-provider`)?.value || "device-sim";
+    const isGw = provider === "android-sim-gateway" || provider === "custom-webhook";
+    const isSelf = provider === "self-hosted-gateway";
+    const tokenVal = isGw
+      ? (document.getElementById(`${prefix}-sms-token-gw`)?.value.trim() || "")
+      : (document.getElementById(`${prefix}-sms-token-api`)?.value.trim() || "");
+    const selfKeyVal = document.getElementById(`${prefix}-sms-self-key`)?.value.trim() || window.getOrCreateSelfHostedGatewayKey();
+    const gwUrlVal = isSelf
+      ? (document.getElementById(`${prefix}-sms-self-url`)?.value.trim() || "")
+      : (document.getElementById(`${prefix}-sms-gateway-url`)?.value.trim() || "");
+
+    const cfg = window.saveSmsConfig({
+      enabled: !!document.getElementById(`${prefix}-sms-enabled`)?.checked,
+      provider,
+      readingAutoSms: !!document.getElementById(`${prefix}-sms-reading-auto`)?.checked,
+      amountAutoSms: !!document.getElementById(`${prefix}-sms-amount-auto`)?.checked,
+      offlineAutoSms: !!document.getElementById(`${prefix}-sms-offline-auto`)?.checked,
+      gatewayUrl: gwUrlVal,
+      gatewayFormat: document.getElementById(`${prefix}-sms-gateway-format`)?.value || "traccar",
+      gatewayUser: document.getElementById(`${prefix}-sms-gateway-user`)?.value.trim() || "",
+      senderIdentity: document.getElementById(`${prefix}-sms-sender`)?.value.trim() || "TheAlert"
+    });
+    window.saveSmsSecrets({ apiToken: tokenVal, gatewayKey: selfKeyVal });
+    if (!silent) {
+      showToast?.("SIM तथा अटो SMS सेटिङ सुरक्षित भयो!", "success");
+      renderCurrentModule?.();
+    }
+    return cfg;
+  };
+
+  window.testSendSmsFromSettings = async function(prefix = "set") {
+    const cfg = window.saveSmsSettingsFromForm(prefix, true);
+    const rawPhone = document.getElementById(`${prefix}-sms-test-phone`)?.value.trim() || "";
+    const phone = window.normalizeNepalSmsPhone(rawPhone);
+    if (!phone.valid) {
+      return showToast?.("परीक्षणका लागि १० अङ्कको मान्य नेपाली मोबाइल नं. (जस्तै 98...) राख्नुहोस्।", "error");
+    }
+    const committee = window.ERP_STATE?.settings?.committeeName || "प्रगति जल उपभोक्ता समिति";
+    const testMsg = `${committee}: SIM SMS प्रणाली सफलतापूर्वक परीक्षण भयो! (${window.ERP_STATE?.activeBSDate || ""})`;
+
+    if (cfg.provider === "device-sim") {
+      window.launchDeviceSimSmsUri(phone, testMsg);
+      window.appendSmsLog({ customerId: "TEST", name: "Test SMS", phone: phone.local10, provider: "device-sim", status: "SIM एप खोलियो", type: "test" });
+      showToast?.(`📱 ${phone.local10} मा टेस्ट SMS पठाउन फोनको SIM मेसेज खोलियो!`, "success");
+      return;
+    }
+
+    try {
+      const resp = await sendSmsViaServerOrDirect(phone, testMsg, cfg, null, { customerId: "TEST", customerName: "Test SMS", type: "test" });
+      window.appendSmsLog({ customerId: "TEST", name: "Test SMS", phone: phone.local10, provider: cfg.provider, status: "पठाइयो ✅", type: "test" });
+      if (cfg.provider === "self-hosted-gateway") {
+        showToast?.(
+          resp?.phoneOnline
+            ? `✅ ${phone.local10} को टेस्ट SMS आफ्नै SIM गेटवे फोनमा गयो!`
+            : `📡 ${phone.local10} को टेस्ट SMS आफ्नै गेटवे क्युमा राखियो (फोनमा 'Live/Termux/APK' खोल्नुहोस्)!`,
+          "success"
+        );
+      } else {
+        showToast?.(`✅ ${phone.local10} मा टेस्ट SMS सफलतापूर्वक पठाइयो!`, "success");
+      }
+    } catch (err) {
+      window.appendSmsLog({ customerId: "TEST", name: "Test SMS", phone: phone.local10, provider: cfg.provider, status: "असफल ❌", error: err?.message || "", type: "test" });
+      showToast?.(err?.message || "टेस्ट SMS पठाउन सकिएन।", "error");
+    }
+  };
+
+  window.renderSmsSettingsCardHtml = function() {
+    return `
+      <div class="bg-white p-5 rounded-2xl border border-sky-200 shadow-sm space-y-4">
+        <div class="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 pb-3">
+          <div>
+            <h3 class="text-base font-bold text-slate-900">📱 SIM तथा अटो SMS सेटिङ (रिडिङ र रकम सेभमा स्वतः मेसेज)</h3>
+            <p class="text-xs text-slate-500">रिडिङ सेभ, रकम असुली तथा अफलाइन रिडिङ सेभ हुनासाथ ग्राहकको मोबाइलमा SMS पठाउने प्रणाली</p>
+          </div>
+          <span class="px-3 py-1 rounded-xl text-xs font-bold bg-sky-50 text-sky-900 border border-sky-200">${getEsc(window.getSmsStatusShortLabel())}</span>
+        </div>
+        ${window.renderSmsSettingsFormBody("set")}
+      </div>
+    `;
+  };
+
+  window.openSmsQuickSettingsModal = function() {
+    const wrap = getOrCreateSmsModalWrap();
+    wrap.innerHTML = `
+      <div class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+        <div class="bg-white rounded-2xl max-w-2xl w-full max-h-[90vh] flex flex-col shadow-2xl border border-slate-200 overflow-hidden">
+          <div class="bg-sky-700 text-white px-5 py-3.5 flex items-center justify-between shrink-0">
+            <h3 class="font-bold text-sm">📱 SIM तथा अटो SMS सेटिङ</h3>
+            <button type="button" onclick="window.closeSmsModal()" class="text-sky-100 hover:text-white font-bold cursor-pointer px-1">✕</button>
+          </div>
+          <div class="p-5 overflow-y-auto">
+            ${window.renderSmsSettingsFormBody("qset")}
+          </div>
+        </div>
+      </div>
+    `;
   };
 })();
 </script>
