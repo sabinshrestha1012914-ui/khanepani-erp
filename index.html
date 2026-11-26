@@ -786,11 +786,13 @@
           localStorage.setItem(LOCAL_KEY, JSON.stringify(safeState(window.ERP_STATE)));
           const dateInput = document.getElementById("global-bs-date-input");
           if (dateInput && window.ERP_STATE.activeBSDate) dateInput.value = window.ERP_STATE.activeBSDate;
-          if (typeof renderCurrentModule === "function") { updateBrandBranding?.(); window.recalculateAllDynamicValues?.(false); renderCurrentModule(); }
-          applyingRemote = false;
-        }
-      }, (e) => { console.error(e); setCloudBadge(false, "Cloud sync error"); });
-    },
+            if (typeof renderCurrentModule === "function") { updateBrandBranding?.(); window.recalculateAllDynamicValues?.(false); renderCurrentModule(); }
+            applyingRemote = false;
+            window.onCloudSmsQueueUpdate?.();
+          }
+        }, (e) => { console.error(e); setCloudBadge(false, "Cloud sync error"); });
+        window.initAutoRelayWatcherIfEnabled?.();
+      },
     async publishInitialData() {
       if (!this.db || !this.currentUser || !window.ERP_STATE.auth?.loggedIn) {
         throw new Error("पहिले Firebase Admin login गर्नुहोस्।");
@@ -821,29 +823,34 @@
         setCloudBadge(true, "Cloud खाली — Admin पुष्टि आवश्यक");
         return;
       }
-      const docRef = doc(this.db, "artifacts", APP_ID, "public", "data", "erp_state", "master_v1");
-      try {
-        this.isSaving = true;
-        const payload = safeState(window.ERP_STATE);
-        await runTransaction(this.db, async (tx) => {
-          const snap = await tx.get(docRef);
-          const serverRev = snap.exists() ? Number(snap.data()._revision || snap.data().lastModified || 0) : 0;
-          if (serverRev !== baseRemoteVersion) throw new Error("SYNC_CONFLICT: अर्को device मा डाटा परिवर्तन भएको छ। पछिल्लो cloud डाटा reload गरेर फेरि प्रयास गर्नुहोस्।");
-          const nextRev = Math.max(Date.now(), serverRev + 1);
-          payload._revision = nextRev;
-          payload.lastModified = nextRev;
-          payload.lastSessionId = SESSION_ID;
-          tx.set(docRef, payload);
-          baseRemoteVersion = nextRev;
-        });
-        setCloudBadge(true, "Cloud Synced");
-      } catch (e) {
-        console.error("Cloud save blocked", e);
-        if (String(e.message || e).includes("SYNC_CONFLICT")) {
-          setCloudBadge(false, "Sync conflict — reload आवश्यक");
-          showLoginError("अर्को device मा पनि डाटा परिवर्तन भएको छ। डाटा नहराओस् भनेर यो save रोकियो। पेज reload गरेर पछिल्लो cloud डाटा हेर्नुहोस्, त्यसपछि पुनः इन्ट्री गर्नुहोस्।");
-        } else setCloudBadge(false, "Cloud save failed");
-      } finally { this.isSaving = false; }
+      const runSaveTx = async () => {
+        if (window.PJ_OFFLINE_ONLY_MODE || !this.enabled || !this.db || !this.currentUser || !window.ERP_STATE.auth?.loggedIn || applyingRemote) return;
+        const docRef = doc(this.db, "artifacts", APP_ID, "public", "data", "erp_state", "master_v1");
+        try {
+          this.isSaving = true;
+          const payload = safeState(window.ERP_STATE);
+          await runTransaction(this.db, async (tx) => {
+            const snap = await tx.get(docRef);
+            const serverRev = snap.exists() ? Number(snap.data()._revision || snap.data().lastModified || 0) : 0;
+            if (serverRev !== baseRemoteVersion) throw new Error("SYNC_CONFLICT: अर्को device मा डाटा परिवर्तन भएको छ। पछिल्लो cloud डाटा reload गरेर फेरि प्रयास गर्नुहोस्।");
+            const nextRev = Math.max(Date.now(), serverRev + 1);
+            payload._revision = nextRev;
+            payload.lastModified = nextRev;
+            payload.lastSessionId = SESSION_ID;
+            tx.set(docRef, payload);
+            baseRemoteVersion = nextRev;
+          });
+          setCloudBadge(true, "Cloud Synced");
+        } catch (e) {
+          console.error("Cloud save blocked", e);
+          if (String(e.message || e).includes("SYNC_CONFLICT")) {
+            setCloudBadge(false, "Sync conflict — reload आवश्यक");
+            showLoginError("अर्को device मा पनि डाटा परिवर्तन भएको छ। डाटा नहराओस् भनेर यो save रोकियो। पेज reload गरेर पछिल्लो cloud डाटा हेर्नुहोस्, त्यसपछि पुनः इन्ट्री गर्नुहोस्।");
+          } else setCloudBadge(false, "Cloud save failed");
+        } finally { this.isSaving = false; }
+      };
+      this._saveChain = (this._saveChain || Promise.resolve()).then(runSaveTx, runSaveTx);
+      return this._saveChain;
     }
   };
   window.cloudSync.init();
@@ -17158,8 +17165,10 @@ updateConnectivityBanner();
 // ============================================================================
 (function() {
   const SMS_SECRETS_KEY = "PJ_SMS_SECRETS_V1";
+  const SMS_DEVICE_CFG_KEY = "PJ_SMS_DEVICE_CFG_V1";
   const SMS_OUTBOX_KEY = "PJ_SMS_OUTBOX_V1";
   const SMS_LOGS_KEY = "PJ_SMS_LOGS_V1";
+  const DEVICE_ONLY_SMS_KEYS = ["provider", "gatewayUrl", "localBridgeUrl", "gatewayFormat", "gatewayUser"];
 
   const DEFAULT_SMS_CONFIG = {
     enabled: true,
@@ -17172,6 +17181,55 @@ updateConnectivityBanner();
     gatewayFormat: "traccar", // traccar | smsgate | custom
     gatewayUser: "",
     senderIdentity: "TheAlert"
+  };
+
+  function readDeviceSmsConfig() {
+    try {
+      const parsed = JSON.parse(localStorage.getItem(SMS_DEVICE_CFG_KEY) || "{}");
+      return parsed && typeof parsed === "object" ? parsed : {};
+    } catch {
+      return {};
+    }
+  }
+
+  window.getSmsConfig = function() {
+    const st = window.ERP_STATE || {};
+    st.settings = st.settings || {};
+    const saved = st.settings.smsConfig || {};
+    const dev = readDeviceSmsConfig();
+    const merged = {
+      ...DEFAULT_SMS_CONFIG,
+      ...saved,
+      ...dev
+    };
+    const isAndroid = typeof navigator !== "undefined" && /android/i.test(navigator.userAgent || "");
+    if (!isAndroid && !dev.provider && merged.provider === "termux-local") {
+      merged.provider = "self-hosted-gateway";
+    }
+    return merged;
+  };
+
+  window.saveSmsConfig = function(patch) {
+    const st = window.ERP_STATE || {};
+    st.settings = st.settings || {};
+    const prevDev = readDeviceSmsConfig();
+    const nextDev = { ...prevDev };
+    const globalPatch = {};
+    Object.entries(patch || {}).forEach(([k, v]) => {
+      if (DEVICE_ONLY_SMS_KEYS.includes(k)) nextDev[k] = v;
+      else globalPatch[k] = v;
+    });
+    try { localStorage.setItem(SMS_DEVICE_CFG_KEY, JSON.stringify(nextDev)); } catch {}
+    const currentGlobal = { ...(st.settings.smsConfig || {}) };
+    DEVICE_ONLY_SMS_KEYS.forEach(k => delete currentGlobal[k]);
+    st.settings.smsConfig = {
+      ...DEFAULT_SMS_CONFIG,
+      ...currentGlobal,
+      ...globalPatch
+    };
+    DEVICE_ONLY_SMS_KEYS.forEach(k => delete st.settings.smsConfig[k]);
+    window.cloudSync?.save?.();
+    return window.getSmsConfig();
   };
 
   let phoneWatcherTimer = null;
@@ -17210,27 +17268,6 @@ updateConnectivityBanner();
     if (digits.startsWith("0") && digits.length === 11) digits = digits.slice(1);
     if (!/^9[6-9]\d{8}$/.test(digits)) return { valid: false, local10: "", e164: "" };
     return { valid: true, local10: digits, e164: "+977" + digits };
-  };
-
-  window.getSmsConfig = function() {
-    const st = window.ERP_STATE || {};
-    st.settings = st.settings || {};
-    const saved = st.settings.smsConfig || {};
-    return {
-      ...DEFAULT_SMS_CONFIG,
-      ...saved
-    };
-  };
-
-  window.saveSmsConfig = function(patch) {
-    const st = window.ERP_STATE || {};
-    st.settings = st.settings || {};
-    st.settings.smsConfig = {
-      ...window.getSmsConfig(),
-      ...(patch || {})
-    };
-    window.cloudSync?.save?.();
-    return st.settings.smsConfig;
   };
 
   window.getSmsSecrets = function() {
@@ -17853,7 +17890,9 @@ updateConnectivityBanner();
   }
 
   window.closeSmsModal = function() {
-    window.stopGatewayPhoneWatcher?.();
+    if (localStorage.getItem("PJ_AUTO_RELAY_APK_V1") !== "1") {
+      window.stopGatewayPhoneWatcher?.();
+    }
     const el = document.getElementById("sms-dynamic-modal-wrap");
     if (el) el.innerHTML = "";
   };
@@ -18159,11 +18198,11 @@ Server URL  = "${url ? url : "(GitHub Pages वा यही फोनबाट 
     renderPhoneWatcherJobsList();
   };
 
-  window.startGatewayPhoneWatcher = function() {
+  window.startGatewayPhoneWatcher = function(silent = false) {
     if (phoneWatcherTimer) clearInterval(phoneWatcherTimer);
     pollGatewayJobsOnce();
     phoneWatcherTimer = setInterval(pollGatewayJobsOnce, 4000);
-    window.openSelfHostedGatewayModal("phone");
+    if (!silent) window.openSelfHostedGatewayModal("phone");
   };
 
   window.stopGatewayPhoneWatcher = function() {
@@ -18176,6 +18215,20 @@ Server URL  = "${url ? url : "(GitHub Pages वा यही फोनबाट 
   window.isGatewayPhoneWatcherRunning = function() {
     return !!phoneWatcherTimer;
   };
+
+  window.onCloudSmsQueueUpdate = function() {
+    if (localStorage.getItem("PJ_AUTO_RELAY_APK_V1") === "1" || phoneWatcherTimer) {
+      pollGatewayJobsOnce();
+    }
+  };
+
+  window.initAutoRelayWatcherIfEnabled = function() {
+    if (localStorage.getItem("PJ_AUTO_RELAY_APK_V1") === "1" && !phoneWatcherTimer) {
+      window.startGatewayPhoneWatcher(true);
+    }
+  };
+
+  setTimeout(() => { window.initAutoRelayWatcherIfEnabled?.(); }, 1500);
 
   window.checkSelfHostedGatewayStatus = async function(targetBadgeId = "self-gw-status-badge") {
     const badge = document.getElementById(targetBadgeId);
