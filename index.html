@@ -17163,11 +17163,12 @@ updateConnectivityBanner();
 
   const DEFAULT_SMS_CONFIG = {
     enabled: true,
-    provider: "device-sim", // device-sim | self-hosted-gateway | android-sim-gateway | sparrow | aakash | custom-webhook
+    provider: "device-sim", // termux-local | device-sim | self-hosted-gateway | android-sim-gateway | sparrow | aakash | custom-webhook
     readingAutoSms: true,
     amountAutoSms: true,
     offlineAutoSms: true,
     gatewayUrl: "",
+    localBridgeUrl: "http://127.0.0.1:8765",
     gatewayFormat: "traccar", // traccar | smsgate | custom
     gatewayUser: "",
     senderIdentity: "TheAlert"
@@ -17263,6 +17264,8 @@ updateConnectivityBanner();
     window.saveSmsSecrets({ gatewayKey: nextKey });
     const el = document.getElementById(`${prefix}-sms-self-key`);
     if (el) el.value = nextKey;
+    const termuxEl = document.getElementById(`${prefix}-sms-termux-key`);
+    if (termuxEl) termuxEl.value = nextKey;
     const modalEl = document.getElementById("self-gw-key-input");
     if (modalEl) modalEl.value = nextKey;
     showToast?.("नयाँ Gateway Pairing Key तयार भयो! फोनमा पनि यही Key राख्नुहोस्।", "success");
@@ -17307,6 +17310,7 @@ updateConnectivityBanner();
     const cfg = window.getSmsConfig();
     if (!cfg.enabled) return "SMS बन्द";
     const map = {
+      "termux-local": "⚡ अटो फोन SIM (127.0.0.1)",
       "device-sim": "SIM SMS (फोन)",
       "self-hosted-gateway": "आफ्नै SIM गेटवे",
       "android-sim-gateway": "अटो SIM गेटवे",
@@ -17444,6 +17448,90 @@ updateConnectivityBanner();
     return { ok: true, direct: true };
   }
 
+  function getTermuxLocalBridgeUrl(cfg) {
+    const raw = String(cfg?.localBridgeUrl || "http://127.0.0.1:8765").trim().replace(/\/+$/, "");
+    if (/^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$/i.test(raw)) return raw;
+    if (/^http:\/\/(192\.168\.|10\.|172\.(1[6-9]|2\d|3[01])\.)\S+$/i.test(raw)) return raw;
+    return "http://127.0.0.1:8765";
+  }
+
+  async function sendViaTermuxLocal(phoneObj, message, cfgOverride = null, secretOverride = null, meta = {}) {
+    const cfg = cfgOverride || window.getSmsConfig();
+    const secrets = secretOverride || window.getSmsSecrets();
+    const key = (secrets.gatewayKey && secrets.gatewayKey.length >= 12)
+      ? secrets.gatewayKey
+      : window.getOrCreateSelfHostedGatewayKey();
+    const base = getTermuxLocalBridgeUrl(cfg);
+    const ctrl = typeof AbortController !== "undefined" ? new AbortController() : null;
+    const timer = ctrl ? setTimeout(() => ctrl.abort(), 8000) : null;
+
+    let resp;
+    try {
+      resp = await fetch(base + "/send", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-gateway-key": key
+        },
+        body: JSON.stringify({
+          to: phoneObj.e164,
+          local10: phoneObj.local10,
+          message,
+          customerId: meta.customerId || "",
+          customerName: meta.customerName || "",
+          type: meta.type || "sms"
+        }),
+        ...(ctrl ? { signal: ctrl.signal } : {})
+      });
+    } catch {
+      if (timer) clearTimeout(timer);
+      throw new Error("फोनको Termux अटो SIM स्क्रिप्ट (127.0.0.1:8765) चालु छैन। कृपया Termux खोलेर अटो SIM स्क्रिप्ट चालु गर्नुहोस्।");
+    }
+    if (timer) clearTimeout(timer);
+
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok || !data?.ok) {
+      throw new Error(data?.error || `Termux SIM त्रुटि (${resp.status})`);
+    }
+    return { ok: true, localTermux: true };
+  }
+
+  window.checkTermuxLocalBridge = async function(targetBadgeId = "termux-local-status-badge") {
+    const badge = document.getElementById(targetBadgeId);
+    if (badge) badge.textContent = "⏳ Termux अटो SIM जाँच हुँदैछ...";
+    const cfg = window.getSmsConfig();
+    const secrets = window.getSmsSecrets();
+    const key = (secrets.gatewayKey && secrets.gatewayKey.length >= 12)
+      ? secrets.gatewayKey
+      : window.getOrCreateSelfHostedGatewayKey();
+    const base = getTermuxLocalBridgeUrl(cfg);
+    const ctrl = typeof AbortController !== "undefined" ? new AbortController() : null;
+    const timer = ctrl ? setTimeout(() => ctrl.abort(), 4000) : null;
+    try {
+      const res = await fetch(base + "/health", {
+        headers: { "x-gateway-key": key },
+        ...(ctrl ? { signal: ctrl.signal } : {})
+      });
+      if (timer) clearTimeout(timer);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data?.ok) {
+        const msg = res.status === 401
+          ? "🔴 Pairing Key मिलेन — Termux मा नयाँ कोड Paste गरी Run गर्नुहोस्"
+          : `🔴 Termux त्रुटि (${res.status})`;
+        if (badge) badge.textContent = msg;
+        return { ok: false, message: msg };
+      }
+      const okMsg = `🟢 फोन अटो SIM तयार छ (${base} · Termux Connected)`;
+      if (badge) badge.textContent = okMsg;
+      return { ok: true, message: okMsg };
+    } catch {
+      if (timer) clearTimeout(timer);
+      const offMsg = `🔴 Termux स्क्रिप्ट चालु छैन (${base} मा सम्पर्क भएन)`;
+      if (badge) badge.textContent = offMsg;
+      return { ok: false, message: offMsg };
+    }
+  };
+
   function getSelfHostedBaseUrl(cfg) {
     const custom = String(cfg?.gatewayUrl || "").trim().replace(/\/+$/, "");
     if (custom && /^https?:\/\//i.test(custom)) return custom;
@@ -17518,6 +17606,10 @@ updateConnectivityBanner();
     const cfg = cfgOverride || window.getSmsConfig();
     const secrets = secretOverride || window.getSmsSecrets();
 
+    if (cfg.provider === "termux-local") {
+      return await sendViaTermuxLocal(phoneObj, message, cfg, secrets, meta);
+    }
+
     if (cfg.provider === "self-hosted-gateway") {
       return await enqueueToSelfHostedGateway(phoneObj, message, meta, cfg, secrets);
     }
@@ -17546,7 +17638,7 @@ updateConnectivityBanner();
       if (cfg.provider === "android-sim-gateway" || cfg.provider === "custom-webhook") {
         return await tryDirectGatewayFetch(cfg, secrets, phoneObj, message);
       }
-      throw new Error("GitHub Pages जस्तो Static साइटबाट Sparrow/Aakash API चलाउन ब्राउजर CORS अनुमति हुँदैन। यसको सट्टा 'फोनको आफ्नै SIM' वा 'आफ्नै SMS Gateway' प्रयोग गर्नुहोस्।");
+      throw new Error("GitHub Pages जस्तो Static साइटबाट Sparrow/Aakash API चलाउन ब्राउजर CORS अनुमति हुँदैन। यसको सट्टा 'फोनको Termux अटो SIM' वा 'आफ्नै SMS Gateway' प्रयोग गर्नुहोस्।");
     }
 
     const data = await res.json().catch(() => ({}));
@@ -17625,8 +17717,9 @@ updateConnectivityBanner();
       return;
     }
 
-    // Automatic API / Self-Hosted Gateway / Android SIM Gateway mode
-    if (!navigator.onLine) {
+    // Automatic API / Termux Local (127.0.0.1) / Self-Hosted Gateway / Android SIM Gateway mode
+    // Note: termux-local runs on localhost inside the same phone, so it works even offline!
+    if (!navigator.onLine && cfg.provider !== "termux-local") {
       const outbox = window.getSmsOutbox();
       window.saveSmsOutbox([...prepared, ...outbox]);
       showToast?.(`अफलाइन भएकाले ${prepared.length} वटा SMS क्युमा राखियो — इन्टरनेट आउनासाथ पठाउनुहोस्।`, "info");
@@ -17646,7 +17739,9 @@ updateConnectivityBanner();
           name: item.customerName,
           phone: item.phone,
           provider: cfg.provider,
-          status: cfg.provider === "self-hosted-gateway" ? (resp?.phoneOnline ? "गेटवे फोनमा गयो ✅" : "गेटवे क्युमा ⏳") : "पठाइयो ✅",
+          status: cfg.provider === "termux-local"
+            ? "अटो SIM बाट पठाइयो ⚡✅"
+            : (cfg.provider === "self-hosted-gateway" ? (resp?.phoneOnline ? "गेटवे फोनमा गयो ✅" : "गेटवे क्युमा ⏳") : "पठाइयो ✅"),
           type: item.type
         });
       } catch (err) {
@@ -17659,6 +17754,8 @@ updateConnectivityBanner();
       const outbox = window.getSmsOutbox();
       window.saveSmsOutbox([...failed, ...outbox]);
       showToast?.(`${okCount} वटा SMS पठाइयो, ${failed.length} वटा असफल (क्युमा राखियो): ${failed[0].error}`, "warning");
+    } else if (cfg.provider === "termux-local") {
+      showToast?.(`⚡ ${okCount} जनाको मोबाइलमा सोझै फोन SIM बाट बिना ट्याप अटो SMS पठाइयो!${skippedNoPhone.length ? ` (${skippedNoPhone.length} जनाको फोन नं. छैन)` : ""}`, "success");
     } else if (cfg.provider === "self-hosted-gateway") {
       showToast?.(
         anyPhoneOnline
@@ -17716,7 +17813,7 @@ updateConnectivityBanner();
       window.openSmsQueueModal(`SIM बाट पठाउन बाँकी ${outbox.length} वटा SMS क्युमा छन्। तलको बटन थिचेर पठाउनुहोस्।`);
       return;
     }
-    if (!navigator.onLine) {
+    if (!navigator.onLine && cfg.provider !== "termux-local") {
       showToast?.("इन्टरनेट छैन। अनलाइन भएपछि पुनः प्रयास गर्नुहोस्।", "warning");
       return;
     }
@@ -17777,14 +17874,96 @@ updateConnectivityBanner();
     renderCurrentModule?.();
   };
 
-  // ---------------- SELF-HOSTED GATEWAY LIVE PHONE MODE & SCRIPTS ----------------
+  // ---------------- SELF-HOSTED GATEWAY LIVE PHONE MODE & TERMUX SCRIPTS ----------------
+  function sanitizeKeyForScript(raw) {
+    return String(raw || "").replace(/[^A-Za-z0-9_-]/g, "") || "PJGW-DEFAULT1234";
+  }
+
+  function getTermuxLocalBridgeScriptText(key, port = 8765) {
+    const safeKey = sanitizeKeyForScript(key);
+    const safePort = Number(port) || 8765;
+    return `pkg update -y && pkg install -y python termux-api
+cat << 'EOF' > ~/pj_local_sms.py
+import hmac, json, os, subprocess, threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+KEY = os.environ.get("PJ_GW_KEY", "${safeKey}")
+LOCK = threading.Lock()
+
+class Handler(BaseHTTPRequestHandler):
+    def _cors(self):
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, x-gateway-key, Access-Control-Request-Private-Network")
+        self.send_header("Access-Control-Allow-Private-Network", "true")
+        self.send_header("Access-Control-Max-Age", "86400")
+
+    def _json(self, code, obj):
+        body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
+        self.send_response(code)
+        self._cors()
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _auth(self):
+        got = (self.headers.get("x-gateway-key") or "").strip()
+        return bool(KEY) and hmac.compare_digest(got, KEY)
+
+    def do_OPTIONS(self):
+        self.send_response(204)
+        self._cors()
+        self.end_headers()
+
+    def do_GET(self):
+        if self.path.split("?")[0] != "/health":
+            return self._json(404, {"ok": False, "error": "Not found"})
+        if not self._auth():
+            return self._json(401, {"ok": False, "error": "Invalid key"})
+        return self._json(200, {"ok": True, "mode": "termux-local", "port": ${safePort}})
+
+    def do_POST(self):
+        if self.path.split("?")[0] != "/send":
+            return self._json(404, {"ok": False, "error": "Not found"})
+        if not self._auth():
+            return self._json(401, {"ok": False, "error": "Invalid key"})
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+            data = json.loads(self.rfile.read(length).decode("utf-8") or "{}")
+            to = str(data.get("to") or data.get("local10") or "").strip()
+            msg = str(data.get("message") or "").strip()
+            if not to or not msg:
+                return self._json(400, {"ok": False, "error": "Missing to/message"})
+            with LOCK:
+                res = subprocess.run(["termux-sms-send", "-n", to, msg], capture_output=True, text=True, timeout=25)
+            if res.returncode != 0:
+                err = (res.stderr or res.stdout or "termux-sms-send failed").strip()
+                print(f"[ERR] {to}: {err}", flush=True)
+                return self._json(500, {"ok": False, "error": err})
+            print(f"[OK] Auto SMS sent via SIM to {to}", flush=True)
+            return self._json(200, {"ok": True})
+        except Exception as exc:
+            print(f"[ERR] {exc}", flush=True)
+            return self._json(500, {"ok": False, "error": str(exc)})
+
+    def log_message(self, fmt, *args):
+        pass
+
+print("Pragati Jal 100% Auto SIM Bridge listening on http://127.0.0.1:${safePort}", flush=True)
+ThreadingHTTPServer(("127.0.0.1", ${safePort}), Handler).serve_forever()
+EOF
+python ~/pj_local_sms.py`;
+  }
+
   function getTermuxScriptText(baseUrl, key) {
     const url = (baseUrl || "https://YOUR-SERVER-URL").replace(/\/+$/, "");
+    const safeKey = sanitizeKeyForScript(key);
     return `pkg update -y && pkg install -y termux-api curl jq
 cat << 'EOF' > ~/pj_sms_gw.sh
 #!/data/data/com.termux/files/usr/bin/bash
 SERVER="${url}"
-KEY="${key}"
+KEY="${safeKey}"
 echo "Pragati Jal SIM Gateway running against $SERVER ..."
 while true; do
   RESP=$(curl -sS -H "x-gateway-key: $KEY" "$SERVER/api/sms-gateway/pull?limit=5&device=Termux-Android")
@@ -17808,13 +17987,13 @@ chmod +x ~/pj_sms_gw.sh && ~/pj_sms_gw.sh`;
   }
 
   function getKotlinSnippetText(baseUrl, key) {
-    const url = (baseUrl || "https://YOUR-SERVER-URL").replace(/\/+$/, "");
-    return `// SmsGatewayService.kt मा Default Config राख्नुहोस्:
-// (पूर्ण प्रोजेक्ट सफ्टवेयर फोल्डर: /android-sms-gateway/ मा छ)
-val serverUrl = "${url}"
-val pairingKey = "${key}"
-// Foreground Service ले प्रत्येक ४ सेकेन्डमा /api/sms-gateway/pull बाट
-// नयाॅ रिडिङ/रकम SMS तानेर Android SmsManager.sendMultipartTextMessage() बाट पठाउँछ।`;
+    const url = (baseUrl || "").replace(/\/+$/, "");
+    return `// Pragati Jal SIM Gateway Android App (100% अटो SIM — Termux नचाहिने):
+// १) GitHub Actions बाट APK बनाउन: .github/workflows/build-sms-apk.yml + /android-sms-gateway/
+//    तपाईंको GitHub मा राख्नुहोस् → Actions ट्याबबाट सीधै app-debug.apk डाउनलोड हुन्छ!
+// २) एप भित्र राख्ने विवरण:
+Pairing Key = "${sanitizeKeyForScript(key)}"
+Server URL  = "${url ? url : "(GitHub Pages वा यही फोनबाट मात्र चलाउँदा खाली राख्नुहोस् — 127.0.0.1:8765 स्वतः चल्छ)"}"`;
   }
 
   window.copyTextFromElementId = async function(id, label = "टेक्स्ट") {
@@ -17828,6 +18007,20 @@ val pairingKey = "${key}"
       el.select?.();
       showToast?.("कृपया म्यानुअल रूपमा Select गरी Copy गर्नुहोस्।", "info");
     }
+  };
+
+  window.downloadTermuxLocalBridgeScript = function() {
+    const cfg = window.getSmsConfig();
+    const key = window.getOrCreateSelfHostedGatewayKey();
+    const portMatch = getTermuxLocalBridgeUrl(cfg).match(/:(\d+)$/);
+    const port = portMatch ? Number(portMatch[1]) : 8765;
+    const text = getTermuxLocalBridgeScriptText(key, port);
+    const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "pragati_jal_local_auto_sms.sh";
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   };
 
   window.downloadSelfHostedTermuxScript = function() {
@@ -18015,8 +18208,8 @@ val pairingKey = "${key}"
             </div>
 
             <div class="flex flex-wrap gap-1.5 border-b border-slate-200 pb-2">
-              <button type="button" onclick="window.openSelfHostedGatewayModal('phone')" class="px-3 py-1.5 rounded-xl font-bold cursor-pointer ${tab === 'phone' ? 'bg-indigo-700 text-white' : 'bg-slate-100 text-slate-700'}">१. मोबाइल ब्राउजर Live मोड</button>
-              <button type="button" onclick="window.openSelfHostedGatewayModal('termux')" class="px-3 py-1.5 rounded-xl font-bold cursor-pointer ${tab === 'termux' ? 'bg-indigo-700 text-white' : 'bg-slate-100 text-slate-700'}">२. Termux १००% अटो SIM (APK नचाहिने)</button>
+              <button type="button" onclick="window.openSelfHostedGatewayModal('termux')" class="px-3 py-1.5 rounded-xl font-bold cursor-pointer ${tab === 'termux' ? 'bg-emerald-700 text-white' : 'bg-slate-100 text-slate-700'}">⚡ १. Termux १००% अटो SIM (Save मै नसोधी जाने)</button>
+              <button type="button" onclick="window.openSelfHostedGatewayModal('phone')" class="px-3 py-1.5 rounded-xl font-bold cursor-pointer ${tab === 'phone' ? 'bg-indigo-700 text-white' : 'bg-slate-100 text-slate-700'}">२. मोबाइल ब्राउजर Live मोड</button>
               <button type="button" onclick="window.openSelfHostedGatewayModal('android')" class="px-3 py-1.5 rounded-xl font-bold cursor-pointer ${tab === 'android' ? 'bg-indigo-700 text-white' : 'bg-slate-100 text-slate-700'}">३. आफ्नै Android APK कोड</button>
             </div>
 
@@ -18036,25 +18229,45 @@ val pairingKey = "${key}"
               </div>
             ` : tab === "termux" ? `
               <div class="space-y-3">
-                <div class="bg-amber-50 border border-amber-200 rounded-xl p-3 text-amber-950 space-y-1">
-                  <div class="font-bold">APK नबनाई १००% अटोमेटिक SIM-to-SIM गेटवे चलाउने तरीका (१ मिनेटमा):</div>
-                  <div>१) अफिसको Android मोबाइलमा F-Droid बाट <strong>Termux</strong> र <strong>Termux:API</strong> इन्स्टल गर्नुहोस् (र Termux:API लाई SMS Permission दिनुहोस्)।</div>
-                  <div>२) Termux खोलेर तलको कोड <strong>Copy</strong> गरी पेस्ट र Enter थिच्नुहोस् — अब सधैंभरि Save थिच्नासाथै अटो SIM बाट SMS जान्छ!</div>
+                <div class="bg-emerald-50 border border-emerald-300 rounded-xl p-3 text-emerald-950 space-y-1.5">
+                  <div class="font-bold text-sm">⚡ क) यही फोनमै १००% अटो (GitHub Pages + अफलाइनमा समेत Save थिच्नासाथ नसोधी SMS जाने):</div>
+                  <div>१) Android फोनमा <strong>F-Droid</strong> बाट <strong>Termux</strong> र <strong>Termux:API</strong> इन्स्टल गर्नुहोस् <span class="text-rose-700 font-semibold">(Play Store को पुरानो Termux नराख्नुहोस्)</span>, र Settings → Apps → Termux:API → Permissions मा <strong>SMS: Allow</strong> गर्नुहोस्।</div>
+                  <div>२) Termux खोलेर तलको कमान्ड <strong>Copy → Paste → Enter</strong> गर्नुहोस्। यो यही फोनको <code>127.0.0.1:8765</code> मा चल्छ (कुनै बाहिरी सर्भर वा इन्टरनेट चाहिँदैन!)</div>
+                  <div class="flex flex-wrap items-center gap-2 pt-1">
+                    <span id="modal-termux-local-badge" class="px-2.5 py-1 bg-white border border-emerald-300 rounded-lg font-bold text-slate-800">जाँच हुँदैछ...</span>
+                    <button type="button" onclick="window.checkTermuxLocalBridge('modal-termux-local-badge')" class="px-3 py-1 bg-emerald-700 hover:bg-emerald-800 text-white rounded-lg font-bold cursor-pointer">🔍 जडान जाँच</button>
+                    <button type="button" onclick="window.saveSmsConfig({provider:'termux-local', enabled:true}); showToast?.('⚡ यही फोनको Termux १००% अटो SIM सक्रिय भयो!','success'); renderCurrentModule?.();" class="px-3 py-1 bg-sky-700 hover:bg-sky-800 text-white rounded-lg font-bold cursor-pointer">✓ 'Termux अटो SIM' सक्रिय गर्नुहोस्</button>
+                  </div>
                 </div>
-                <textarea id="self-gw-termux-box" rows="10" readonly class="w-full font-mono text-[11px] bg-slate-950 text-emerald-300 rounded-xl p-3 border border-slate-700">${getEsc(getTermuxScriptText(baseUrl, key))}</textarea>
+                <textarea id="self-gw-termux-local-box" rows="10" readonly class="w-full font-mono text-[11px] bg-slate-950 text-emerald-300 rounded-xl p-3 border border-slate-700">${getEsc(getTermuxLocalBridgeScriptText(key, 8765))}</textarea>
                 <div class="flex flex-wrap gap-2">
-                  <button type="button" onclick="window.copyTextFromElementId('self-gw-termux-box','Termux स्क्रिप्ट')" class="px-4 py-2 bg-indigo-700 hover:bg-indigo-800 text-white rounded-xl font-bold cursor-pointer">📋 Termux कमान्ड Copy गर्नुहोस्</button>
-                  <button type="button" onclick="window.downloadSelfHostedTermuxScript()" class="px-4 py-2 bg-slate-800 hover:bg-slate-900 text-white rounded-xl font-bold cursor-pointer">⬇️ .sh फाइल डाउनलोड</button>
+                  <button type="button" onclick="window.copyTextFromElementId('self-gw-termux-local-box','Termux अटो SIM कमान्ड')" class="px-4 py-2 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl font-bold cursor-pointer">📋 १-कमान्ड Copy गर्नुहोस् (GitHub Pages र अफलाइनको लागि)</button>
+                  <button type="button" onclick="window.downloadTermuxLocalBridgeScript()" class="px-4 py-2 bg-slate-800 hover:bg-slate-900 text-white rounded-xl font-bold cursor-pointer">⬇️ .sh डाउनलोड</button>
                 </div>
+
+                <details class="bg-amber-50/70 border border-amber-200 rounded-xl p-3">
+                  <summary class="font-bold text-amber-950 cursor-pointer">ख) कम्प्युटरबाट Save गर्दा छुट्टै अफिस फोनबाट अटो SMS पठाउने कमान्ड (Server Poller)</summary>
+                  <div class="mt-2 space-y-2">
+                    <textarea id="self-gw-termux-box" rows="8" readonly class="w-full font-mono text-[11px] bg-slate-950 text-amber-200 rounded-xl p-3 border border-slate-700">${getEsc(getTermuxScriptText(baseUrl, key))}</textarea>
+                    <div class="flex flex-wrap gap-2">
+                      <button type="button" onclick="window.copyTextFromElementId('self-gw-termux-box','Termux Poller स्क्रिप्ट')" class="px-3 py-1.5 bg-indigo-700 text-white rounded-lg font-bold cursor-pointer">📋 Poller Copy</button>
+                      <button type="button" onclick="window.downloadSelfHostedTermuxScript()" class="px-3 py-1.5 bg-slate-800 text-white rounded-lg font-bold cursor-pointer">⬇️ Poller .sh</button>
+                    </div>
+                  </div>
+                </details>
               </div>
             ` : `
               <div class="space-y-3">
-                <div class="bg-indigo-50 border border-indigo-200 rounded-xl p-3 text-indigo-950 space-y-1">
-                  <div class="font-bold">आफ्नै Android Studio APK (Pragati Jal SIM Gateway App) तयार छ:</div>
-                  <div>यो प्रोजेक्ट भित्रै <code class="bg-white px-1 rounded border">/android-sms-gateway/</code> फोल्डरमा पूरा Kotlin Foreground Service प्रोजेक्ट राखिदिएको छ। यसले नेपाली Unicode लामो SMS पनि <code class="bg-white px-1 rounded border">sendMultipartTextMessage()</code> बाट नकाटीकन पठाउँछ।</div>
+                <div class="bg-indigo-50 border border-indigo-200 rounded-xl p-3 text-indigo-950 space-y-1.5">
+                  <div class="font-bold">📱 आफ्नै Android APK (Termux नराखी सोझै SIM बाट पठाउने एप):</div>
+                  <div>यो प्रोजेक्ट भित्र <code class="bg-white px-1 rounded border">/android-sms-gateway/</code> र <code class="bg-white px-1 rounded border">.github/workflows/build-sms-apk.yml</code> राखिदिएको छ। यसमा <strong>127.0.0.1:8765 Local Server</strong> र <strong>नेपाली Multipart SMS</strong> दुवै बनाइएको छ!</div>
+                  <div><strong>Android Studio नचलाई `.apk` पाउने तरीका:</strong> यी २ फोल्डर GitHub मा राखी <strong>Actions → Build Pragati Jal SMS Gateway APK → Run workflow</strong> थिच्नुहोस् — २ मिनेटमै डाउनलोड हुने <code>app-debug.apk</code> तयार हुन्छ।</div>
                 </div>
                 <textarea id="self-gw-kotlin-box" rows="7" readonly class="w-full font-mono text-[11px] bg-slate-950 text-sky-300 rounded-xl p-3 border border-slate-700">${getEsc(getKotlinSnippetText(baseUrl, key))}</textarea>
-                <div class="text-[11px] text-slate-600">नोट: Android Studio मा <code>/android-sms-gateway/</code> खोलेर Build APK थिची मोबाइलमा इन्स्टल गर्नुहोस्, र माथिको <strong>Server URL</strong> र <strong>Pairing Key</strong> राख्नुहोस्।</div>
+                <div class="flex flex-wrap items-center justify-between gap-2">
+                  <button type="button" onclick="window.saveSmsConfig({provider:'termux-local', enabled:true}); showToast?.('⚡ अटो SIM (127.0.0.1) मोड सक्रिय भयो!','success'); renderCurrentModule?.();" class="px-3 py-1.5 bg-indigo-700 hover:bg-indigo-800 text-white rounded-lg font-bold cursor-pointer">✓ एप इन्स्टल गरेपछि १-क्लिक अटो SIM मोड चालु गर्नुहोस्</button>
+                  <button type="button" onclick="window.copyTextFromElementId('self-gw-kotlin-box','APK सेटअप विवरण')" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-900 text-white rounded-lg font-bold cursor-pointer">📋 Key विवरण Copy</button>
+                </div>
               </div>
             `}
           </div>
@@ -18063,6 +18276,7 @@ val pairingKey = "${key}"
     `;
 
     window.checkSelfHostedGatewayStatus("self-gw-status-badge");
+    if (tab === "termux") window.checkTermuxLocalBridge("modal-termux-local-badge");
     if (tab === "phone") renderPhoneWatcherJobsList();
   };
 
@@ -18141,6 +18355,7 @@ val pairingKey = "${key}"
     const secrets = window.getSmsSecrets();
     const selfKey = window.getOrCreateSelfHostedGatewayKey();
     const pendingCount = window.getSmsOutbox().length;
+    const isTermuxLocal = cfg.provider === "termux-local";
     const isSelfHosted = cfg.provider === "self-hosted-gateway";
     const isGateway = cfg.provider === "android-sim-gateway" || cfg.provider === "custom-webhook";
     const isCloudApi = cfg.provider === "sparrow" || cfg.provider === "aakash";
@@ -18149,8 +18364,9 @@ val pairingKey = "${key}"
       <div class="space-y-3 text-xs">
         <div class="bg-sky-50 border border-sky-200 rounded-xl p-3 text-sky-950 space-y-1">
           <div class="font-bold">SIM बाट SIM मा SMS पठाउने माध्यम छान्नुहोस्:</div>
-          <div>१) <strong>आफ्नै SMS Gateway (हामीले नै बनाएको):</strong> बाहिरी Traccar वा थर्ड-पार्टी एप नचाहिने! Termux १-कमान्ड, मोबाइल ब्राउजर Live मोड वा हाम्रै Custom Android एपबाट सीधै SIM SMS जान्छ।</div>
-          <div>२) <strong>फोनको आफ्नै SIM (Default):</strong> Save थिच्ने बित्तिकै यही मोबाइलको Messages एपबाट १ ट्यापमा (इन्टरनेट बिना पनि) SMS पठाउन।</div>
+          <div>१) <strong>⚡ यही फोनको Termux १००% अटो SIM (सबैभन्दा छिटो):</strong> Save थिच्नासाथ Send पनि नथिची सीधै यही मोबाइलको SIM बाट SMS जान्छ — <strong>GitHub Pages र अफलाइन दुवैमा चल्छ!</strong></div>
+          <div>२) <strong>फोनको आफ्नै SIM:</strong> कुनै सेटअप नगरी Save थिच्दा मोबाइलको Messages एप खोलेर Send थिच्ने (१ ट्याप)।</div>
+          <div>३) <strong>आफ्नै SMS Gateway:</strong> कम्प्युटरबाट Save गर्दा छुट्टै अफिस फोनमा SMS पठाउन।</div>
         </div>
 
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -18161,8 +18377,9 @@ val pairingKey = "${key}"
           <div>
             <label class="font-semibold text-slate-600 block mb-1">SMS पठाउने माध्यम (SIM / Gateway)</label>
             <select id="${prefix}-sms-provider" onchange="window.toggleSmsProviderFields('${prefix}')" class="w-full border border-slate-300 bg-white rounded-xl px-3 py-2 font-bold">
-              <option value="device-sim" ${cfg.provider === "device-sim" ? "selected" : ""}>📱 यही मोबाइलको आफ्नै SIM (निःशुल्क र अफलाइन चल्ने)</option>
-              <option value="self-hosted-gateway" ${cfg.provider === "self-hosted-gateway" ? "selected" : ""}>🏠 आफ्नै SMS Gateway (हामीले नै बनाएको — Zero 3rd Party)</option>
+              <option value="termux-local" ${cfg.provider === "termux-local" ? "selected" : ""}>⚡ यही फोनको Termux / आफ्नै APK १००% अटो SIM (Save मै नसोधी जान्छ)</option>
+              <option value="device-sim" ${cfg.provider === "device-sim" ? "selected" : ""}>📱 यही मोबाइलको आफ्नै SIM (Messages खुल्छ — Send थिच्ने)</option>
+              <option value="self-hosted-gateway" ${cfg.provider === "self-hosted-gateway" ? "selected" : ""}>🏠 आफ्नै SMS Gateway (PC बाट अर्को फोनको SIM मा)</option>
               <option value="android-sim-gateway" ${cfg.provider === "android-sim-gateway" ? "selected" : ""}>📡 बाहिरी Android SIM Gateway (Traccar / SMS-Gate)</option>
               <option value="sparrow" ${cfg.provider === "sparrow" ? "selected" : ""}>☁️ Sparrow SMS Nepal (API)</option>
               <option value="aakash" ${cfg.provider === "aakash" ? "selected" : ""}>☁️ Aakash SMS Nepal (API)</option>
@@ -18184,6 +18401,34 @@ val pairingKey = "${key}"
             <input type="checkbox" id="${prefix}-sms-offline-auto" ${cfg.offlineAutoSms ? "checked" : ""} class="rounded accent-teal-700">
             <span>अफलाइन रिडिङ सेभमा SMS</span>
           </label>
+        </div>
+
+        <div id="${prefix}-sms-termux-local-fields" class="${isTermuxLocal ? "" : "hidden"} bg-emerald-50/80 border border-emerald-300 rounded-xl p-3 space-y-2.5">
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <span class="font-bold text-emerald-950">⚡ यही फोनको Termux १००% अटो SIM जडान (GitHub Pages + अफलाइनमा चल्ने)</span>
+            <button type="button" onclick="window.openSelfHostedGatewayModal('termux')" class="px-3 py-1.5 bg-emerald-700 hover:bg-emerald-800 text-white rounded-lg font-bold cursor-pointer">
+              📋 Termux १-कमान्ड कोड देखाउनुहोस्
+            </button>
+          </div>
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <div>
+              <label class="font-semibold text-slate-600 block mb-1">Pairing Key (Termux सँग मिल्ने)</label>
+              <div class="flex gap-1">
+                <input type="text" id="${prefix}-sms-termux-key" value="${getEsc(selfKey)}" class="w-full border border-emerald-300 bg-white rounded-lg px-2.5 py-1.5 font-mono font-bold">
+                <button type="button" onclick="window.regenerateSelfHostedGatewayKey('${prefix}')" class="px-2.5 py-1.5 bg-amber-600 text-white rounded-lg font-semibold cursor-pointer">नयाँ</button>
+              </div>
+            </div>
+            <div>
+              <label class="font-semibold text-slate-600 block mb-1">Local Termux Bridge URL (यही फोनको पोर्ट)</label>
+              <input type="url" id="${prefix}-sms-termux-url" value="${getEsc(getTermuxLocalBridgeUrl(cfg))}" placeholder="http://127.0.0.1:8765" class="w-full border border-slate-300 bg-white rounded-lg px-2.5 py-1.5 font-mono">
+            </div>
+          </div>
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <span id="${prefix}-termux-status-badge" class="font-semibold text-emerald-950 bg-white border border-emerald-200 px-2.5 py-1 rounded-lg">Termux अवस्था जाँच गर्न दायाँको बटन थिच्नुहोस्</span>
+            <button type="button" onclick="window.saveSmsSettingsFromForm('${prefix}', true); window.checkTermuxLocalBridge('${prefix}-termux-status-badge');" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-900 text-white rounded-lg font-bold cursor-pointer">
+              🔍 फोन Termux जडान जाँच
+            </button>
+          </div>
         </div>
 
         <div id="${prefix}-sms-self-fields" class="${isSelfHosted ? "" : "hidden"} bg-indigo-50/70 border border-indigo-200 rounded-xl p-3 space-y-2.5">
@@ -18250,8 +18495,8 @@ val pairingKey = "${key}"
           <button type="button" onclick="window.testSendSmsFromSettings('${prefix}')" class="px-3.5 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl font-semibold cursor-pointer">
             📤 Test SMS पठाउनुहोस्
           </button>
-          <button type="button" onclick="window.openSelfHostedGatewayModal('phone')" class="px-3.5 py-2 bg-indigo-700 hover:bg-indigo-800 text-white rounded-xl font-semibold cursor-pointer">
-            🏠 आफ्नै गेटवे सेटअप
+          <button type="button" onclick="window.openSelfHostedGatewayModal('termux')" class="px-3.5 py-2 bg-indigo-700 hover:bg-indigo-800 text-white rounded-xl font-semibold cursor-pointer">
+            🏠 अटो SIM / Termux सेटअप
           </button>
           <button type="button" onclick="window.openSmsQueueModal()" class="px-3.5 py-2 bg-slate-800 hover:bg-slate-900 text-white rounded-xl font-semibold cursor-pointer">
             📋 SMS क्यु (${pendingCount})
@@ -18269,9 +18514,11 @@ val pairingKey = "${key}"
 
   window.toggleSmsProviderFields = function(prefix) {
     const val = document.getElementById(`${prefix}-sms-provider`)?.value || "device-sim";
+    const termuxBox = document.getElementById(`${prefix}-sms-termux-local-fields`);
     const selfBox = document.getElementById(`${prefix}-sms-self-fields`);
     const gwBox = document.getElementById(`${prefix}-sms-gateway-fields`);
     const apiBox = document.getElementById(`${prefix}-sms-cloud-fields`);
+    if (termuxBox) termuxBox.classList.toggle("hidden", val !== "termux-local");
     if (selfBox) selfBox.classList.toggle("hidden", val !== "self-hosted-gateway");
     if (gwBox) gwBox.classList.toggle("hidden", val !== "android-sim-gateway" && val !== "custom-webhook");
     if (apiBox) apiBox.classList.toggle("hidden", val !== "sparrow" && val !== "aakash");
@@ -18279,15 +18526,19 @@ val pairingKey = "${key}"
 
   window.saveSmsSettingsFromForm = function(prefix = "set", silent = false) {
     const provider = document.getElementById(`${prefix}-sms-provider`)?.value || "device-sim";
+    const isTermuxLocal = provider === "termux-local";
     const isGw = provider === "android-sim-gateway" || provider === "custom-webhook";
     const isSelf = provider === "self-hosted-gateway";
     const tokenVal = isGw
       ? (document.getElementById(`${prefix}-sms-token-gw`)?.value.trim() || "")
       : (document.getElementById(`${prefix}-sms-token-api`)?.value.trim() || "");
-    const selfKeyVal = document.getElementById(`${prefix}-sms-self-key`)?.value.trim() || window.getOrCreateSelfHostedGatewayKey();
+    const selfKeyVal = isTermuxLocal
+      ? (document.getElementById(`${prefix}-sms-termux-key`)?.value.trim() || window.getOrCreateSelfHostedGatewayKey())
+      : (document.getElementById(`${prefix}-sms-self-key`)?.value.trim() || window.getOrCreateSelfHostedGatewayKey());
     const gwUrlVal = isSelf
       ? (document.getElementById(`${prefix}-sms-self-url`)?.value.trim() || "")
       : (document.getElementById(`${prefix}-sms-gateway-url`)?.value.trim() || "");
+    const termuxUrlVal = document.getElementById(`${prefix}-sms-termux-url`)?.value.trim() || "http://127.0.0.1:8765";
 
     const cfg = window.saveSmsConfig({
       enabled: !!document.getElementById(`${prefix}-sms-enabled`)?.checked,
@@ -18296,6 +18547,7 @@ val pairingKey = "${key}"
       amountAutoSms: !!document.getElementById(`${prefix}-sms-amount-auto`)?.checked,
       offlineAutoSms: !!document.getElementById(`${prefix}-sms-offline-auto`)?.checked,
       gatewayUrl: gwUrlVal,
+      localBridgeUrl: termuxUrlVal,
       gatewayFormat: document.getElementById(`${prefix}-sms-gateway-format`)?.value || "traccar",
       gatewayUser: document.getElementById(`${prefix}-sms-gateway-user`)?.value.trim() || "",
       senderIdentity: document.getElementById(`${prefix}-sms-sender`)?.value.trim() || "TheAlert"
@@ -18328,7 +18580,9 @@ val pairingKey = "${key}"
     try {
       const resp = await sendSmsViaServerOrDirect(phone, testMsg, cfg, null, { customerId: "TEST", customerName: "Test SMS", type: "test" });
       window.appendSmsLog({ customerId: "TEST", name: "Test SMS", phone: phone.local10, provider: cfg.provider, status: "पठाइयो ✅", type: "test" });
-      if (cfg.provider === "self-hosted-gateway") {
+      if (cfg.provider === "termux-local") {
+        showToast?.(`⚡ ${phone.local10} मा यही फोनको Termux SIM बाट अटो टेस्ट SMS पठाइयो!`, "success");
+      } else if (cfg.provider === "self-hosted-gateway") {
         showToast?.(
           resp?.phoneOnline
             ? `✅ ${phone.local10} को टेस्ट SMS आफ्नै SIM गेटवे फोनमा गयो!`

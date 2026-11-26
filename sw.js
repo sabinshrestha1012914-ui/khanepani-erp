@@ -1,5 +1,5 @@
 // Service Worker for Pragati Jal ERP (Mobile + PC Desktop PWA with Auto-Update & Offline Meter Reading + Camera OCR)
-const CACHE_NAME = "pragati-jal-erp-v12";
+const CACHE_NAME = "pragati-jal-erp-v14";
 const APP_SHELL = [
   "./",
   "./index.html",
