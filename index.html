@@ -17463,7 +17463,7 @@ updateConnectivityBanner();
       : window.getOrCreateSelfHostedGatewayKey();
     const base = getTermuxLocalBridgeUrl(cfg);
     const ctrl = typeof AbortController !== "undefined" ? new AbortController() : null;
-    const timer = ctrl ? setTimeout(() => ctrl.abort(), 8000) : null;
+    const timer = ctrl ? setTimeout(() => ctrl.abort(), 15000) : null;
 
     let resp;
     try {
@@ -17485,13 +17485,17 @@ updateConnectivityBanner();
       });
     } catch {
       if (timer) clearTimeout(timer);
-      throw new Error("फोनको Termux अटो SIM स्क्रिप्ट (127.0.0.1:8765) चालु छैन। कृपया Termux खोलेर अटो SIM स्क्रिप्ट चालु गर्नुहोस्।");
+      const isAndroid = /android/i.test(navigator.userAgent || "");
+      if (!isAndroid) {
+        throw new Error("तपाईं Computer बाट चलाउँदै हुनुहुन्छ — '127.0.0.1' Android फोनमै मात्र चल्छ! फोनमै Save थिच्नुहोस् वा 'आफ्नै SMS Gateway + फोन Live Auto-Relay' प्रयोग गर्नुहोस्।");
+      }
+      throw new Error("फोनको Pragati Jal APK वा Termux (127.0.0.1:8765) चालु छैन। पहिले एप खोलेर Start थिच्नुहोस्।");
     }
     if (timer) clearTimeout(timer);
 
     const data = await resp.json().catch(() => ({}));
     if (!resp.ok || !data?.ok) {
-      throw new Error(data?.error || `Termux SIM त्रुटि (${resp.status})`);
+      throw new Error(data?.error || `APK/Termux SIM त्रुटि (${resp.status})`);
     }
     return { ok: true, localTermux: true };
   }
@@ -17521,12 +17525,15 @@ updateConnectivityBanner();
         if (badge) badge.textContent = msg;
         return { ok: false, message: msg };
       }
-      const okMsg = `🟢 फोन अटो SIM तयार छ (${base} · Termux Connected)`;
+      const okMsg = `🟢 फोन अटो SIM तयार छ (${base} · Connected)`;
       if (badge) badge.textContent = okMsg;
       return { ok: true, message: okMsg };
     } catch {
       if (timer) clearTimeout(timer);
-      const offMsg = `🔴 Termux स्क्रिप्ट चालु छैन (${base} मा सम्पर्क भएन)`;
+      const isAndroid = /android/i.test(navigator.userAgent || "");
+      const offMsg = isAndroid
+        ? `🔴 Pragati Jal APK वा Termux चालु छैन (${base} मा सम्पर्क भएन — पहिले एपमा Start थिच्नुहोस्)`
+        : `💻 Computer मा हुनुहुन्छ — '127.0.0.1' Android फोनको Chrome भित्र मात्र काम गर्छ (PC बाट पठाउन 'आफ्नै SMS Gateway + Auto-Relay' प्रयोग गर्नुहोस्)`;
       if (badge) badge.textContent = offMsg;
       return { ok: false, message: offMsg };
     }
@@ -18036,6 +18043,8 @@ Server URL  = "${url ? url : "(GitHub Pages वा यही फोनबाट 
     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   };
 
+  let autoRelayViaLocalBusy = false;
+
   async function pollGatewayJobsOnce() {
     const cfg = window.getSmsConfig();
     const key = window.getSmsSecrets().gatewayKey || "";
@@ -18067,6 +18076,29 @@ Server URL  = "${url ? url : "(GitHub Pages वा यही फोनबाट 
         phoneWatcherJobs.unshift({ ...j, source: "cloud" });
       }
     });
+
+    // 3. Zero-tap Auto-Relay through local APK / Termux (127.0.0.1:8765) when enabled on Phone Chrome
+    const relayAutoOn = localStorage.getItem("PJ_AUTO_RELAY_APK_V1") === "1";
+    if (relayAutoOn && phoneWatcherJobs.length > 0 && !autoRelayViaLocalBusy) {
+      autoRelayViaLocalBusy = true;
+      try {
+        for (const job of [...phoneWatcherJobs]) {
+          try {
+            const pObj = window.normalizeNepalSmsPhone(job.e164 || job.to);
+            if (!pObj.valid) continue;
+            await sendViaTermuxLocal(pObj, job.message, cfg, null, job);
+            await window.ackRelayJobFromBrowser(job.id, true, "");
+            showToast?.(`⚡ PC बाट आएको SMS (${job.customerName || job.to}) फोन SIM बाट पठाइयो!`, "success");
+          } catch (err) {
+            const badge = document.getElementById("self-gw-auto-relay-status");
+            if (badge) badge.textContent = "❌ Auto-Relay त्रुटि: " + (err?.message || "APK/Termux चालु छैन");
+            break;
+          }
+        }
+      } finally {
+        autoRelayViaLocalBusy = false;
+      }
+    }
 
     if (document.getElementById("self-gw-phone-jobs")) {
       renderPhoneWatcherJobsList();
@@ -18139,6 +18171,10 @@ Server URL  = "${url ? url : "(GitHub Pages वा यही फोनबाट 
       clearInterval(phoneWatcherTimer);
       phoneWatcherTimer = null;
     }
+  };
+
+  window.isGatewayPhoneWatcherRunning = function() {
+    return !!phoneWatcherTimer;
   };
 
   window.checkSelfHostedGatewayStatus = async function(targetBadgeId = "self-gw-status-badge") {
@@ -18215,15 +18251,21 @@ Server URL  = "${url ? url : "(GitHub Pages वा यही फोनबाट 
 
             ${tab === "phone" ? `
               <div class="space-y-3">
-                <div class="bg-emerald-50 border border-emerald-200 rounded-xl p-3 text-emerald-950">
-                  <strong>कुनै पनि छुट्टै एप नराखी अहिले नै चलाउनुहोस्:</strong> अफिसको Android फोनको Chrome मा यही पेज खोलेर तलको <strong>Start</strong> थिच्नुहोस्। अब अफिसको कम्प्युटरबाट Save थिच्ने बित्तिकै यहाँ ग्राहकको SMS तुरुन्तै आइपुग्छ!
+                <div class="bg-emerald-50 border border-emerald-200 rounded-xl p-3 text-emerald-950 space-y-1">
+                  <div><strong>PC बाट Save गर्दा Android फोनको SIM बाट SMS पठाउने:</strong> फोनको Chrome मा यही पेज खोलेर तलको <strong>Start</strong> थिच्नुहोस्।</div>
+                  <div>यदि फोनमा <strong>Pragati Jal APK</strong> (वा Termux) स्टार्ट छ भने तलको <strong>⚡ APK बाट १००% अटो पठाउने</strong> टिक लगाउँदा PC बाट Save गर्नासाथ बिना ट्याप अटो जान्छ!</div>
                 </div>
+                <label class="flex items-center gap-2 bg-indigo-50 border border-indigo-200 rounded-xl px-3 py-2 cursor-pointer font-bold text-indigo-950">
+                  <input type="checkbox" ${localStorage.getItem("PJ_AUTO_RELAY_APK_V1") === "1" ? "checked" : ""} onchange="localStorage.setItem('PJ_AUTO_RELAY_APK_V1', this.checked ? '1' : '0'); if (this.checked && !window.isGatewayPhoneWatcherRunning?.()) window.startGatewayPhoneWatcher();" class="rounded accent-indigo-700">
+                  <span>⚡ फोनको Pragati Jal APK / Termux (127.0.0.1) मार्फत १००% अटो पठाउने</span>
+                </label>
+                <div id="self-gw-auto-relay-status" class="text-[11px] font-semibold text-slate-600"></div>
                 <div class="flex flex-wrap items-center gap-2">
                   ${watcherRunning
                     ? `<button type="button" onclick="window.stopGatewayPhoneWatcher(); window.openSelfHostedGatewayModal('phone');" class="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl font-bold cursor-pointer">⏹ Live Gateway रोक्नुहोस् (चालु छ 🟢)</button>`
                     : `<button type="button" onclick="window.startGatewayPhoneWatcher()" class="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold cursor-pointer">▶ यो मोबाइललाई Live Gateway बनाउनुहोस्</button>`
                   }
-                  <button type="button" onclick="window.saveSmsConfig({provider:'self-hosted-gateway', enabled:true}); window.openSelfHostedGatewayModal('phone');" class="px-3 py-2 bg-indigo-50 text-indigo-800 border border-indigo-200 rounded-xl font-semibold cursor-pointer">✓ यो डिभाइसलाई 'आफ्नै गेटवे' सेट गर्नुहोस्</button>
+                  <button type="button" onclick="window.saveSmsConfig({provider:'self-hosted-gateway', enabled:true}); window.openSelfHostedGatewayModal('phone');" class="px-3 py-2 bg-indigo-50 text-indigo-800 border border-indigo-200 rounded-xl font-semibold cursor-pointer">✓ PC मा 'आफ्नै गेटवे' सेट गर्नुहोस्</button>
                 </div>
                 <div id="self-gw-phone-jobs" class="space-y-2"></div>
               </div>
