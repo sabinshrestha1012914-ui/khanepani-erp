@@ -24,8 +24,17 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+      - name: Setup Android SDK
+        shell: bash
+        run: |
+          set +o pipefail
+          SDK_DIR="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          echo "ANDROID_HOME=$SDK_DIR" >> "$GITHUB_ENV"
+          SM=$(command -v sdkmanager || find "$SDK_DIR" -name sdkmanager -type f 2>/dev/null | head -n 1)
+          if [ -n "$SM" ]; then
+            yes | "$SM" --licenses >/dev/null || true
+            "$SM" "platforms;android-34" "build-tools;34.0.0"
+          fi
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
