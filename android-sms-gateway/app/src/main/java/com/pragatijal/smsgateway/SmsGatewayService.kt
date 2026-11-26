@@ -1,14 +1,21 @@
 package com.pragatijal.smsgateway
 
+import android.Manifest
+import android.app.Activity
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.app.Service
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
+import android.content.pm.PackageManager
 import android.os.Build
 import android.os.IBinder
 import android.telephony.SmsManager
+import android.telephony.SubscriptionManager
 import android.util.Log
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
@@ -21,9 +28,15 @@ import java.net.Socket
 import java.net.URL
 import java.net.URLEncoder
 import java.security.MessageDigest
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import java.util.UUID
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 
 class SmsGatewayService : Service() {
 
@@ -32,7 +45,9 @@ class SmsGatewayService : Service() {
         const val PREFS_NAME = "pj_sms_gw_prefs"
         const val KEY_SERVER_URL = "server_url"
         const val KEY_PAIRING_KEY = "pairing_key"
+        const val KEY_SIM_CHOICE = "sim_choice" // 0 = Auto, 1 = SIM 1, 2 = SIM 2
         const val KEY_RUNNING = "is_running"
+        const val KEY_LOGS = "persistent_logs"
         const val LOCAL_BRIDGE_PORT = 8765
         const val ACTION_LOG = "com.pragatijal.smsgateway.LOG"
         const val EXTRA_LOG = "log_msg"
@@ -78,6 +93,7 @@ class SmsGatewayService : Service() {
         scheduler?.shutdownNow()
         getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             .edit().putBoolean(KEY_RUNNING, false).apply()
+        emitLog("⏹ SIM Gateway बन्द भयो।")
         super.onDestroy()
     }
 
@@ -167,7 +183,7 @@ class SmsGatewayService : Service() {
 
     private fun handleLocalHttpClient(socket: Socket) {
         try {
-            socket.soTimeout = 10000
+            socket.soTimeout = 15000
             val req = readHttpRequest(socket.getInputStream())
             if (req == null) {
                 socket.close()
@@ -186,7 +202,8 @@ class SmsGatewayService : Service() {
                 MessageDigest.isEqual(savedKey.toByteArray(Charsets.UTF_8), gotKey.toByteArray(Charsets.UTF_8))
 
             if (!authOk) {
-                sendJsonResponse(socket, 401, JSONObject().put("ok", false).put("error", "Invalid pairing key"))
+                emitLog("🔒 Pairing Key मिलेन! (वेबको Key र एपको Key एउटै राख्नुहोस्)")
+                sendJsonResponse(socket, 401, JSONObject().put("ok", false).put("error", "Pairing Key मिलेन! वेब र एपमा एउटै Key राख्नुहोस्।"))
                 return
             }
 
@@ -220,10 +237,10 @@ class SmsGatewayService : Service() {
 
                 try {
                     sendMultipartSms(target, msg)
-                    emitLog("⚡ अटो SIM पठाइयो: $cust ($target)")
+                    emitLog("✅ SIM बाट पठाइयो: $cust ($target)")
                     sendJsonResponse(socket, 200, JSONObject().put("ok", true))
                 } catch (ex: Exception) {
-                    emitLog("❌ असफल: $cust — ${ex.message}")
+                    emitLog("❌ असफल ($cust): ${ex.message}")
                     sendJsonResponse(socket, 500, JSONObject().put("ok", false).put("error", ex.message ?: "SIM Send Failed"))
                 }
                 return
@@ -311,7 +328,7 @@ class SmsGatewayService : Service() {
                 try {
                     sendMultipartSms(to, message)
                     ackJob(baseUrl, key, id, true, null)
-                    emitLog("✅ पठाइयो: $cust ($to)")
+                    emitLog("✅ Server Relay बाट पठाइयो: $cust ($to)")
                 } catch (ex: Exception) {
                     ackJob(baseUrl, key, id, false, ex.message ?: "SIM Send Error")
                     emitLog("❌ असफल: $cust — ${ex.message}")
@@ -322,19 +339,110 @@ class SmsGatewayService : Service() {
         }
     }
 
+    private fun resolveSmsManager(): SmsManager {
+        val simChoice = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getInt(KEY_SIM_CHOICE, 0)
+        try {
+            if (checkSelfPermission(Manifest.permission.READ_PHONE_STATE) == PackageManager.PERMISSION_GRANTED) {
+                val subMgr = getSystemService(SubscriptionManager::class.java)
+                val active = subMgr?.activeSubscriptionInfoList
+                val pickedSubId: Int = when {
+                    simChoice == 1 && active != null ->
+                        active.firstOrNull { it.simSlotIndex == 0 }?.subscriptionId
+                            ?: active.firstOrNull()?.subscriptionId
+                            ?: SubscriptionManager.INVALID_SUBSCRIPTION_ID
+                    simChoice == 2 && active != null ->
+                        active.firstOrNull { it.simSlotIndex == 1 }?.subscriptionId
+                            ?: active.lastOrNull()?.subscriptionId
+                            ?: SubscriptionManager.INVALID_SUBSCRIPTION_ID
+                    else -> {
+                        val defId = SubscriptionManager.getDefaultSmsSubscriptionId()
+                        if (defId != SubscriptionManager.INVALID_SUBSCRIPTION_ID) defId
+                        else active?.firstOrNull()?.subscriptionId ?: SubscriptionManager.INVALID_SUBSCRIPTION_ID
+                    }
+                }
+                if (pickedSubId != SubscriptionManager.INVALID_SUBSCRIPTION_ID) {
+                    return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                        getSystemService(SmsManager::class.java).createForSubscriptionId(pickedSubId)
+                    } else {
+                        @Suppress("DEPRECATION")
+                        SmsManager.getSmsManagerForSubscriptionId(pickedSubId)
+                    }
+                }
+            }
+        } catch (_: Exception) {}
+
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            getSystemService(SmsManager::class.java)
+        } else {
+            @Suppress("DEPRECATION")
+            SmsManager.getDefault()
+        }
+    }
+
     private fun sendMultipartSms(phoneE164: String, message: String) {
+        if (checkSelfPermission(Manifest.permission.SEND_SMS) != PackageManager.PERMISSION_GRANTED) {
+            throw IllegalStateException("फोनमा SEND_SMS अनुमति (Allow) दिइएको छैन!")
+        }
         synchronized(smsLock) {
-            val smsManager = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                getSystemService(SmsManager::class.java)
+            val smsManager = resolveSmsManager()
+            val parts = smsManager.divideMessage(message)
+            val partCount = parts.size.coerceAtLeast(1)
+            val sentAction = "com.pragatijal.smsgateway.SMS_SENT_${UUID.randomUUID()}"
+            val latch = CountDownLatch(partCount)
+            val failedCode = AtomicInteger(0)
+
+            val receiver = object : BroadcastReceiver() {
+                override fun onReceive(context: Context?, intent: Intent?) {
+                    if (resultCode != Activity.RESULT_OK) {
+                        failedCode.compareAndSet(0, resultCode)
+                    }
+                    latch.countDown()
+                }
+            }
+
+            val filter = IntentFilter(sentAction)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                registerReceiver(receiver, filter, Context.RECEIVER_EXPORTED)
             } else {
                 @Suppress("DEPRECATION")
-                SmsManager.getDefault()
+                registerReceiver(receiver, filter)
             }
-            val parts = smsManager.divideMessage(message)
-            if (parts.size > 1) {
-                smsManager.sendMultipartTextMessage(phoneE164, null, parts, null, null)
-            } else {
-                smsManager.sendTextMessage(phoneE164, null, message, null, null)
+
+            try {
+                val sentIntents = ArrayList<PendingIntent>(partCount)
+                for (i in 0 until partCount) {
+                    val pi = PendingIntent.getBroadcast(
+                        this,
+                        (System.currentTimeMillis() and 0xFFFFFF).toInt() + i,
+                        Intent(sentAction).setPackage(packageName),
+                        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                    )
+                    sentIntents.add(pi)
+                }
+
+                if (parts.size > 1) {
+                    smsManager.sendMultipartTextMessage(phoneE164, null, parts, sentIntents, null)
+                } else {
+                    smsManager.sendTextMessage(phoneE164, null, message, sentIntents[0], null)
+                }
+
+                val finished = latch.await(12, TimeUnit.SECONDS)
+                val errCode = failedCode.get()
+                if (errCode != 0) {
+                    val reason = when (errCode) {
+                        SmsManager.RESULT_ERROR_NO_SERVICE -> "SIM नेटवर्क/टावर छैन (No Service)"
+                        SmsManager.RESULT_ERROR_RADIO_OFF -> "Airplane मोड अन वा SIM बन्द छ"
+                        SmsManager.RESULT_ERROR_NULL_PDU -> "मेसेज फर्म्याट त्रुटि (NULL PDU)"
+                        SmsManager.RESULT_ERROR_GENERIC_FAILURE -> "SIM बाट पठाउन अस्वीकार (ब्यालेन्स/Dual-SIM वा MIUI Background SMS अनुमति जाँच गर्नुहोस्)"
+                        else -> "SIM त्रुटि कोड: $errCode"
+                    }
+                    throw IllegalStateException(reason)
+                }
+                if (!finished) {
+                    Log.w("PjSmsGateway", "SMS sent callback timed out; carrier queue pending")
+                }
+            } finally {
+                try { unregisterReceiver(receiver) } catch (_: Exception) {}
             }
         }
     }
@@ -360,7 +468,13 @@ class SmsGatewayService : Service() {
     }
 
     private fun emitLog(msg: String) {
-        sendBroadcast(Intent(ACTION_LOG).apply { putExtra(EXTRA_LOG, msg) })
+        val ts = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
+        val line = "[$ts] $msg"
+        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val prev = prefs.getString(KEY_LOGS, "") ?: ""
+        val combined = ("$line\n$prev").lines().take(40).joinToString("\n")
+        prefs.edit().putString(KEY_LOGS, combined).apply()
+        sendBroadcast(Intent(ACTION_LOG).apply { putExtra(EXTRA_LOG, line) })
     }
 
     private fun createNotificationChannel() {
