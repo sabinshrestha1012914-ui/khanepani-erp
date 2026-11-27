@@ -1,5 +1,5 @@
-// Service Worker for Pragati Jal ERP (Mobile + PC Desktop PWA with Auto-Update & Offline Meter Reading + Camera OCR)
-const CACHE_NAME = "pragati-jal-erp-v16";
+// Service Worker for Pragati Jal ERP (Mobile + PC Desktop PWA with Auto-Update & Offline Meter Reading)
+const CACHE_NAME = "pragati-jal-erp-v19";
 const APP_SHELL = [
   "./",
   "./index.html",
@@ -7,8 +7,7 @@ const APP_SHELL = [
   "./pwa-192x192.png?v=logo2",
   "./pwa-512x512.png?v=logo2",
   "./pwa-maskable-512x512.png?v=logo2",
-  "./apple-touch-icon.png?v=logo2",
-  "https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"
+  "./apple-touch-icon.png?v=logo2"
 ];
 
 self.addEventListener("install", (event) => {
@@ -88,7 +87,7 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // External CDN, Firebase SDK & Tesseract.js OCR assets: Cache-First so offline startup & camera OCR work cleanly
+  // External CDN & Firebase SDK assets: Cache-First so offline startup works cleanly
   if (
     url.hostname.includes("cdn.tailwindcss.com") ||
     url.hostname.includes("unpkg.com") ||
